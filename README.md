@@ -790,6 +790,10 @@ sudo chmod -R 755 venv/
 # 编辑环境文件
 sudo vim /home/options_trading/.env
 
+cd /home/options_trading
+
+sudo systemctl stop doomsday_option
+
 # 复制服务文件
 sudo cp scripts/doomsday_option.service /etc/systemd/system/
 sudo chmod 644 /etc/systemd/system/doomsday_option.service
