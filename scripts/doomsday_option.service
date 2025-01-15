@@ -15,8 +15,6 @@ Restart=no
 RestartSec=10
 TimeoutStartSec=30
 TimeoutStopSec=30
-StartLimitIntervalSec=0  # 禁用启动限制
-StartLimitBurst=0        # 禁用启动限制
 
 # 资源限制
 MemoryLimit=500M
