@@ -793,7 +793,6 @@ sudo vim /home/options_trading/.env
 cd /home/options_trading
 sudo systemctl stop doomsday_option
 
->>>>>>> 2768675be15f0351d00983d5b649331581101066
 # 复制服务文件
 sudo cp scripts/doomsday_option.service /etc/systemd/system/
 sudo chmod 644 /etc/systemd/system/doomsday_option.service
