@@ -824,69 +824,96 @@ class DoomsdayPositionManager:
 
     async def _print_positions_table(self, positions_data: Dict[str, List[dict]]):
         """打印持仓表格"""
-        header = ("| Symbol              | Name                 | Vol  | Last Price (Chg%)         | Cost $ | Value $ | P/L $ | P/L % |")
-        separator = "|" + "-" * 21 + "|" + "-" * 21 + "|" + "-" * 6 + "|" + "-" * 27 + "|" + "-" * 8 + "|" + "-" * 9 + "|" + "-" * 8 + "|" + "-" * 7 + "|"
-        
-        self.logger.info("\n=== 美股持仓明细 ===")
-        self.logger.info(header)
-        self.logger.info(separator)
-        
-        total_cost = 0
-        total_value = 0
-        
-        # 显示当前持仓
-        if positions_data and positions_data["active"]:
-            sorted_positions = sorted(positions_data["active"], key=lambda x: x["symbol"])  # 按代码排序
+        try:
+            if not positions_data or not positions_data.get("active"):
+                self.logger.info("\n暂无持仓")
+                return
+            
+            # 表头
+            self.logger.info("\n" + "=" * 124)
+            self.logger.info(" " * 60 + "持仓汇总")
+            self.logger.info("=" * 124)
+            
+            header = (
+                "| {:<20} | {:<10} | {:<12} | {:<26} | {:<20} | {:<20} |"
+                .format("代码", "数量", "市值", "Last Price (Chg%)", "当日盈亏 (率)", "持仓盈亏 (率)")
+            )
+            separator = "|" + "-" * 22 + "|" + "-" * 12 + "|" + "-" * 14 + "|" + "-" * 28 + "|" + "-" * 22 + "|" + "-" * 22 + "|"
+            
+            self.logger.info(header)
+            self.logger.info(separator)
+            
+            total_value = 0
+            total_day_pnl = 0
+            total_position_pnl = 0
+            
+            # 显示当前持仓
+            sorted_positions = sorted(positions_data["active"], key=lambda x: x["symbol"])
             for pos in sorted_positions:
                 try:
                     # 获取当前价格和涨跌幅
-                    quotes = await self.quote_ctx.quote(symbols=[pos["symbol"]])
+                    quotes = self.quote_ctx.quote([pos["symbol"]])
                     if quotes and len(quotes) > 0:
-                        quote_data = quotes[0]
-                        current_price = quote_data.last_done
-                        price_change = quote_data.change_value
-                        price_change_pct = quote_data.change_rate * 100
+                        quote = quotes[0]
+                        current_price = quote.last_done
+                        prev_close = quote.prev_close
+                        price_change_pct = (current_price - prev_close) / prev_close * 100 if prev_close else 0
                     else:
                         current_price = pos["cost_price"]
-                        price_change = 0
                         price_change_pct = 0
                     
-                    # 计算持仓市值和盈亏
-                    position_cost = pos["cost_price"] * pos["volume"]
+                    # 计算持仓信息
                     position_value = current_price * pos["volume"]
-                    profit_loss = position_value - position_cost
-                    profit_loss_pct = (profit_loss / position_cost * 100) if position_cost > 0 else 0
+                    day_pnl = (current_price - prev_close) * pos["volume"] if prev_close else 0
+                    day_pnl_pct = day_pnl / (prev_close * pos["volume"]) * 100 if prev_close and pos["volume"] else 0
+                    position_pnl = (current_price - pos["cost_price"]) * pos["volume"]
+                    position_pnl_pct = position_pnl / (pos["cost_price"] * pos["volume"]) * 100 if pos["cost_price"] and pos["volume"] else 0
                     
-                    # 价格信息显示（当日涨跌）
-                    price_info = f"${current_price:.2f} ({price_change:+.2f}/{price_change_pct:+.2f}%)"
+                    # 确定持仓类型（股票/期权）
+                    unit = "股" if ".US" in pos["symbol"] else "张"
                     
-                    # 格式化名称显示
-                    name = pos['symbol_name']
-                    if len(name) > 19:
-                        name = name[:16] + "..."
-                    
+                    # 格式化行数据
                     line = (
-                        f"| {pos['symbol']:<19} "
-                        f"| {name:<19} "
-                        f"| {pos['volume']:>4} "
-                        f"| {price_info:<25} "
-                        f"| ${pos['cost_price']:<6.2f} "
-                        f"| ${position_value:<7.2f} "
-                        f"| ${profit_loss:<6.2f} "
-                        f"| {profit_loss_pct:>5.2f}% |"
+                        "| {:<20} | {:>8}{} | ${:>10,.0f} | ${:>7.2f} → ${:<7.2f} ({:+.1f}%) | ${:>+8,.0f} ({:+.1f}%) | ${:>+8,.0f} ({:+.1f}%) |"
+                        .format(
+                            pos["symbol"],
+                            pos["volume"], unit,
+                            position_value,
+                            prev_close, current_price, price_change_pct,
+                            day_pnl, day_pnl_pct,
+                            position_pnl, position_pnl_pct
+                        )
                     )
                     self.logger.info(line)
                     
-                    total_cost += position_cost
                     total_value += position_value
+                    total_day_pnl += day_pnl
+                    total_position_pnl += position_pnl
                     
                 except Exception as e:
                     self.logger.error(f"处理持仓显示时出错: {str(e)}")
-
-        self.logger.info(separator)
-        total_pl = total_value - total_cost
-        total_pl_pct = (total_pl / total_cost * 100) if total_cost > 0 else 0
-        self.logger.info(f"总计: {len(positions_data['active'])} 个持仓 | 总成本: ${total_cost:.2f} | 总市值: ${total_value:.2f} | 总盈亏: ${total_pl:.2f} ({total_pl_pct:+.2f}%)")
+            
+            # 显示合计行
+            self.logger.info(separator)
+            total_day_pnl_pct = total_day_pnl / total_value * 100 if total_value else 0
+            total_position_pnl_pct = total_position_pnl / total_value * 100 if total_value else 0
+            
+            total_line = (
+                "| {:<20} | {:>10} | ${:>10,.0f} | {:<26} | ${:>+8,.0f} ({:+.1f}%) | ${:>+8,.0f} ({:+.1f}%) |"
+                .format(
+                    f"总计 ({len(sorted_positions)}个持仓)",
+                    "",
+                    total_value,
+                    "",
+                    total_day_pnl, total_day_pnl_pct,
+                    total_position_pnl, total_position_pnl_pct
+                )
+            )
+            self.logger.info(total_line)
+            self.logger.info("=" * 124)
+            
+        except Exception as e:
+            self.logger.error(f"打印持仓表格时出错: {str(e)}")
 
     async def check_force_close(self, current_time: datetime) -> bool:
         """
