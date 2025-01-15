@@ -1,6 +1,8 @@
 [Unit]
 Description=Doomsday Option Trading Service
 After=network.target
+StartLimitBurst=5
+StartLimitIntervalSec=300
 
 [Service]
 Type=simple
@@ -11,7 +13,7 @@ Environment=PYTHONPATH=/home/options_trading
 ExecStart=/home/options_trading/venv/bin/python -m scripts.main
 
 # 基本限制
-Restart=no
+Restart=on-failure
 RestartSec=10
 TimeoutStartSec=30
 TimeoutStopSec=30
