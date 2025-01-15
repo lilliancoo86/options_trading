@@ -1,0 +1,12 @@
+/home/options_trading/logs/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 644 $USER $USER
+    postrotate
+        supervisorctl restart option_trading >/dev/null 2>&1 || true
+    endscript
+} 

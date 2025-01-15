@@ -1,0 +1,32 @@
+[Unit]
+Description=Doomsday Option Trading Service
+After=network.target
+
+[Service]
+Type=simple
+User=trader
+Group=trader
+WorkingDirectory=/home/options_trading
+Environment=PYTHONPATH=/home/options_trading
+ExecStart=/home/options_trading/venv/bin/python -m scripts.main
+
+# 基本限制
+Restart=no
+RestartSec=10
+TimeoutStartSec=30
+TimeoutStopSec=30
+StartLimitIntervalSec=0  # 禁用启动限制
+StartLimitBurst=0        # 禁用启动限制
+
+# 资源限制
+MemoryLimit=500M
+TasksMax=100
+LimitNOFILE=1024
+
+# 基本安全限制
+NoNewPrivileges=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target 
