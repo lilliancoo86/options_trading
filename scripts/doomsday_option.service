@@ -11,13 +11,9 @@ Environment=PYTHONPATH=/home/options_trading
 ExecStart=/home/options_trading/venv/bin/python -m scripts.main
 Restart=on-failure
 RestartSec=10
-
-# 资源限制
 MemoryLimit=500M
 TasksMax=100
 LimitNOFILE=1024
-
-# 基本安全限制
 NoNewPrivileges=yes
 PrivateTmp=yes
 RestrictAddressFamilies=AF_INET AF_INET6
