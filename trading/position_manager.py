@@ -955,7 +955,6 @@ class DoomsdayPositionManager:
                 self.logger.info("\n暂无持仓")
                 return
 
-            # 获取所有持仓数据
             positions = positions_data["active"]
             if not positions:
                 return
@@ -1029,9 +1028,9 @@ class DoomsdayPositionManager:
                     self.logger.error(f"处理持仓显示时出错: {str(e)}")
 
             # 显示合计行
-            self.logger.info(separator)
             total_day_pnl_pct = total_day_pnl / total_value * 100 if total_value else 0
             
+            self.logger.info(separator)
             summary = fmt.format(
                 f"总计({len(positions)})",
                 f"${total_value:,.0f}",
