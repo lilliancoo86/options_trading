@@ -204,66 +204,47 @@ async def run_strategy(strategy, position_manager, risk_checker, time_checker, l
             position_manager.force_close_all()
 
 async def main():
-    global logger
-    logger = setup_logging()
-    position_manager = None
-    strategy = None
-    
     try:
-        # 解析命令行参数
-        args = parse_args()
+        # 初始化日志
+        setup_logging()
+        logger = logging.getLogger(__name__)
         
-        # 获取当前时间（美东时间）
-        ny_tz = pytz.timezone('America/New_York')
-        if args.test and args.fake_time:
-            current_time = datetime.strptime(args.fake_time, '%Y-%m-%d %H:%M:%S')
-            current_time = ny_tz.localize(current_time)
-            logger.info(f"测试模式: 使用模拟时间 {current_time}")
-        else:
-            current_time = datetime.now(ny_tz)
+        # 初始化风险检查器
+        risk_checker = RiskChecker()
         
-        # 检查是否在交易时间内
-        if not is_trading_hours(current_time, args.test):
-            if not args.test:
-                logger.info("非交易时间")
-                return
-            else:
-                logger.info("测试模式: 忽略交易时间限制")
-        
-        # 初始化交易组件
-        logger.info("初始化交易组件...")
-        
-        # 初始化时间检查器
-        time_checker = TimeChecker(
-            market_open=TRADING_CONFIG['market_open'],
-            market_close=TRADING_CONFIG['market_close'],
-            force_close_time=TRADING_CONFIG['force_close_time'],
-            test_mode=args.test
-        )
-        
-        risk_checker = RiskChecker(TRADING_CONFIG)
-        position_manager = DoomsdayPositionManager(TRADING_CONFIG)
-        strategy = DoomsdayOptionStrategy(TRADING_CONFIG, API_CONFIG)
-        
-        logger.info(f"末日期权量化系统启动... {'[测试模式]' if args.test else ''}")
-        
-        # 运行策略直到收盘
-        while is_trading_hours(datetime.now(ny_tz), args.test):
-            await run_strategy(strategy, position_manager, risk_checker, time_checker, logger)
-            await asyncio.sleep(5)
-        
-        logger.info("交易日结束，系统关闭")
-        
+        async with DoomsdayPositionManager(risk_checker) as position_manager:
+            while True:
+                try:
+                    # 打印交易状态
+                    await position_manager.print_trading_status()
+                    
+                    # 检查是否需要强制平仓
+                    current_time = datetime.now(pytz.timezone('America/New_York'))
+                    if await position_manager.check_force_close(current_time):
+                        logger.warning("触发强制平仓条件")
+                        # 执行强制平仓逻辑
+                        positions = await position_manager.get_real_positions()
+                        if positions and positions.get("active"):
+                            for pos in positions["active"]:
+                                await position_manager.close_position(
+                                    pos["symbol"],
+                                    int(pos["volume"]),
+                                    "强制平仓"
+                                )
+                    
+                    # 检查风险状态
+                    await position_manager.check_position_risks()
+                    
+                    await asyncio.sleep(10)  # 每10秒检查一次
+                    
+                except Exception as e:
+                    logger.error(f"主循环出错: {str(e)}")
+                    logger.exception("详细错误信息:")
+                    await asyncio.sleep(5)
+                    
     except Exception as e:
-        logger.error(f"系统运行错误: {str(e)}")
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.exception("详细错误信息:")
-    finally:
-        if position_manager is not None and position_manager.get_all_positions():
-            logger.info("系统关闭前清仓")
-            if strategy:
-                await strategy.close()
-            position_manager.force_close_all()
+        logger.error(f"程序运行出错: {str(e)}")
+        logger.exception("详细错误信息:")
 
 def is_trading_hours(current_time: datetime, test_mode: bool = False) -> bool:
     """检查是否在交易时间内"""

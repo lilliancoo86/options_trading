@@ -1567,3 +1567,49 @@ class DoomsdayPositionManager:
             
         except Exception as e:
             self.logger.error(f"检查止盈止损状态时出错: {str(e)}")
+
+    async def _execute_stop_loss(self, position: dict):
+        """执行止损"""
+        try:
+            symbol = position["symbol"]
+            volume = abs(position["volume"])
+            
+            # 再次确认止损条件
+            current_price = float(position["current_price"])
+            cost_price = float(position["cost_price"])
+            pnl_pct = ((current_price - cost_price) / cost_price * 100)
+            stop_loss_price = cost_price * (1 - self.risk_limits['option']['stop_loss']['initial']/100)
+            
+            if current_price <= stop_loss_price:
+                self.logger.warning(
+                    f"确认执行止损:\n"
+                    f"  标的: {symbol}\n"
+                    f"  数量: {volume}\n"
+                    f"  成本价: ${cost_price:.2f}\n"
+                    f"  现价: ${current_price:.2f}\n"
+                    f"  止损价: ${stop_loss_price:.2f}\n"
+                    f"  亏损比例: {pnl_pct:.2f}%"
+                )
+                
+                # 执行平仓
+                order = await self.trade_ctx.submit_order(
+                    symbol=symbol,
+                    order_type=OrderType.MARKET,
+                    side=OrderSide.SELL if position["volume"] > 0 else OrderSide.BUY,
+                    quantity=volume,
+                    time_in_force=TimeInForceType.DAY
+                )
+                
+                self.logger.info(f"止损订单已提交 - 订单号: {order.order_id}")
+                
+                # 等待订单状态更新
+                await asyncio.sleep(1)
+                order_status = await self.trade_ctx.get_order(order.order_id)
+                self.logger.info(f"订单状态: {order_status.status}")
+                
+            else:
+                self.logger.warning(f"止损条件已不满足，取消执行")
+                
+        except Exception as e:
+            self.logger.error(f"执行止损时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
