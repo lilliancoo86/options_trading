@@ -667,7 +667,7 @@ class DoomsdayPositionManager:
                 self.logger.info(f"获取到 {len(positions_data['active'])} 个持仓")
                 return positions_data
 
-                                    except Exception as e:
+            except Exception as e:
                 self.logger.error(f"获取持仓数据时出错: {str(e)}")
                 self.logger.exception("详细错误信息:")
                 
@@ -692,7 +692,7 @@ class DoomsdayPositionManager:
                             
                             # 根据买卖方向更新持仓
                             quantity = exec.quantity
-                            if exec.trade_side == "Buy":  # 使用 trade_side 字段
+                            if exec.direction == "Buy":  # 使用 direction 字段
                                 positions[symbol]["volume"] += quantity
                                 positions[symbol]["cost_total"] += quantity * float(exec.price)
                             else:  # Sell
@@ -733,8 +733,8 @@ class DoomsdayPositionManager:
                 except Exception as e2:
                     self.logger.error(f"备用方法也失败: {str(e2)}")
                     raise
-                                    
-                                except Exception as e:
+
+        except Exception as e:
             self.logger.error(f"获取持仓数据时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
             return None
@@ -806,9 +806,9 @@ class DoomsdayPositionManager:
             else:
                 self.logger.info("市场条件不适合交易")
 
-            except Exception as e:
+        except Exception as e:
             self.logger.error(f"打印交易状态时出错: {str(e)}")
-                self.logger.exception("详细错误信息:")
+            self.logger.exception("详细错误信息:")
 
     async def _print_positions_table(self, positions_data: Dict[str, List[dict]]):
         """打印持仓标的明细"""
