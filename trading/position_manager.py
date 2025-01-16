@@ -810,11 +810,14 @@ class DoomsdayPositionManager:
             # 分隔线
             separator = "-" * len(header)
 
-            # 打印表头
-            self.logger.info(f"\n{header}")
+            # 打印表头和分隔线
+            self.logger.info("\n当前持仓状态:")
+            self.logger.info(separator)
+            self.logger.info(header)
             self.logger.info(separator)
             
             # 按代码排序显示所有持仓
+            total_value = 0
             for pos in sorted(positions, key=lambda x: x["symbol"]):
                 try:
                     # 获取行情数据
@@ -844,11 +847,23 @@ class DoomsdayPositionManager:
                             f"${day_pnl:+.2f}/{day_change_pct:+.2f}%"
                         )
                         self.logger.info(line)
+                        total_value += pos['market_value']
                 
                 except Exception as e:
                     self.logger.error(f"处理持仓显示时出错: {str(e)}")
             
+            # 显示总计
             self.logger.info(separator)
+            summary = fmt.format(
+                "总计",
+                f"{len(positions)}",
+                f"${total_value:.2f}",
+                "",
+                ""
+            )
+            self.logger.info(summary)
+            self.logger.info(separator)
+            self.logger.info("")  # 添加空行
             
         except Exception as e:
             self.logger.error(f"打印持仓表格时出错: {str(e)}")
