@@ -627,24 +627,54 @@ class DoomsdayPositionManager:
             # 获取持仓数据
             positions_data = {"active": []}
             
-            # 获取股票持仓
-            stock_positions = await self.trade_ctx.positions()
-            if stock_positions:
-                for pos in stock_positions:
-                    positions_data["active"].append({
-                        "symbol": pos.symbol,
-                        "volume": pos.quantity,
-                        "cost_price": float(pos.cost_price),
-                        "current_price": float(pos.current_price),
-                        "market_value": float(pos.market_value),
-                        "day_pnl": float(pos.day_pnl),
-                        "day_pnl_pct": float(pos.day_pnl_ratio) * 100,
-                        "total_pnl": float(pos.pnl),
-                        "total_pnl_pct": float(pos.pnl_ratio) * 100
-                    })
-            
-            self.logger.info(f"获取到 {len(positions_data['active'])} 个持仓")
-            return positions_data
+            try:
+                # 使用正确的 API 方法获取持仓
+                stock_positions = await self.trade_ctx.get_positions()
+                
+                if stock_positions:
+                    for pos in stock_positions:
+                        # 转换持仓数据格式
+                        position_data = {
+                            "symbol": pos.symbol,
+                            "volume": pos.quantity,
+                            "cost_price": float(pos.avg_price),
+                            "current_price": float(pos.current_price),
+                            "market_value": float(pos.market_value),
+                            "day_pnl": float(pos.unrealized_pnl),
+                            "day_pnl_pct": float(pos.unrealized_pnl_ratio) * 100,
+                            "total_pnl": float(pos.unrealized_pnl),
+                            "total_pnl_pct": float(pos.unrealized_pnl_ratio) * 100
+                        }
+                        
+                        # 添加到活跃持仓列表
+                        positions_data["active"].append(position_data)
+                        
+                        # 记录详细日志
+                        self.logger.debug(
+                            f"持仓数据 - {pos.symbol}:\n"
+                            f"  数量: {pos.quantity}\n"
+                            f"  成本价: ${float(pos.avg_price):.4f}\n"
+                            f"  现价: ${float(pos.current_price):.4f}\n"
+                            f"  市值: ${float(pos.market_value):.2f}\n"
+                            f"  未实现盈亏: ${float(pos.unrealized_pnl):+.2f}\n"
+                            f"  盈亏比例: {float(pos.unrealized_pnl_ratio)*100:+.2f}%"
+                        )
+                
+                self.logger.info(f"获取到 {len(positions_data['active'])} 个持仓")
+                return positions_data
+
+            except AttributeError as e:
+                self.logger.error(f"API 方法不存在: {str(e)}")
+                self.logger.info("尝试使用备用方法获取持仓...")
+                
+                # 尝试使用其他可能的方法名
+                try:
+                    stock_positions = await self.trade_ctx.get_position_list()
+                    # 处理持仓数据...
+                    
+                except Exception as e2:
+                    self.logger.error(f"备用方法也失败: {str(e2)}")
+                    raise
 
         except Exception as e:
             self.logger.error(f"获取持仓数据时出错: {str(e)}")
