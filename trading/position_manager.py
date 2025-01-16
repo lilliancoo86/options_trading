@@ -794,7 +794,7 @@ class DoomsdayPositionManager:
 
             # 构建表格格式
             fmt = (
-                f"| {{:<{symbol_width}}} | {{:>8}} | {{:>12}} | {{:>20}} | {{:>35}} | {{:>25}} |"
+                f"| {{:<{symbol_width}}} | {{:>8}} | {{:>12}} | {{:>20}} | {{:>25}} | {{:>25}} |"
             )
             
             # 表头
@@ -803,7 +803,7 @@ class DoomsdayPositionManager:
                 "数量",           # 2. 数量
                 "市值",           # 3. 市值
                 "成本/现价",       # 4. 成本价/现价
-                "价格轨迹(涨跌幅)",   # 5. 价格变动轨迹
+                "Last Price (Chg%)",  # 5. 最新价格和涨跌幅
                 "当日盈亏/盈亏率"   # 6. 当日盈亏/盈亏率
             )
             
@@ -831,20 +831,19 @@ class DoomsdayPositionManager:
                         current_price = float(quote.last_done)
                         prev_close = float(quote.prev_close)
                         
-                        # 计算各阶段涨跌幅
-                        open_change_pct = ((open_price - prev_close) / prev_close * 100)
-                        high_change_pct = ((high_price - prev_close) / prev_close * 100)
-                        curr_change_pct = ((current_price - prev_close) / prev_close * 100)
+                        # 计算涨跌幅
+                        price_change = current_price - prev_close
+                        price_change_pct = (price_change / prev_close * 100) if prev_close else 0
                         
                         # 构建价格变动指示
                         price_movement = (
-                            f"${open_price:.2f}→${high_price:.2f}→${current_price:.2f}\n"
-                            f"({open_change_pct:+.1f}%→{high_change_pct:+.1f}%→{curr_change_pct:+.1f}%)"
+                            f"${current_price:.2f} ({price_change_pct:+.1f}%)\n"
+                            f"H: ${high_price:.2f} O: ${open_price:.2f}"
                         )
                         
                         # 计算当日盈亏
-                        day_pnl = (current_price - prev_close) * pos["volume"]
-                        day_pnl_pct = ((current_price - prev_close) / prev_close * 100)
+                        day_pnl = price_change * pos["volume"]
+                        day_pnl_pct = price_change_pct
                     else:
                         price_movement = "N/A"
                         day_pnl = 0
