@@ -667,7 +667,7 @@ class DoomsdayPositionManager:
                 self.logger.info(f"获取到 {len(positions_data['active'])} 个持仓")
                 return positions_data
 
-            except Exception as e:
+                                    except Exception as e:
                 self.logger.error(f"获取持仓数据时出错: {str(e)}")
                 self.logger.exception("详细错误信息:")
                 
@@ -733,8 +733,8 @@ class DoomsdayPositionManager:
                 except Exception as e2:
                     self.logger.error(f"备用方法也失败: {str(e2)}")
                     raise
-
-        except Exception as e:
+                                    
+                                except Exception as e:
             self.logger.error(f"获取持仓数据时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
             return None
@@ -806,9 +806,9 @@ class DoomsdayPositionManager:
             else:
                 self.logger.info("市场条件不适合交易")
 
-        except Exception as e:
+            except Exception as e:
             self.logger.error(f"打印交易状态时出错: {str(e)}")
-            self.logger.exception("详细错误信息:")
+                self.logger.exception("详细错误信息:")
 
     async def _print_positions_table(self, positions_data: Dict[str, List[dict]]):
         """打印持仓标的明细"""
@@ -816,7 +816,7 @@ class DoomsdayPositionManager:
             if not positions_data or not positions_data.get("active"):
                 self.logger.info("\n暂无持仓")
                 return
-
+            
             positions = positions_data["active"]
             if not positions:
                 return
@@ -847,11 +847,11 @@ class DoomsdayPositionManager:
             self.logger.info(f"\n持仓标的明细:\n{separator}")
             self.logger.info(header)
             self.logger.info(separator)
-
+            
             # 按代码排序显示所有持仓
             total_value = 0
             total_day_pnl = 0
-
+            
             for pos in sorted(positions, key=lambda x: x["symbol"]):
                 try:
                     quotes = self.quote_ctx.quote([pos["symbol"]])
@@ -865,7 +865,7 @@ class DoomsdayPositionManager:
                         current_price = pos.get("cost_price", 0)
                         prev_close = current_price
                         price_change_pct = 0
-
+                    
                     quantity = pos.get("volume", 0)
                     cost_price = pos.get("cost_price", current_price)
                     multiplier = 100 if any(x in pos["symbol"] for x in ['C', 'P']) else 1
@@ -873,22 +873,22 @@ class DoomsdayPositionManager:
                     
                     day_pnl = (current_price - prev_close) * quantity * multiplier
                     day_pnl_pct = day_pnl / (prev_close * quantity * multiplier) * 100 if prev_close and quantity else 0
-
+                    
                     line = fmt.format(
-                        pos["symbol"],
+                            pos["symbol"],
                         f"${position_value:,.0f}",
                         f"${current_price:.2f}/${cost_price:.2f}",
                         f"{price_change_pct:+.2f}%",
                         f"${day_pnl:+,.0f}/{day_pnl_pct:+.1f}%"
                     )
                     self.logger.info(line)
-
+                    
                     total_value += position_value
                     total_day_pnl += day_pnl
-
+                    
                 except Exception as e:
                     self.logger.error(f"处理持仓显示时出错: {str(e)}")
-
+            
             # 显示合计行
             total_day_pnl_pct = total_day_pnl / total_value * 100 if total_value else 0
             
@@ -902,7 +902,7 @@ class DoomsdayPositionManager:
             )
             self.logger.info(summary)
             self.logger.info(separator)
-
+            
         except Exception as e:
             self.logger.error(f"打印持仓表格时出错: {str(e)}")
 
