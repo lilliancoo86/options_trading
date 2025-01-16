@@ -901,8 +901,7 @@ class DoomsdayPositionManager:
             market_status = (
                 f"\n{'='*80}\n"
                 f"美股市场状态 | 时间: {ny_time.strftime('%Y-%m-%d %H:%M:%S')} EST | "
-                f"状态: {'交易中' if is_market_open else '休市'}"
-                f"{' [测试模式]' if self.test_mode else ''}\n"
+                f"状态: {'交易中' if is_market_open else '休市'}\n"
                 f"{'='*80}"
             )
             self.logger.info(market_status)
@@ -911,11 +910,10 @@ class DoomsdayPositionManager:
             system_status = (
                 f"\n交易系统状态:\n"
                 f"{'='*80}\n"
-                f"{'系统运行正常':^20} | "
-                f"模式: {'测试' if self.test_mode else '实盘'} | "
                 f"连接状态: {'已连接':^10} | "
                 f"行情延迟: {self.quote_delay:^8}ms | "
-                f"内存使用: {self.get_memory_usage():^8}MB\n"
+                f"VIX指数: {self.current_vix:.2f} (限制范围: {self.risk_limits['volatility']['min_vix']}-"
+                f"{self.risk_limits['volatility']['max_vix']})\n"
                 f"{'='*80}"
             )
             self.logger.info(system_status)
@@ -937,17 +935,12 @@ class DoomsdayPositionManager:
                     f"\n交易决策: {decision.get('action', '未知')} | "
                     f"价格趋势: {decision.get('price_trend', '-')} | "
                     f"分时趋势: {decision.get('time_trend', '-')} | "
-                    f"当前收益: {decision.get('pnl_pct', 0):+.1f}% | "
-                    f"VIX指数: {decision.get('vix', 0)}"
+                    f"当前收益: {decision.get('pnl_pct', 0):+.1f}%"
                 )
 
                 # 如果有决策原因
                 if 'reason' in decision:
                     trading_conditions += f"\n决策原因: {decision['reason']}"
-                
-                # 如果有回撤信息
-                if 'drawdown' in decision:
-                    trading_conditions += f"\n从最高点回撤: {decision['drawdown']:+.1f}%"
 
             trading_conditions += f"\n{'='*80}"
             self.logger.info(trading_conditions)
