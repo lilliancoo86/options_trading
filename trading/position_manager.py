@@ -790,20 +790,22 @@ class DoomsdayPositionManager:
 
             # 计算最大字段长度以实现表格自适应
             max_symbol_len = max(len(pos["symbol"]) for pos in positions)
-            symbol_width = max(15, max_symbol_len + 2)
+            symbol_width = max(25, max_symbol_len + 2)  # 至少25个字符宽
 
             # 构建表格格式
             fmt = (
-                f"| {{:<{symbol_width}}} | {{:>12}} | {{:>15}} | {{:>12}} | {{:>25}} |"
+                f"| {{:<{symbol_width}}} | {{:>8}} | {{:>12}} | {{:>12}} | {{:>12}} | {{:>12}} | {{:>12}} |"
             )
             
             # 表头
             header = fmt.format(
-                "代码",            # 1. 代码
-                "市值",            # 2. 市值
-                "现价/成本",       # 3. 现价/成本
-                "当日涨跌幅",      # 4. 当日涨跌幅
-                "当日盈亏/盈亏率"  # 5. 当日盈亏/当日盈亏率
+                "期权合约",     # 1. 合约代码
+                "数量",        # 2. 持仓数量
+                "成本",        # 3. 成本价
+                "现价",        # 4. 当前价格
+                "涨跌幅",      # 5. 当日涨跌幅
+                "市值",        # 6. 持仓市值
+                "盈亏比例"     # 7. 盈亏百分比
             )
             
             # 计算分隔线长度
@@ -811,61 +813,61 @@ class DoomsdayPositionManager:
             separator = "=" * total_width
 
             # 打印表头
-            self.logger.info(f"\n持仓标的明细:\n{separator}")
+            self.logger.info(f"\n期权持仓明细:\n{separator}")
             self.logger.info(header)
             self.logger.info(separator)
             
             # 按代码排序显示所有持仓
             total_value = 0
-            total_day_pnl = 0
+            total_pnl = 0
             
             for pos in sorted(positions, key=lambda x: x["symbol"]):
                 try:
-                    quotes = self.quote_ctx.quote([pos["symbol"]])
-                    quote = quotes[0] if quotes else None
-                    
-                    if quote:
-                        current_price = quote.last_done
-                        prev_close = quote.prev_close
-                        price_change_pct = (current_price - prev_close) / prev_close * 100 if prev_close else 0
+                    # 获取行情数据
+                    quote = self.quote_ctx.quote([pos["symbol"]])
+                    if quote and len(quote) > 0:
+                        prev_close = float(quote[0].prev_close)
+                        price_change = quote[0].last_done - prev_close
+                        price_change_pct = (price_change / prev_close * 100) if prev_close else 0
                     else:
-                        current_price = pos.get("cost_price", 0)
-                        prev_close = current_price
                         price_change_pct = 0
                     
-                    quantity = pos.get("volume", 0)
-                    cost_price = pos.get("cost_price", current_price)
-                    multiplier = 100 if any(x in pos["symbol"] for x in ['C', 'P']) else 1
-                    position_value = current_price * quantity * multiplier
+                    # 格式化数据
+                    quantity = pos["volume"]
+                    cost_price = pos["cost_price"]
+                    current_price = pos["current_price"]
+                    market_value = pos["market_value"]
+                    pnl_pct = pos["total_pnl_pct"]
                     
-                    day_pnl = (current_price - prev_close) * quantity * multiplier
-                    day_pnl_pct = day_pnl / (prev_close * quantity * multiplier) * 100 if prev_close and quantity else 0
-                    
+                    # 构建行数据
                     line = fmt.format(
-                            pos["symbol"],
-                        f"${position_value:,.0f}",
-                        f"${current_price:.2f}/${cost_price:.2f}",
+                        pos["symbol"],
+                        f"{quantity:d}",
+                        f"${cost_price:.2f}",
+                        f"${current_price:.2f}",
                         f"{price_change_pct:+.2f}%",
-                        f"${day_pnl:+,.0f}/{day_pnl_pct:+.1f}%"
+                        f"${market_value:.2f}",
+                        f"{pnl_pct:+.2f}%"
                     )
                     self.logger.info(line)
                     
-                    total_value += position_value
-                    total_day_pnl += day_pnl
+                    total_value += market_value
+                    total_pnl += pos["total_pnl"]
                     
                 except Exception as e:
                     self.logger.error(f"处理持仓显示时出错: {str(e)}")
             
             # 显示合计行
-            total_day_pnl_pct = total_day_pnl / total_value * 100 if total_value else 0
-            
             self.logger.info(separator)
+            total_pnl_pct = (total_pnl / total_value * 100) if total_value else 0
             summary = fmt.format(
                 f"总计({len(positions)})",
-                f"${total_value:,.0f}",
-                "-",
-                "-",
-                f"${total_day_pnl:+,.0f}/{total_day_pnl_pct:+.1f}%"
+                "",
+                "",
+                "",
+                "",
+                f"${total_value:.2f}",
+                f"{total_pnl_pct:+.2f}%"
             )
             self.logger.info(summary)
             self.logger.info(separator)
