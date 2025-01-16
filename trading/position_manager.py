@@ -628,8 +628,8 @@ class DoomsdayPositionManager:
             positions_data = {"active": []}
             
             try:
-                # 使用 get_today_positions 方法获取持仓
-                stock_positions = await self.trade_ctx.get_today_positions()
+                # 使用 positions() 方法获取持仓
+                stock_positions = await self.trade_ctx.positions()
                 
                 if stock_positions:
                     for pos in stock_positions:
@@ -669,8 +669,8 @@ class DoomsdayPositionManager:
                 self.logger.info("尝试使用备用方法获取持仓...")
                 
                 try:
-                    # 尝试使用 get_stock_positions 方法
-                    stock_positions = await self.trade_ctx.get_stock_positions()
+                    # 尝试使用 account_positions() 方法
+                    stock_positions = await self.trade_ctx.account_positions()
                     if stock_positions:
                         for pos in stock_positions:
                             position_data = {
