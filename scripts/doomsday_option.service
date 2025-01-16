@@ -1,25 +1,78 @@
 [Unit]
 Description=Doomsday Option Trading Service
-After=network.target
+Documentation=https://github.com/lilliancoo86/options_trading
+After=network.target mysql.service
+Wants=mysql.service
+Description=Doomsday Option Service
+
 
 [Service]
-Type=simple
+# 基本配置
+Type=oneshot
+RemainAfterExit=yes
 User=trader
 Group=trader
 WorkingDirectory=/home/options_trading
+
+# 环境变量
 Environment=PYTHONPATH=/home/options_trading
+Environment=PYTHONUNBUFFERED=1
+Environment=STARTUP_DELAY=0
+EnvironmentFile=/home/options_trading/.env
+
+# 启动命令
+ExecStartPre=/bin/sleep ${STARTUP_DELAY}
 # 正常模式
 ExecStart=/home/options_trading/venv/bin/python -m scripts.main
+ExecStartPost=/home/options_trading/venv/bin/python scripts/calculate_startup_delay.py
+
 # 测试模式（需要时取消注释）
 ExecStart=/home/options_trading/venv/bin/python -m scripts.main --test
+
+# 重启配置
 Restart=on-failure
 RestartSec=10
-MemoryLimit=1500M
-TasksMax=100
+
+# 日志配置
+StandardOutput=append:/home/options_trading/logs/doomsday.log
+StandardError=append:/home/options_trading/logs/doomsday.error.log
+
+# 资源限制
+CPUQuota=50%
+MemoryLimit=500M
 LimitNOFILE=1024
+TimeoutStartSec=60
+TimeoutStopSec=60
+TasksMax=100
+LimitNPROC=100
+
+# 安全设置
 NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=no
 PrivateTmp=yes
-RestrictAddressFamilies=AF_INET AF_INET6
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# 目录权限（修复 ReadOnlyPaths）
+ReadWritePaths=/home/options_trading/logs /home/options_trading/.env
+ReadWritePaths=/run/user/1000
+
+# 网络配置
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+ExecStart=/path/to/first/command
+ExecStart=/path/to/second/command
+ExecStart=/path/to/third/command
+
 
 [Install]
 WantedBy=multi-user.target
