@@ -945,8 +945,23 @@ class DoomsdayPositionManager:
             trading_conditions += f"\n{'='*80}"
             self.logger.info(trading_conditions)
 
+            # 4. 持仓状态
+            positions = await self.get_real_positions()
+            if positions and positions.get("active"):
+                await self._print_positions_table(positions)
+            else:
+                self.logger.info("\n当前持仓状态:")
+                self.logger.info("暂无持仓")
+
+            # 5. 市场条件检查
+            if self.risk_checker.check_market_condition(self.current_vix, ny_time.strftime('%H:%M:%S')):
+                self.logger.info("市场条件满足交易要求")
+            else:
+                self.logger.info("市场条件不适合交易")
+
         except Exception as e:
             self.logger.error(f"打印交易状态时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
 
     async def _print_positions_table(self, positions_data: Dict[str, List[dict]]):
         """打印持仓标的明细"""
@@ -1428,7 +1443,7 @@ class DoomsdayPositionManager:
             if not positions or not positions.get("active"):
                 return
             
-            self.logger.info("开始检查持仓风险...")
+            self.logger.info(f"开始检查持仓风险... 持仓数量: {len(positions['active'])}")
             
             for pos in positions["active"]:
                 try:
@@ -1471,7 +1486,10 @@ class DoomsdayPositionManager:
                         f"  总成本: ${total_cost:.2f}\n"
                         f"  收益率: {current_pnl_pct:+.2f}%\n"
                         f"  价格趋势: {price_trend}\n"
-                        f"  时间趋势: {time_trend}"
+                        f"  时间趋势: {time_trend}\n"
+                        f"  止损设置: 初始={self.risk_checker.initial_stop_loss}%, "
+                        f"移动={self.risk_checker.trailing_stop}%, "
+                        f"止盈={self.risk_checker.take_profit}%"
                     )
                     
                     # 检查风险
@@ -1490,6 +1508,8 @@ class DoomsdayPositionManager:
                             volume=volume,
                             reason=reason
                         )
+                    else:
+                        self.logger.info(f"持仓 {pos['symbol']} 未触发风险管理条件")
                         
                 except Exception as e:
                     self.logger.error(f"检查单个持仓风险时出错 {pos['symbol']}: {str(e)}")
