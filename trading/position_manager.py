@@ -628,13 +628,8 @@ class DoomsdayPositionManager:
             positions_data = {"active": []}
             
             try:
-<<<<<<< HEAD
                 # 使用 stock_positions 方法获取持仓
-                stock_positions = self.trade_ctx.stock_positions()  # 移除 await
-=======
-                # 使用 stock_positions 方法获取持仓
-                stock_positions = await self.trade_ctx.stock_positions()
->>>>>>> 24ef34decbff98e019f0f345862f722ffcc1a899
+                stock_positions = self.trade_ctx.stock_positions()  # 同步方法，不需要 await
                 
                 if stock_positions:
                     for pos in stock_positions:
@@ -674,21 +669,12 @@ class DoomsdayPositionManager:
                 self.logger.info("尝试使用备用方法获取持仓...")
                 
                 try:
-<<<<<<< HEAD
                     # 尝试使用 today_orders 方法获取当日订单
                     today_orders = await self.trade_ctx.today_orders()
                     if today_orders:
                         # 处理订单信息，提取持仓
                         filled_orders = [order for order in today_orders if order.status == "filled"]
                         for order in filled_orders:
-=======
-                    # 尝试使用 today_orders 方法获取当日订单，从中提取持仓信息
-                    today_orders = await self.trade_ctx.today_orders()
-                    if today_orders:
-                        # 处理订单信息，提取持仓
-                        filled_orders = [order for order in today_orders if order.status == "filled"]
-                        for order in filled_orders:
->>>>>>> 24ef34decbff98e019f0f345862f722ffcc1a899
                             position_data = {
                                 "symbol": order.symbol,
                                 "volume": order.executed_quantity,
@@ -1387,21 +1373,6 @@ class DoomsdayPositionManager:
             # 计算趋势
             prices = [k.close for k in klines]
             change = (prices[-1] - prices[0]) / prices[0] * 100
-            
-            if change >= 20:
-                return "super_strong"
-            elif change >= 10:
-                return "strong"
-            elif change <= -20:
-                return "super_weak"
-            elif change <= -10:
-                return "weak"
-            else:
-                return "normal"
-            
-        except Exception as e:
-            self.logger.error(f"获取价格趋势时出错: {str(e)}")
-            return "normal"
 
     async def get_time_trend(self, symbol: str) -> str:
         """获取分时趋势"""
