@@ -794,7 +794,7 @@ class DoomsdayPositionManager:
 
             # 构建表格格式
             fmt = (
-                f"| {{:<{symbol_width}}} | {{:>8}} | {{:>12}} | {{:>20}} | {{:>25}} | {{:>25}} |"
+                f"| {{:<{symbol_width}}} | {{:>8}} | {{:>12}} | {{:>20}} | {{:>35}} | {{:>25}} |"
             )
             
             # 表头
@@ -803,7 +803,7 @@ class DoomsdayPositionManager:
                 "数量",           # 2. 数量
                 "市值",           # 3. 市值
                 "成本/现价",       # 4. 成本价/现价
-                "开盘→最高→现价",   # 5. 价格变动
+                "价格轨迹(涨跌幅)",   # 5. 价格变动轨迹
                 "当日盈亏/盈亏率"   # 6. 当日盈亏/盈亏率
             )
             
@@ -833,14 +833,13 @@ class DoomsdayPositionManager:
                         
                         # 计算各阶段涨跌幅
                         open_change_pct = ((open_price - prev_close) / prev_close * 100)
-                        high_change_pct = ((high_price - open_price) / open_price * 100)
-                        curr_change_pct = ((current_price - high_price) / high_price * 100)
+                        high_change_pct = ((high_price - prev_close) / prev_close * 100)
+                        curr_change_pct = ((current_price - prev_close) / prev_close * 100)
                         
                         # 构建价格变动指示
                         price_movement = (
-                            f"${open_price:.2f}({open_change_pct:+.1f}%)→"
-                            f"${high_price:.2f}({high_change_pct:+.1f}%)→"
-                            f"${current_price:.2f}({curr_change_pct:+.1f}%)"
+                            f"${open_price:.2f}→${high_price:.2f}→${current_price:.2f}\n"
+                            f"({open_change_pct:+.1f}%→{high_change_pct:+.1f}%→{curr_change_pct:+.1f}%)"
                         )
                         
                         # 计算当日盈亏
