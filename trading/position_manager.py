@@ -927,19 +927,28 @@ class DoomsdayPositionManager:
                 f"{'='*80}\n"
                 f"止损设置: {risk_limits['stop_loss']['initial']}% | "
                 f"移动止损: {risk_limits['stop_loss']['trailing']}% | "
-                f"止盈目标: {risk_limits['take_profit']}% | "
+                f"止盈目标: {risk_limits['take_profit']}%"
             )
-            
-            # 测试模式下显示额外的风控参数
-            if self.test_mode:
+
+            # 添加交易决策信息
+            if hasattr(self, 'trading_decision'):
+                decision = self.trading_decision
                 trading_conditions += (
-                    f"\n趋势参数: "
-                    f"快线={self.trend_config['fast_length']} | "
-                    f"慢线={self.trend_config['slow_length']} | "
-                    f"曲线={self.trend_config['curve_length']} | "
-                    f"周期={self.trend_config['trend_period']}"
+                    f"\n交易决策: {decision.get('action', '未知')} | "
+                    f"价格趋势: {decision.get('price_trend', '-')} | "
+                    f"分时趋势: {decision.get('time_trend', '-')} | "
+                    f"当前收益: {decision.get('pnl_pct', 0):+.1f}% | "
+                    f"VIX指数: {decision.get('vix', 0)}"
                 )
-            
+
+                # 如果有决策原因
+                if 'reason' in decision:
+                    trading_conditions += f"\n决策原因: {decision['reason']}"
+                
+                # 如果有回撤信息
+                if 'drawdown' in decision:
+                    trading_conditions += f"\n从最高点回撤: {decision['drawdown']:+.1f}%"
+
             trading_conditions += f"\n{'='*80}"
             self.logger.info(trading_conditions)
 
@@ -1412,3 +1421,11 @@ class DoomsdayPositionManager:
             
         except Exception as e:
             self.logger.error(f"收盘前平仓操作失败: {str(e)}")
+
+    def update_scenario(self, scenario_data: dict):
+        """更新当前场景信息"""
+        self.current_scenario = scenario_data
+
+    def update_trading_decision(self, decision_data: dict):
+        """更新交易决策信息"""
+        self.trading_decision = decision_data
