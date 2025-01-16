@@ -844,9 +844,9 @@ class DoomsdayPositionManager:
                             f"${day_pnl:+.2f}/{day_change_pct:+.2f}%"
                         )
                         self.logger.info(line)
-                        
-                    except Exception as e:
-                        self.logger.error(f"处理持仓显示时出错: {str(e)}")
+                
+                except Exception as e:
+                    self.logger.error(f"处理持仓显示时出错: {str(e)}")
             
             self.logger.info(separator)
             
