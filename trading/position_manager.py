@@ -1430,12 +1430,31 @@ class DoomsdayPositionManager:
             
             for pos in positions["active"]:
                 try:
-                    # 获取当前趋势信息
+                    # 获取最新行情数据
+                    quotes = await self.quote_ctx.quote([pos["symbol"]])
+                    if not quotes:
+                        continue
+                    quote = quotes[0]
+                    
+                    # 正确计算当前收益率
+                    cost_price = float(pos.get("cost_price", 0))
+                    current_price = float(quote.last_done)
+                    
+                    # 考虑期权合约乘数
+                    multiplier = 100 if self._is_option(pos["symbol"]) else 1
+                    
+                    # 计算实际收益率
+                    current_pnl_pct = ((current_price - cost_price) / abs(cost_price)) * 100
+                    
+                    # 获取趋势信息
                     price_trend = await self.get_price_trend(pos["symbol"])
                     time_trend = await self.get_time_trend(pos["symbol"])
                     
-                    # 计算当前收益率
-                    current_pnl_pct = (pos.get("current_price", 0) - pos.get("cost_price", 0)) / pos.get("cost_price", 1) * 100
+                    # 检查风险并记录日志
+                    self.logger.info(f"检查持仓风险 - {pos['symbol']}: "
+                                   f"成本价={cost_price:.2f}, 现价={current_price:.2f}, "
+                                   f"收益率={current_pnl_pct:+.2f}%, "
+                                   f"价格趋势={price_trend}, 时间趋势={time_trend}")
                     
                     # 检查风险
                     should_close, reason = self.risk_checker.check_position_risk(
@@ -1447,34 +1466,53 @@ class DoomsdayPositionManager:
                     
                     if should_close:
                         # 执行平仓
-                        await self.close_position(pos["symbol"], pos["volume"], reason)
+                        await self.close_position(
+                            symbol=pos["symbol"],
+                            volume=int(pos["volume"]),  # 确保数量为整数
+                            reason=reason
+                        )
                         self.logger.warning(f"执行风险管理平仓: {pos['symbol']}, 原因: {reason}")
                         
                 except Exception as e:
                     self.logger.error(f"检查单个持仓风险时出错 {pos['symbol']}: {str(e)}")
+                    self.logger.exception("详细错误信息:")
                 
         except Exception as e:
             self.logger.error(f"检查持仓风险时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
 
     async def close_position(self, symbol: str, volume: int, reason: str):
         """执行平仓操作"""
         try:
             self.logger.warning(f"执行平仓: {symbol}, 数量: {volume}, 原因: {reason}")
             
+            # 确保交易上下文存在
+            if not self.trade_ctx:
+                self.logger.error("交易上下文未初始化")
+                return
+            
             # 提交市价单平仓
-            await self.trade_ctx.submit_order(
+            order_resp = await self.trade_ctx.submit_order(
                 symbol=symbol,
-                order_type=OrderType.Market,
+                order_type=OrderType.Market,  # 使用市价单确保执行
                 side=OrderSide.Sell,
                 submitted_quantity=volume,
                 time_in_force=TimeInForceType.Day,
                 remark=f"Risk management: {reason}"
             )
             
-            self.logger.info(f"平仓订单已提交: {symbol}")
+            self.logger.info(f"平仓订单已提交: {symbol}, 订单ID: {order_resp.order_id}")
+            
+            # 等待订单状态更新
+            await asyncio.sleep(1)
+            
+            # 检查订单状态
+            order_status = await self.trade_ctx.get_order(order_resp.order_id)
+            self.logger.info(f"平仓订单状态: {order_status}")
             
         except Exception as e:
             self.logger.error(f"执行平仓操作失败 {symbol}: {str(e)}")
+            self.logger.exception("详细错误信息:")
 
     async def get_price_trend(self, symbol: str) -> str:
         """获取价格趋势"""
@@ -1551,11 +1589,34 @@ class DoomsdayPositionManager:
             self.trade_ctx = await TradeContext(self.longport_config).__aenter__()
             self.quote_ctx = await QuoteContext(self.longport_config).__aenter__()
             
-            # 启动风险监控
-            asyncio.create_task(self.start_risk_monitoring())
+            # 启动风险监控任务并保存引用
+            self.risk_monitor_task = asyncio.create_task(self.start_risk_monitoring())
+            self.logger.info("风险监控任务已启动")
             
             return self
             
         except Exception as e:
             self.logger.error(f"初始化失败: {str(e)}")
+            self.logger.exception("详细错误信息:")
             raise
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """异步上下文管理器退出"""
+        try:
+            # 取消风险监控任务
+            if hasattr(self, 'risk_monitor_task'):
+                self.risk_monitor_task.cancel()
+                try:
+                    await self.risk_monitor_task
+                except asyncio.CancelledError:
+                    pass
+            
+            # 关闭上下文
+            if self.trade_ctx:
+                await self.trade_ctx.__aexit__(exc_type, exc_val, exc_tb)
+            if self.quote_ctx:
+                await self.quote_ctx.__aexit__(exc_type, exc_val, exc_tb)
+            
+        except Exception as e:
+            self.logger.error(f"退出时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
