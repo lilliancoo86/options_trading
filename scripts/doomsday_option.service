@@ -20,10 +20,9 @@ EnvironmentFile=/home/options_trading/.env
 
 # 启动命令
 ExecStartPre=/bin/sleep ${STARTUP_DELAY}
+ExecStart=/home/options_trading/venv/bin/python -m scripts.main
 
-ExecStart=/home/options_trading/venv/bin/python -m scripts.main 
-
-# 如果需要切换到生产模式，只需要移除--test参数即可
+# 测试模式命令（取消注释即可启用测试模式）
 # ExecStart=/home/options_trading/venv/bin/python -m scripts.main --test
 
 ExecStartPost=/home/options_trading/venv/bin/python scripts/calculate_startup_delay.py
