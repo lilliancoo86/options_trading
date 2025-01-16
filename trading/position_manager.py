@@ -628,70 +628,84 @@ class DoomsdayPositionManager:
             positions_data = {"active": []}
             
             try:
-                # 使用 positions() 方法获取持仓
-                stock_positions = await self.trade_ctx.positions()
+                # 使用 history_executions 方法获取已成交订单
+                executions = await self.trade_ctx.history_executions(
+                    symbol="",  # 空字符串表示获取所有标的
+                    start_at=datetime.now(self.tz).replace(hour=0, minute=0, second=0),  # 当日开始时间
+                    end_at=datetime.now(self.tz)  # 当前时间
+                )
                 
-                if stock_positions:
-                    for pos in stock_positions:
-                        # 转换持仓数据格式
-                        position_data = {
-                            "symbol": pos.symbol,
-                            "volume": pos.quantity,
-                            "cost_price": float(pos.avg_price),
-                            "current_price": float(pos.current_price),
-                            "market_value": float(pos.market_value),
-                            "day_pnl": float(pos.unrealized_pnl),
-                            "day_pnl_pct": float(pos.unrealized_pnl_ratio) * 100,
-                            "total_pnl": float(pos.unrealized_pnl),
-                            "total_pnl_pct": float(pos.unrealized_pnl_ratio) * 100,
-                            "type": "stock" if not self._is_option(pos.symbol) else "option"
-                        }
+                if executions:
+                    # 按标的分组统计持仓
+                    positions = {}
+                    for exec in executions:
+                        symbol = exec.symbol
+                        if symbol not in positions:
+                            positions[symbol] = {
+                                "symbol": symbol,
+                                "volume": 0,
+                                "cost_total": 0,
+                                "current_price": 0,
+                                "market_value": 0
+                            }
                         
-                        # 添加到活跃持仓列表
-                        positions_data["active"].append(position_data)
-                        
-                        # 记录详细日志
-                        self.logger.debug(
-                            f"持仓数据 - {pos.symbol}:\n"
-                            f"  数量: {pos.quantity}\n"
-                            f"  成本价: ${float(pos.avg_price):.4f}\n"
-                            f"  现价: ${float(pos.current_price):.4f}\n"
-                            f"  市值: ${float(pos.market_value):.2f}\n"
-                            f"  未实现盈亏: ${float(pos.unrealized_pnl):+.2f}\n"
-                            f"  盈亏比例: {float(pos.unrealized_pnl_ratio)*100:+.2f}%"
-                        )
+                        # 根据买卖方向更新持仓
+                        quantity = exec.quantity
+                        if exec.side == OrderSide.Buy:
+                            positions[symbol]["volume"] += quantity
+                            positions[symbol]["cost_total"] += quantity * exec.price
+                        else:  # Sell
+                            positions[symbol]["volume"] -= quantity
+                            positions[symbol]["cost_total"] -= quantity * exec.price
+                    
+                    # 获取当前价格并计算持仓数据
+                    for symbol, pos in positions.items():
+                        if pos["volume"] > 0:  # 只处理有效持仓
+                            # 获取最新行情
+                            quotes = await self.quote_ctx.quote([symbol])
+                            if quotes:
+                                quote = quotes[0]
+                                current_price = float(quote.last_done)
+                                
+                                # 计算持仓数据
+                                cost_price = pos["cost_total"] / pos["volume"]
+                                market_value = current_price * pos["volume"]
+                                unrealized_pnl = market_value - pos["cost_total"]
+                                unrealized_pnl_ratio = unrealized_pnl / pos["cost_total"] if pos["cost_total"] != 0 else 0
+                                
+                                position_data = {
+                                    "symbol": symbol,
+                                    "volume": pos["volume"],
+                                    "cost_price": cost_price,
+                                    "current_price": current_price,
+                                    "market_value": market_value,
+                                    "day_pnl": unrealized_pnl,
+                                    "day_pnl_pct": unrealized_pnl_ratio * 100,
+                                    "total_pnl": unrealized_pnl,
+                                    "total_pnl_pct": unrealized_pnl_ratio * 100,
+                                    "type": "stock" if not self._is_option(symbol) else "option"
+                                }
+                                
+                                positions_data["active"].append(position_data)
+                                
+                                # 记录详细日志
+                                self.logger.debug(
+                                    f"持仓数据 - {symbol}:\n"
+                                    f"  数量: {pos['volume']}\n"
+                                    f"  成本价: ${cost_price:.4f}\n"
+                                    f"  现价: ${current_price:.4f}\n"
+                                    f"  市值: ${market_value:.2f}\n"
+                                    f"  未实现盈亏: ${unrealized_pnl:+.2f}\n"
+                                    f"  盈亏比例: {unrealized_pnl_ratio*100:+.2f}%"
+                                )
                 
                 self.logger.info(f"获取到 {len(positions_data['active'])} 个持仓")
                 return positions_data
 
-            except AttributeError as e:
-                self.logger.error(f"API 方法不存在: {str(e)}")
-                self.logger.info("尝试使用备用方法获取持仓...")
-                
-                try:
-                    # 尝试使用 account_positions() 方法
-                    stock_positions = await self.trade_ctx.account_positions()
-                    if stock_positions:
-                        for pos in stock_positions:
-                            position_data = {
-                                "symbol": pos.symbol,
-                                "volume": pos.quantity,
-                                "cost_price": float(pos.avg_price),
-                                "current_price": float(pos.current_price),
-                                "market_value": float(pos.market_value),
-                                "day_pnl": float(pos.unrealized_pnl),
-                                "day_pnl_pct": float(pos.unrealized_pnl_ratio) * 100,
-                                "total_pnl": float(pos.unrealized_pnl),
-                                "total_pnl_pct": float(pos.unrealized_pnl_ratio) * 100,
-                                "type": "stock" if not self._is_option(pos.symbol) else "option"
-                            }
-                            positions_data["active"].append(position_data)
-                    
-                    return positions_data
-                    
-                except Exception as e2:
-                    self.logger.error(f"备用方法也失败: {str(e2)}")
-                    raise
+            except Exception as e:
+                self.logger.error(f"获取持仓数据时出错: {str(e)}")
+                self.logger.exception("详细错误信息:")
+                return None
 
         except Exception as e:
             self.logger.error(f"获取持仓数据时出错: {str(e)}")
