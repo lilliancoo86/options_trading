@@ -13,6 +13,7 @@ from longport.openapi import TradeContext, QuoteContext, Config, SubType, OrderT
 from tabulate import tabulate
 import asyncio
 from trading.risk_checker import RiskChecker  # 添加导入
+import re
 
 class MarketInfoFilter(logging.Filter):
     """过滤掉市场权限信息的日志过滤器"""
@@ -794,100 +795,86 @@ class DoomsdayPositionManager:
 
             # 构建表格格式
             fmt = (
-                f"| {{:<{symbol_width}}} | {{:>8}} | {{:>12}} | {{:>20}} | {{:>25}} | {{:>25}} |"
+                f"{{:<{symbol_width}}} {{:>1}} {{:>8}} {{:>6}} {{:>30}} {{:>10}} {{:>8}}"
             )
             
             # 表头
             header = fmt.format(
-                "代码",            # 1. 代码
-                "数量",           # 2. 数量
-                "市值",           # 3. 市值
-                "成本/现价",       # 4. 成本价/现价
-                "Last Price (Chg%)",  # 5. 最新价格和涨跌幅
-                "当日盈亏/盈亏率"   # 6. 当日盈亏/盈亏率
+                "Symbol",          # 1. 期权代码
+                "b",              # 2. 买卖方向
+                "Volume",         # 3. 成交量
+                "days",          # 4. 剩余天数
+                "last",          # 5. 价格变动
+                "o_date",        # 6. 开仓日期
+                "%"              # 7. 盈亏百分比
             )
             
-            # 计算分隔线长度
-            total_width = len(header)
-            separator = "=" * total_width
+            # 分隔线
+            separator = "-" * len(header)
 
             # 打印表头
-            self.logger.info(f"\n期权持仓明细:\n{separator}")
-            self.logger.info(header)
+            self.logger.info(f"\n{header}")
             self.logger.info(separator)
             
             # 按代码排序显示所有持仓
-            total_value = 0
-            total_day_pnl = 0
-            
             for pos in sorted(positions, key=lambda x: x["symbol"]):
                 try:
                     # 获取行情数据
                     quote = self.quote_ctx.quote([pos["symbol"]])
                     if quote and len(quote) > 0:
                         quote = quote[0]
-                        open_price = float(quote.open)
-                        high_price = float(quote.high)
                         current_price = float(quote.last_done)
-                        prev_close = float(quote.prev_close)
+                        cost_price = float(pos["cost_price"])
                         
                         # 计算涨跌幅
-                        price_change = current_price - prev_close
-                        price_change_pct = (price_change / prev_close * 100) if prev_close else 0
+                        price_change_pct = ((current_price - cost_price) / cost_price * 100) if cost_price else 0
                         
-                        # 构建价格变动指示
-                        price_movement = (
-                            f"${current_price:.2f} ({price_change_pct:+.1f}%)\n"
-                            f"H: ${high_price:.2f} O: ${open_price:.2f}"
+                        # 计算剩余天数（从期权代码中提取到期日）
+                        expiry_date = self._extract_expiry_date(pos["symbol"])
+                        days_left = (expiry_date - datetime.now()).days if expiry_date else 0
+                        
+                        # 获取开仓日期（这里需要添加到持仓数据中）
+                        open_date = pos.get("open_date", "N/A")
+                        if isinstance(open_date, datetime):
+                            open_date = open_date.strftime("%m-%d")
+                        
+                        # 构建价格变动字符串
+                        price_str = f"{cost_price:.2f} -> {current_price:.2f} ({price_change_pct:+.2f}%)"
+                        
+                        # 确定买卖方向
+                        direction = "1" if pos["volume"] > 0 else "0"
+                        
+                        # 构建行数据
+                        line = fmt.format(
+                            pos["symbol"],
+                            direction,
+                            abs(pos["volume"]),
+                            days_left,
+                            price_str,
+                            open_date,
+                            f"{abs(price_change_pct):.2f}"
                         )
+                        self.logger.info(line)
                         
-                        # 计算当日盈亏
-                        day_pnl = price_change * pos["volume"]
-                        day_pnl_pct = price_change_pct
-                    else:
-                        price_movement = "N/A"
-                        day_pnl = 0
-                        day_pnl_pct = 0
-                    
-                    # 格式化数据
-                    quantity = pos["volume"]
-                    cost_price = pos["cost_price"]
-                    current_price = pos["current_price"]
-                    market_value = pos["market_value"]
-                    
-                    # 构建行数据
-                    line = fmt.format(
-                        pos["symbol"],
-                        f"{quantity:d}",
-                        f"${market_value:.2f}",
-                        f"${cost_price:.2f}/${current_price:.2f}",
-                        price_movement,
-                        f"${day_pnl:+.2f}/{day_pnl_pct:+.2f}%"
-                    )
-                    self.logger.info(line)
-                    
-                    total_value += market_value
-                    total_day_pnl += day_pnl
-                    
-                except Exception as e:
-                    self.logger.error(f"处理持仓显示时出错: {str(e)}")
+                    except Exception as e:
+                        self.logger.error(f"处理持仓显示时出错: {str(e)}")
             
-            # 显示合计行
-            self.logger.info(separator)
-            total_day_pnl_pct = (total_day_pnl / total_value * 100) if total_value else 0
-            summary = fmt.format(
-                f"总计({len(positions)})",
-                "",
-                f"${total_value:.2f}",
-                "",
-                "",
-                f"${total_day_pnl:+.2f}/{total_day_pnl_pct:+.2f}%"
-            )
-            self.logger.info(summary)
             self.logger.info(separator)
             
         except Exception as e:
             self.logger.error(f"打印持仓表格时出错: {str(e)}")
+
+    def _extract_expiry_date(self, symbol: str) -> Optional[datetime]:
+        """从期权代码中提取到期日"""
+        try:
+            # 假设格式为 XXXYYMMDDCNN.US
+            date_str = re.search(r'(\d{6})[CP]', symbol)
+            if date_str:
+                date_str = date_str.group(1)
+                return datetime.strptime(f"20{date_str}", "%Y%m%d")
+            return None
+        except Exception:
+            return None
 
     def is_market_open(self, current_time: datetime) -> bool:
         """检查市场是否开放"""
