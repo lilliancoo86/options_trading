@@ -31,8 +31,8 @@ ExecStartPost=/home/options_trading/venv/bin/python scripts/calculate_startup_de
 Restart=no
 
 # 日志配置
-StandardOutput=append:/home/options_trading/logs/doomsday.log
-StandardError=append:/home/options_trading/logs/doomsday.error.log
+StandardOutput=syslog
+StandardError=syslog
 
 # 资源限制
 CPUQuota=50%
@@ -43,25 +43,11 @@ TimeoutStopSec=60
 TasksMax=100
 LimitNPROC=100
 
-# 安全设置
+# 基础安全设置
 NoNewPrivileges=yes
 ProtectSystem=full
 ProtectHome=no
 PrivateTmp=yes
-ProtectKernelTunables=yes
-ProtectControlGroups=yes
-ProtectKernelModules=yes
-ProtectKernelLogs=yes
-RestrictRealtime=yes
-RestrictSUIDSGID=yes
-RestrictNamespaces=yes
-CapabilityBoundingSet=
-SystemCallFilter=@system-service
-SystemCallErrorNumber=EPERM
-
-# 目录权限
-ReadWritePaths=/home/options_trading/logs /home/options_trading/.env
-ReadWritePaths=/run/user/1000
 
 # 网络配置
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
