@@ -634,124 +634,57 @@ class DoomsdayPositionManager:
                 self.logger.debug(f"原始持仓数据: {stock_positions}")
                 
                 # 获取持仓列表
-                if hasattr(stock_positions, 'positions'):
-                    positions_list = stock_positions.positions
-                    self.logger.debug(f"从 positions 属性获取到持仓列表: {positions_list}")
-                elif hasattr(stock_positions, 'list'):
-                    positions_list = stock_positions.list
-                    self.logger.debug(f"从 list 属性获取到持仓列表: {positions_list}")
-                elif isinstance(stock_positions, (list, tuple)):
-                    positions_list = stock_positions
-                    self.logger.debug(f"直接使用持仓列表: {positions_list}")
-                else:
-                    positions_list = []
-                    self.logger.warning(f"无法解析持仓数据，类型: {type(stock_positions)}")
-                
-                if positions_list:
-                    for pos in positions_list:
-                        self.logger.debug(f"处理持仓: {pos}")
-                        # 转换持仓数据格式
-                        position_data = {
-                            "symbol": pos.symbol,
-                            "volume": pos.quantity,
-                            "cost_price": float(pos.avg_price),
-                            "current_price": float(pos.current_price),
-                            "market_value": float(pos.market_value),
-                            "day_pnl": float(pos.unrealized_pnl),
-                            "day_pnl_pct": float(pos.unrealized_pnl_ratio) * 100,
-                            "total_pnl": float(pos.unrealized_pnl),
-                            "total_pnl_pct": float(pos.unrealized_pnl_ratio) * 100,
-                            "type": "stock" if not self._is_option(pos.symbol) else "option"
-                        }
-                        
-                        # 添加到活跃持仓列表
-                        positions_data["active"].append(position_data)
-                        
-                        # 记录详细日志
-                        self.logger.debug(
-                            f"持仓数据 - {pos.symbol}:\n"
-                            f"  数量: {pos.quantity}\n"
-                            f"  成本价: ${float(pos.avg_price):.4f}\n"
-                            f"  现价: ${float(pos.current_price):.4f}\n"
-                            f"  市值: ${float(pos.market_value):.2f}\n"
-                            f"  未实现盈亏: ${float(pos.unrealized_pnl):+.2f}\n"
-                            f"  盈亏比例: {float(pos.unrealized_pnl_ratio)*100:+.2f}%"
-                        )
-                
-                self.logger.info(f"获取到 {len(positions_data['active'])} 个持仓")
-                
-                # 如果没有持仓，尝试使用备用方法
-                if not positions_data["active"]:
-                    self.logger.info("主方法未获取到持仓，尝试使用备用方法...")
-                    try:
-                        # 尝试使用 today_executions 方法
-                        executions = self.trade_ctx.today_executions()
-                        self.logger.debug(f"获取到成交记录: {executions}")
-                        
-                        executions_list = executions.trades if hasattr(executions, 'trades') else []
-                        self.logger.debug(f"解析成交列表: {executions_list}")
-                        
-                        if executions_list:
-                            # 按标的分组统计持仓
-                            positions = {}
-                            for exec in executions_list:
-                                symbol = exec.symbol
-                                self.logger.debug(f"处理成交记录: {symbol}, 方向: {exec.direction}, 数量: {exec.quantity}")
+                if hasattr(stock_positions, 'channels'):
+                    for channel in stock_positions.channels:
+                        if hasattr(channel, 'positions'):
+                            for pos in channel.positions:
+                                self.logger.debug(f"处理持仓: {pos}")
+                                # 转换持仓数据格式
+                                position_data = {
+                                    "symbol": pos.symbol,
+                                    "volume": pos.quantity,
+                                    "cost_price": float(pos.cost_price),
+                                    "current_price": float(pos.cost_price),  # 暂时使用成本价
+                                    "market_value": float(pos.cost_price * pos.quantity),
+                                    "day_pnl": 0.0,  # 需要通过行情更新
+                                    "day_pnl_pct": 0.0,  # 需要通过行情更新
+                                    "total_pnl": 0.0,  # 需要通过行情更新
+                                    "total_pnl_pct": 0.0,  # 需要通过行情更新
+                                    "type": "option" if self._is_option(pos.symbol) else "stock"
+                                }
                                 
-                                if symbol not in positions:
-                                    positions[symbol] = {
-                                        "symbol": symbol,
-                                        "volume": 0,
-                                        "cost_total": 0,
-                                        "current_price": 0,
-                                        "market_value": 0
-                                    }
-                                
-                                # 根据买卖方向更新持仓
-                                quantity = exec.quantity
-                                if exec.direction == "Buy":  # 使用 direction 字段
-                                    positions[symbol]["volume"] += quantity
-                                    positions[symbol]["cost_total"] += quantity * float(exec.price)
-                                else:  # Sell
-                                    positions[symbol]["volume"] -= quantity
-                                    positions[symbol]["cost_total"] -= quantity * float(exec.price)
-                                
-                                self.logger.debug(f"更新后的持仓: {positions[symbol]}")
-                            
-                            # 获取当前价格并计算持仓数据
-                            for symbol, pos in positions.items():
-                                if pos["volume"] > 0:  # 只处理有效持仓
-                                    # 获取最新行情
-                                    quotes = await self.quote_ctx.quote([symbol])
+                                # 获取最新行情更新价格和盈亏
+                                try:
+                                    quotes = await self.quote_ctx.quote([pos.symbol])
                                     if quotes:
                                         quote = quotes[0]
                                         current_price = float(quote.last_done)
-                                        
-                                        # 计算持仓数据
-                                        cost_price = pos["cost_total"] / pos["volume"]
-                                        market_value = current_price * pos["volume"]
-                                        unrealized_pnl = market_value - pos["cost_total"]
-                                        unrealized_pnl_ratio = unrealized_pnl / pos["cost_total"] if pos["cost_total"] != 0 else 0
-                                        
-                                        position_data = {
-                                            "symbol": symbol,
-                                            "volume": pos["volume"],
-                                            "cost_price": cost_price,
+                                        position_data.update({
                                             "current_price": current_price,
-                                            "market_value": market_value,
-                                            "day_pnl": unrealized_pnl,
-                                            "day_pnl_pct": unrealized_pnl_ratio * 100,
-                                            "total_pnl": unrealized_pnl,
-                                            "total_pnl_pct": unrealized_pnl_ratio * 100,
-                                            "type": "stock" if not self._is_option(symbol) else "option"
-                                        }
-                                        positions_data["active"].append(position_data)
-                                        self.logger.debug(f"添加持仓数据: {position_data}")
+                                            "market_value": current_price * pos.quantity,
+                                            "day_pnl": (current_price - float(pos.cost_price)) * pos.quantity,
+                                            "day_pnl_pct": ((current_price - float(pos.cost_price)) / float(pos.cost_price)) * 100,
+                                            "total_pnl": (current_price - float(pos.cost_price)) * pos.quantity,
+                                            "total_pnl_pct": ((current_price - float(pos.cost_price)) / float(pos.cost_price)) * 100
+                                        })
+                                except Exception as e:
+                                    self.logger.warning(f"获取行情数据失败: {str(e)}")
+                                
+                                # 添加到活跃持仓列表
+                                positions_data["active"].append(position_data)
+                                
+                                # 记录详细日志
+                                self.logger.debug(
+                                    f"持仓数据 - {pos.symbol}:\n"
+                                    f"  数量: {pos.quantity}\n"
+                                    f"  成本价: ${float(pos.cost_price):.4f}\n"
+                                    f"  现价: ${position_data['current_price']:.4f}\n"
+                                    f"  市值: ${position_data['market_value']:.2f}\n"
+                                    f"  未实现盈亏: ${position_data['total_pnl']:+.2f}\n"
+                                    f"  盈亏比例: {position_data['total_pnl_pct']:+.2f}%"
+                                )
                 
-                    except Exception as e2:
-                        self.logger.error(f"备用方法也失败: {str(e2)}")
-                        self.logger.exception("详细错误信息:")
-                
+                self.logger.info(f"获取到 {len(positions_data['active'])} 个持仓")
                 return positions_data
 
             except Exception as e:
