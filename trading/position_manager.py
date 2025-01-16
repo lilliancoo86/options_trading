@@ -795,7 +795,7 @@ class DoomsdayPositionManager:
 
             # 构建表格格式
             fmt = (
-                f"{{:<{symbol_width}}} {{:>8}} {{:>12}} {{:>20}} {{:>25}} {{:>25}}"
+                f"{{:<{symbol_width}}} {{:>8}} {{:>12}} {{:>30}} {{:>25}}"
             )
             
             # 表头
@@ -803,9 +803,8 @@ class DoomsdayPositionManager:
                 "Symbol",          # 1. 期权代码
                 "Volume",         # 2. 数量
                 "市值",           # 3. 市值
-                "成本/现价",       # 4. 成本价/现价
-                "last",          # 5. 价格变动
-                "当日盈亏/盈亏率"   # 6. 盈亏信息
+                "last",          # 4. 价格变动
+                "当日盈亏/盈亏率"   # 5. 盈亏信息
             )
             
             # 分隔线
@@ -841,7 +840,6 @@ class DoomsdayPositionManager:
                             pos["symbol"],
                             f"{abs(pos['volume']):d}",
                             f"${pos['market_value']:.2f}",
-                            f"${cost_price:.2f}/${current_price:.2f}",
                             last_str,
                             f"${day_pnl:+.2f}/{day_change_pct:+.2f}%"
                         )
