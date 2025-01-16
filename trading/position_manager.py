@@ -655,10 +655,9 @@ class DoomsdayPositionManager:
                                 
                                 # 获取最新行情更新价格和盈亏
                                 try:
-                                    quotes = await self.quote_ctx.quote([pos.symbol])
-                                    if quotes:
-                                        quote = quotes[0]
-                                        current_price = float(quote.last_done)
+                                    quote = self.quote_ctx.quote([pos.symbol])  # 移除 await
+                                    if quote and len(quote) > 0:
+                                        current_price = float(quote[0].last_done)
                                         position_data.update({
                                             "current_price": current_price,
                                             "market_value": current_price * pos.quantity,
@@ -667,6 +666,7 @@ class DoomsdayPositionManager:
                                             "total_pnl": (current_price - float(pos.cost_price)) * pos.quantity,
                                             "total_pnl_pct": ((current_price - float(pos.cost_price)) / float(pos.cost_price)) * 100
                                         })
+                                        self.logger.debug(f"获取到行情数据: {quote[0]}")
                                 except Exception as e:
                                     self.logger.warning(f"获取行情数据失败: {str(e)}")
                                 
