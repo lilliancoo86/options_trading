@@ -952,7 +952,7 @@ class DoomsdayPositionManager:
         """打印持仓标的明细"""
         try:
             if not positions_data or not positions_data.get("active"):
-                self.logger.info(f"\n暂无持仓{' [测试模式]' if self.test_mode else ''}")
+                self.logger.info("\n暂无持仓")
                 return
 
             # 获取所有持仓数据
@@ -970,7 +970,6 @@ class DoomsdayPositionManager:
             )
             
             # 表头
-            title = "持仓标的明细" + (" [测试模式]" if self.test_mode else "")
             header = fmt.format(
                 "代码",            # 1. 代码
                 "市值",            # 2. 市值
@@ -984,7 +983,7 @@ class DoomsdayPositionManager:
             separator = "=" * total_width
 
             # 打印表头
-            self.logger.info(f"\n{title}:\n{separator}")
+            self.logger.info(f"\n持仓标的明细:\n{separator}")
             self.logger.info(header)
             self.logger.info(separator)
 
