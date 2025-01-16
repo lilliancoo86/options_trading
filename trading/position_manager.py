@@ -618,277 +618,36 @@ class DoomsdayPositionManager:
         return stats
 
     async def get_real_positions(self):
-        """获取实际的持仓数据"""
+        """获取实际持仓数据"""
         try:
-            positions_data = {
-                "active": [],
-                "closed": []
-            }
-            
-            try:
-                # 确保交易上下文已初始化
-                if self._trade_ctx is None:
-                    self._trade_ctx = TradeContext(self.longport_config)
-                    self._trade_ctx.account_balance()
-                    self.logger.debug("交易上下文初始化成功")
-                
-                # 获取当日持仓信息
-                positions_resp = self._trade_ctx.stock_positions()
-                
-                if positions_resp and hasattr(positions_resp, 'channels'):
-                    for channel in positions_resp.channels:
-                        if hasattr(channel, 'positions'):
-                            # 打印当日持仓表格
-                            self.logger.info("\n=== 当日交易持仓明细 ===")
-                            position_data = []
-                            
-                            # 获取所有持仓数据，用于计算列宽
-                            max_symbol_len = max((len(pos.symbol_name) for pos in channel.positions), default=10)
-                            
-                            for pos in channel.positions:
-                                try:
-                                    # 获取基本信息
-                                    symbol = pos.symbol
-                                    symbol_name = pos.symbol_name
-                                    quantity = abs(int(pos.quantity))
-                                    cost_price = float(pos.cost_price)
-                                    currency = pos.currency
-                                    market = pos.market
-                                    
-                                    # 判断是否是期权
-                                    is_option = 'C' in symbol or 'P' in symbol
-                                    
-                                    # 获取当前价格和日内变化
-                                    try:
-                                        # 确保行情上下文可用
-                                        quote = self.quote_ctx.quote([symbol])
-                                        if quote and len(quote) > 0:
-                                            current_price = float(quote[0].last_done)
-                                            prev_close = float(quote[0].prev_close)
-                                            day_change = current_price - prev_close
-                                            day_change_pct = (day_change / prev_close * 100) if prev_close != 0 else 0
-                                        else:
-                                            self.logger.debug(f"未获取到行情数据: {symbol}")
-                                            current_price = cost_price
-                                            day_change = 0
-                                            day_change_pct = 0
-                                    except Exception as e:
-                                        self.logger.debug(f"获取行情失败: {str(e)}")
-                                        current_price = cost_price
-                                        day_change = 0
-                                        day_change_pct = 0
-                                    
-                                    # 计算持仓数据
-                                    multiplier = 100 if is_option else 1
-                                    total_cost = quantity * cost_price * multiplier
-                                    current_value = quantity * current_price * multiplier
-                                    pnl = current_value - total_cost
-                                    pnl_pct = (pnl / total_cost * 100) if total_cost != 0 else 0
-                                    
-                                    # 计算当日盈亏
-                                    day_pnl = quantity * day_change * multiplier
-                                    day_pnl_pct = day_change_pct
-                                    
-                                    # 格式化显示数据
-                                    position_row = {
-                                        "标的": symbol_name,
-                                        "代码": symbol,
-                                        "类型": "期权" if is_option else "股票",
-                                        "数量": f"{quantity}{'张' if is_option else '股'}",
-                                        "成本": f"${cost_price:.3f}",
-                                        "现价": f"${current_price:.3f}",
-                                        "当日涨跌": f"${day_change:+.3f}",
-                                        "当日涨跌幅": f"{day_change_pct:+.1f}%",
-                                        "当日盈亏": f"${day_pnl:,.0f}",
-                                        "总成本": f"${total_cost:,.0f}",
-                                        "市值": f"${current_value:,.0f}",
-                                        "总盈亏": f"${pnl:,.0f}",
-                                        "总收益率": f"{pnl_pct:+.1f}%",
-                                        "币种": currency,
-                                        "状态": "正常" if quantity > 0 else "锁定"
-                                    }
-                                    position_data.append(position_row)
-                                    
-                                    # 保存到返回数据
-                                    positions_data["active"].append({
-                                        "symbol": symbol,
-                                        "type": "option" if is_option else "stock",
-                                        "volume": quantity,
-                                        "cost_price": cost_price,
-                                        "current_price": current_price,
-                                        "total_cost": total_cost,
-                                        "value": current_value,
-                                        "pnl": pnl,
-                                        "pnl_pct": pnl_pct,
-                                        "status": "active" if quantity > 0 else "locked"
-                                    })
-                                    
-                                except Exception as e:
-                                    self.logger.error(f"处理持仓数据时出错: {str(e)}, 持仓数据: {pos}")
-                                    continue
-                            
-                            if position_data:
-                                # 自定义表格样式
-                                headers = {
-                                    "标的": "标的",
-                                    "代码": "代码",
-                                    "类型": "类型",
-                                    "数量": "数量",
-                                    "成本": "成本",
-                                    "现价": "现价",
-                                    "当日涨跌": "当日涨跌",
-                                    "当日涨跌幅": "当日涨跌幅",
-                                    "当日盈亏": "当日盈亏",
-                                    "总成本": "总成本",
-                                    "市值": "市值",
-                                    "总盈亏": "总盈亏",
-                                    "总收益率": "总收益率",
-                                    "币种": "币种",
-                                    "状态": "状态"
-                                }
-
-                                # 设置表格格式
-                                table_format = {
-                                    "tablefmt": "grid",
-                                    "numalign": "decimal",
-                                    "stralign": "left",
-                                    "floatfmt": ".2f",
-                                    "colalign": (
-                                        "left",    # 标的
-                                        "left",    # 代码
-                                        "center",  # 类型
-                                        "right",   # 数量
-                                        "decimal", # 成本
-                                        "decimal", # 现价
-                                        "decimal", # 当日涨跌
-                                        "decimal", # 当日涨跌幅
-                                        "decimal", # 当日盈亏
-                                        "decimal", # 总成本
-                                        "decimal", # 市值
-                                        "decimal", # 总盈亏
-                                        "decimal", # 总收益率
-                                        "center",  # 币种
-                                        "center"   # 状态
-                                    )
-                                }
-
-                                # 显示持仓表格
-                                position_table = tabulate(
-                                    position_data,
-                                    headers=headers,  # 使用之前定义的 headers 字典
-                                    maxcolwidths=[
-                                        22,  # 标的
-                                        16,  # 代码
-                                        8,   # 类型
-                                        10,  # 数量
-                                        12,  # 成本
-                                        12,  # 现价
-                                        12,  # 当日涨跌
-                                        12,  # 当日涨跌幅
-                                        14,  # 当日盈亏
-                                        14,  # 总成本
-                                        14,  # 市值
-                                        14,  # 总盈亏
-                                        12,  # 总收益率
-                                        8,   # 币种
-                                        8    # 状态
-                                    ],
-                                    **table_format
-                                )
-
-                                # 添加表格标题和分隔线
-                                title = "\n" + "=" * 180 + "\n" + "当日交易持仓明细".center(180) + "\n" + "=" * 180 + "\n"
-                                self.logger.info(f"{title}{position_table}")
-                                
-                                # 计算并显示持仓统计
-                                total_cost = sum(float(pos["总成本"].replace("$", "").replace(",", "")) for pos in position_data)
-                                total_value = sum(float(pos["市值"].replace("$", "").replace(",", "")) for pos in position_data)
-                                total_pnl = total_value - total_cost
-                                total_pnl_pct = (total_pnl / total_cost * 100) if total_cost != 0 else 0
-                                total_day_pnl = sum(float(pos["当日盈亏"].replace("$", "").replace(",", "")) for pos in position_data)
-                                
-                                # 分类统计
-                                stock_positions = [pos for pos in position_data if pos["类型"] == "股票"]
-                                option_positions = [pos for pos in position_data if pos["类型"] == "期权"]
-                                
-                                stock_value = sum(float(pos["市值"].replace("$", "").replace(",", "")) for pos in stock_positions)
-                                option_value = sum(float(pos["市值"].replace("$", "").replace(",", "")) for pos in option_positions)
-                                
-                                summary = [{
-                                    "持仓总数": f"{len(position_data)}个",
-                                    "股票": f"{len(stock_positions)}个 (${stock_value:,.0f})",
-                                    "期权": f"{len(option_positions)}个 (${option_value:,.0f})",
-                                    "当日盈亏": f"${total_day_pnl:,.0f}",
-                                    "总成本": f"${total_cost:,.0f}",
-                                    "总市值": f"${total_value:,.0f}",
-                                    "总盈亏": f"${total_pnl:,.0f}",
-                                    "总收益率": f"{total_pnl_pct:+.1f}%"
-                                }]
-                                
-                                # 设置汇总表格格式
-                                summary_format = {
-                                    "tablefmt": "grid",
-                                    "numalign": "decimal",
-                                    "stralign": "center",
-                                    "colalign": ("center",) * len(summary[0]),
-                                    "floatfmt": ".2f"
-                                }
-                                
-                                summary_table = tabulate(
-                                    summary,
-                                    headers="keys",
-                                    **summary_format
-                                )
-                                
-                                # 添加汇总标题
-                                summary_title = "\n" + "=" * 80 + "\n" + "持仓汇总统计".center(80) + "\n" + "=" * 80 + "\n"
-                                self.logger.info(f"{summary_title}{summary_table}")
-                                
-                                # 显示持仓明细
-                                detail_title = "\n" + "=" * 120 + "\n" + "持仓标的明细".center(120) + "\n" + "=" * 120
-                                self.logger.info(detail_title)
-                                
-                                # 格式化持仓明细显示
-                                for pos_type, positions in [("股票", stock_positions), ("期权", option_positions)]:
-                                    if positions:
-                                        self.logger.info(f"\n{pos_type}持仓:")
-                                        # 创建明细表头
-                                        detail_header = (
-                                            "| {:<20} | {:<18} | {:<8} | {:<10} | {:<10} | {:<12} | {:<12} | {:<12} |"
-                                            .format("标的", "代码", "数量", "成本", "现价", "当日涨跌", "市值", "总盈亏")
-                                        )
-                                        detail_separator = "-" * len(detail_header)
-                                        self.logger.info(detail_separator)
-                                        self.logger.info(detail_header)
-                                        self.logger.info(detail_separator)
-                                        
-                                        for pos in positions:
-                                            detail_line = (
-                                                "| {:<20} | {:<18} | {:<8} | {:<10} | {:<10} | {:<12} | {:<12} | {:<12} |"
-                                                .format(
-                                                    pos['标的'][:20],
-                                                    pos['代码'][:18],
-                                                    pos['数量'],
-                                                    pos['成本'],
-                                                    pos['现价'],
-                                                    f"{pos['当日涨跌']} ({pos['当日涨跌幅']})",
-                                                    pos['市值'],
-                                                    f"{pos['总盈亏']} ({pos['总收益率']})"
-                                                )
-                                            )
-                                            self.logger.info(detail_line)
-                                        self.logger.info(detail_separator)
-
-                return positions_data
-
-            except Exception as e:
-                self.logger.error(f"获取持仓数据时出错: {str(e)}")
-                self.logger.exception("详细错误信息:")
-                self._trade_ctx = None
+            if not self.trade_ctx:
+                self.logger.error("交易上下文未初始化")
                 return None
 
+            # 获取持仓数据
+            positions_data = {"active": []}
+            
+            # 获取股票持仓
+            stock_positions = await self.trade_ctx.positions()
+            if stock_positions:
+                for pos in stock_positions:
+                    positions_data["active"].append({
+                        "symbol": pos.symbol,
+                        "volume": pos.quantity,
+                        "cost_price": float(pos.cost_price),
+                        "current_price": float(pos.current_price),
+                        "market_value": float(pos.market_value),
+                        "day_pnl": float(pos.day_pnl),
+                        "day_pnl_pct": float(pos.day_pnl_ratio) * 100,
+                        "total_pnl": float(pos.pnl),
+                        "total_pnl_pct": float(pos.pnl_ratio) * 100
+                    })
+            
+            self.logger.info(f"获取到 {len(positions_data['active'])} 个持仓")
+            return positions_data
+
         except Exception as e:
-            self.logger.error(f"获取实际持仓数据失败: {str(e)}")
+            self.logger.error(f"获取持仓数据时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
             return None
 
@@ -1441,6 +1200,7 @@ class DoomsdayPositionManager:
         try:
             positions = await self.get_real_positions()
             if not positions or not positions.get("active"):
+                self.logger.info("无持仓，跳过风险检查")
                 return
             
             self.logger.info(f"开始检查持仓风险... 持仓数量: {len(positions['active'])}")
@@ -1452,25 +1212,9 @@ class DoomsdayPositionManager:
                     if not quotes:
                         self.logger.warning(f"无法获取行情数据: {pos['symbol']}")
                         continue
-                    quote = quotes[0]
                     
-                    # 获取持仓详细信息
-                    cost_price = float(pos.get("cost_price", 0))
-                    current_price = float(quote.last_done)
-                    volume = int(pos.get("volume", 0))
-                    
-                    # 考虑期权合约乘数
-                    multiplier = 100 if self._is_option(pos["symbol"]) else 1
-                    
-                    # 计算持仓市值和盈亏
-                    position_value = current_price * volume * multiplier
-                    total_cost = cost_price * volume * multiplier
-                    
-                    # 计算实际收益率
-                    if total_cost != 0:
-                        current_pnl_pct = ((position_value - total_cost) / abs(total_cost)) * 100
-                    else:
-                        current_pnl_pct = 0
+                    # 计算收益率
+                    current_pnl_pct = pos["total_pnl_pct"]  # 使用持仓数据中的收益率
                     
                     # 获取趋势信息
                     price_trend = await self.get_price_trend(pos["symbol"])
@@ -1479,12 +1223,12 @@ class DoomsdayPositionManager:
                     # 记录详细日志
                     self.logger.info(
                         f"持仓风险检查 - {pos['symbol']}:\n"
-                        f"  数量: {volume} {'张' if self._is_option(pos['symbol']) else '股'}\n"
-                        f"  成本价: ${cost_price:.4f}\n"
-                        f"  现价: ${current_price:.4f}\n"
-                        f"  持仓市值: ${position_value:.2f}\n"
-                        f"  总成本: ${total_cost:.2f}\n"
-                        f"  收益率: {current_pnl_pct:+.2f}%\n"
+                        f"  数量: {pos['volume']} {'张' if self._is_option(pos['symbol']) else '股'}\n"
+                        f"  成本价: ${pos['cost_price']:.4f}\n"
+                        f"  现价: ${pos['current_price']:.4f}\n"
+                        f"  市值: ${pos['market_value']:.2f}\n"
+                        f"  当日盈亏: ${pos['day_pnl']:+.2f} ({pos['day_pnl_pct']:+.2f}%)\n"
+                        f"  总盈亏: ${pos['total_pnl']:+.2f} ({current_pnl_pct:+.2f}%)\n"
                         f"  价格趋势: {price_trend}\n"
                         f"  时间趋势: {time_trend}\n"
                         f"  止损设置: 初始={self.risk_checker.initial_stop_loss}%, "
@@ -1502,10 +1246,9 @@ class DoomsdayPositionManager:
                     
                     if should_close:
                         self.logger.warning(f"触发风险管理: {reason}")
-                        # 执行平仓
                         await self.close_position(
                             symbol=pos["symbol"],
-                            volume=volume,
+                            volume=int(pos["volume"]),
                             reason=reason
                         )
                     else:
