@@ -6,17 +6,45 @@ from decimal import Decimal
 
 class RiskChecker:
     def __init__(self, risk_limits: dict):
-        self.risk_limits = risk_limits
         self.logger = logging.getLogger(self.__class__.__name__)
         
+        # 设置默认风险限制
+        self.default_limits = {
+            'option': {
+                'stop_loss': {
+                    'initial': 10.0,    # 初始止损比例
+                    'trailing': 7.0     # 移动止损比例
+                },
+                'take_profit': 50.0     # 止盈目标比例
+            },
+            'volatility': {
+                'min_vix': 15.0,        # 最小VIX
+                'max_vix': 40.0         # 最大VIX
+            },
+            'market_hours': {
+                'start': '09:30',       # 交易开始时间
+                'end': '16:00'          # 交易结束时间
+            }
+        }
+
+        # 使用传入的风险限制，如果没有则使用默认值
+        self.risk_limits = risk_limits if risk_limits else self.default_limits
+        
+        # 确保必要的配置项存在
+        if 'option' not in self.risk_limits:
+            self.risk_limits['option'] = self.default_limits['option']
+        
         # 初始化止盈止损设置
-        self.option_limits = risk_limits['option']
-        self.initial_stop_loss = self.option_limits['stop_loss']['initial']  # 初始止损
-        self.trailing_stop = self.option_limits['stop_loss']['trailing']     # 移动止损
-        self.take_profit = self.option_limits['take_profit']                 # 止盈目标
+        self.option_limits = self.risk_limits['option']
+        self.initial_stop_loss = self.option_limits.get('stop_loss', {}).get('initial', 10.0)
+        self.trailing_stop = self.option_limits.get('stop_loss', {}).get('trailing', 7.0)
+        self.take_profit = self.option_limits.get('take_profit', 50.0)
         
         # 记录最高收益率
         self.max_profit_pct = {}  # 用于跟踪每个持仓的最高收益率
+        
+        self.logger.info(f"风险检查器初始化完成: 初始止损={self.initial_stop_loss}%, "
+                        f"移动止损={self.trailing_stop}%, 止盈目标={self.take_profit}%")
 
     def check_position_risk(self, symbol: str, current_pnl_pct: float, 
                           price_trend: str, time_trend: str) -> Tuple[bool, str]:
@@ -88,3 +116,37 @@ class RiskChecker:
         time_mult = time_adjustments.get(time_trend, 1.0)
         
         return base_multiplier * price_mult * time_mult
+
+    def check_market_condition(self, current_vix: float, current_time: str) -> bool:
+        """检查市场条件是否适合交易"""
+        try:
+            # 检查 VIX 范围
+            vix_limits = self.risk_limits.get('volatility', self.default_limits['volatility'])
+            if not (vix_limits['min_vix'] <= current_vix <= vix_limits['max_vix']):
+                self.logger.warning(f"VIX指数 ({current_vix}) 超出交易范围 "
+                                  f"({vix_limits['min_vix']}-{vix_limits['max_vix']})")
+                return False
+
+            # 检查交易时间
+            market_hours = self.risk_limits.get('market_hours', self.default_limits['market_hours'])
+            if not self._is_trading_hours(current_time, market_hours['start'], market_hours['end']):
+                self.logger.warning(f"当前时间 ({current_time}) 不在交易时间内 "
+                                  f"({market_hours['start']}-{market_hours['end']})")
+                return False
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"检查市场条件时出错: {str(e)}")
+            return False
+
+    def _is_trading_hours(self, current_time: str, start_time: str, end_time: str) -> bool:
+        """检查是否在交易时间内"""
+        try:
+            current = datetime.strptime(current_time, '%H:%M:%S').time()
+            start = datetime.strptime(start_time, '%H:%M').time()
+            end = datetime.strptime(end_time, '%H:%M').time()
+            return start <= current <= end
+        except Exception as e:
+            self.logger.error(f"检查交易时间时出错: {str(e)}")
+            return False
