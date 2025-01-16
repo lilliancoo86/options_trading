@@ -215,22 +215,27 @@ async def main():
         async with DoomsdayPositionManager(risk_checker) as position_manager:
             while True:
                 try:
-                    # 打印交易状态（降低频率，避免日志过多）
+                    # 打印交易状态
                     await position_manager.print_trading_status()
                     
-                    # 更频繁地检查风险状态（每2秒一次）
-                    for _ in range(5):  # 在每次状态打印之间检查5次
-                        # 检查风险状态
-                        await position_manager.check_position_risks()
-                        await asyncio.sleep(2)  # 每2秒检查一次风险
-                        
-                        # 检查是否需要强制平仓
-                        current_time = datetime.now(pytz.timezone('America/New_York'))
-                        if await position_manager.check_force_close(current_time):
-                            logger.warning("触发强制平仓条件")
-                            await position_manager.force_close_all_positions()
+                    # 检查是否需要强制平仓
+                    current_time = datetime.now(pytz.timezone('America/New_York'))
+                    if await position_manager.check_force_close(current_time):
+                        logger.warning("触发强制平仓条件")
+                        # 执行强制平仓逻辑
+                        positions = await position_manager.get_real_positions()
+                        if positions and positions.get("active"):
+                            for pos in positions["active"]:
+                                await position_manager.close_position(
+                                    pos["symbol"],
+                                    int(pos["volume"]),
+                                    "强制平仓"
+                                )
                     
-                    await asyncio.sleep(10)  # 状态打印间隔保持10秒
+                    # 检查风险状态
+                    await position_manager.check_position_risks()
+                    
+                    await asyncio.sleep(10)  # 每10秒检查一次
                     
                 except Exception as e:
                     logger.error(f"主循环出错: {str(e)}")

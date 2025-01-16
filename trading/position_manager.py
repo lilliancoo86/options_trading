@@ -1569,69 +1569,47 @@ class DoomsdayPositionManager:
             self.logger.error(f"检查止盈止损状态时出错: {str(e)}")
 
     async def _execute_stop_loss(self, position: dict):
-        """执行止损（改进的执行确认机制）"""
+        """执行止损"""
         try:
             symbol = position["symbol"]
             volume = abs(position["volume"])
             
-            # 再次获取最新价格确认
-            quote = self.quote_ctx.quote([symbol])
-            if not quote or not quote[0]:
-                self.logger.error(f"无法获取 {symbol} 的最新价格，取消止损")
-                return False
-            
-            current_price = float(quote[0].last_done)
+            # 再次确认止损条件
+            current_price = float(position["current_price"])
             cost_price = float(position["cost_price"])
+            pnl_pct = ((current_price - cost_price) / cost_price * 100)
             stop_loss_price = cost_price * (1 - self.risk_limits['option']['stop_loss']['initial']/100)
             
-            # 二次确认止损条件
-            if current_price > stop_loss_price:
-                self.logger.warning(f"价格已回升超过止损线，取消止损")
-                return False
-            
-            # 记录详细的执行日志
-            self.logger.warning(
-                f"确认执行止损:\n"
-                f"  标的: {symbol}\n"
-                f"  数量: {volume}\n"
-                f"  成本价: ${cost_price:.2f}\n"
-                f"  现价: ${current_price:.2f}\n"
-                f"  止损价: ${stop_loss_price:.2f}\n"
-                f"  亏损比例: {((current_price - cost_price) / cost_price * 100):.2f}%"
-            )
-            
-            # 执行平仓
-            order = await self.trade_ctx.submit_order(
-                symbol=symbol,
-                order_type=OrderType.MARKET,
-                side=OrderSide.SELL if position["volume"] > 0 else OrderSide.BUY,
-                quantity=volume,
-                time_in_force=TimeInForceType.DAY
-            )
-            
-            # 等待并跟踪订单状态
-            order_id = order.order_id
-            max_retries = 5
-            retry_count = 0
-            
-            while retry_count < max_retries:
+            if current_price <= stop_loss_price:
+                self.logger.warning(
+                    f"确认执行止损:\n"
+                    f"  标的: {symbol}\n"
+                    f"  数量: {volume}\n"
+                    f"  成本价: ${cost_price:.2f}\n"
+                    f"  现价: ${current_price:.2f}\n"
+                    f"  止损价: ${stop_loss_price:.2f}\n"
+                    f"  亏损比例: {pnl_pct:.2f}%"
+                )
+                
+                # 执行平仓
+                order = await self.trade_ctx.submit_order(
+                    symbol=symbol,
+                    order_type=OrderType.MARKET,
+                    side=OrderSide.SELL if position["volume"] > 0 else OrderSide.BUY,
+                    quantity=volume,
+                    time_in_force=TimeInForceType.DAY
+                )
+                
+                self.logger.info(f"止损订单已提交 - 订单号: {order.order_id}")
+                
+                # 等待订单状态更新
                 await asyncio.sleep(1)
-                order_status = await self.trade_ctx.get_order(order_id)
+                order_status = await self.trade_ctx.get_order(order.order_id)
                 self.logger.info(f"订单状态: {order_status.status}")
                 
-                if order_status.status in ['FILLED', 'PARTIALLY_FILLED']:
-                    self.logger.info(f"止损订单执行成功: {order_id}")
-                    return True
-                elif order_status.status in ['REJECTED', 'CANCELLED']:
-                    self.logger.error(f"止损订单失败: {order_id}")
-                    return False
+            else:
+                self.logger.warning(f"止损条件已不满足，取消执行")
                 
-                retry_count += 1
-            
-            self.logger.error(f"止损订单状态未能确认: {order_id}")
-            return False
-            
         except Exception as e:
             self.logger.error(f"执行止损时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
-            return False
