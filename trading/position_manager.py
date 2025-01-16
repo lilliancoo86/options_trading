@@ -901,7 +901,8 @@ class DoomsdayPositionManager:
             market_status = (
                 f"\n{'='*80}\n"
                 f"美股市场状态 | 时间: {ny_time.strftime('%Y-%m-%d %H:%M:%S')} EST | "
-                f"状态: {'交易中' if is_market_open else '休市'}\n"
+                f"状态: {'交易中' if is_market_open else '休市'}"
+                f"{' [测试模式]' if self.test_mode else ''}\n"
                 f"{'='*80}"
             )
             self.logger.info(market_status)
@@ -911,6 +912,7 @@ class DoomsdayPositionManager:
                 f"\n交易系统状态:\n"
                 f"{'='*80}\n"
                 f"{'系统运行正常':^20} | "
+                f"模式: {'测试' if self.test_mode else '实盘'} | "
                 f"连接状态: {'已连接':^10} | "
                 f"行情延迟: {self.quote_delay:^8}ms | "
                 f"内存使用: {self.get_memory_usage():^8}MB\n"
@@ -919,14 +921,26 @@ class DoomsdayPositionManager:
             self.logger.info(system_status)
 
             # 3. 交易条件状态
+            risk_limits = self.risk_limits['option']
             trading_conditions = (
                 f"\n交易条件状态:\n"
                 f"{'='*80}\n"
-                f"止损设置: {self.risk_limits['option']['stop_loss']['initial']}% | "
-                f"移动止损: {self.risk_limits['option']['stop_loss']['trailing']}% | "
-                f"止盈目标: {self.risk_limits['option']['take_profit']}%\n"
-                f"{'='*80}"
+                f"止损设置: {risk_limits['stop_loss']['initial']}% | "
+                f"移动止损: {risk_limits['stop_loss']['trailing']}% | "
+                f"止盈目标: {risk_limits['take_profit']}% | "
             )
+            
+            # 测试模式下显示额外的风控参数
+            if self.test_mode:
+                trading_conditions += (
+                    f"\n趋势参数: "
+                    f"快线={self.trend_config['fast_length']} | "
+                    f"慢线={self.trend_config['slow_length']} | "
+                    f"曲线={self.trend_config['curve_length']} | "
+                    f"周期={self.trend_config['trend_period']}"
+                )
+            
+            trading_conditions += f"\n{'='*80}"
             self.logger.info(trading_conditions)
 
         except Exception as e:
@@ -936,7 +950,7 @@ class DoomsdayPositionManager:
         """打印持仓标的明细"""
         try:
             if not positions_data or not positions_data.get("active"):
-                self.logger.info("\n暂无持仓")
+                self.logger.info(f"\n暂无持仓{' [测试模式]' if self.test_mode else ''}")
                 return
 
             # 获取所有持仓数据
@@ -954,6 +968,7 @@ class DoomsdayPositionManager:
             )
             
             # 表头
+            title = "持仓标的明细" + (" [测试模式]" if self.test_mode else "")
             header = fmt.format(
                 "代码",            # 1. 代码
                 "市值",            # 2. 市值
@@ -967,7 +982,7 @@ class DoomsdayPositionManager:
             separator = "=" * total_width
 
             # 打印表头
-            self.logger.info(f"\n持仓标的明细:\n{separator}")
+            self.logger.info(f"\n{title}:\n{separator}")
             self.logger.info(header)
             self.logger.info(separator)
 
