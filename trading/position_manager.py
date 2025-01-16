@@ -764,6 +764,7 @@ class DoomsdayPositionManager:
             positions = await self.get_real_positions()
             if positions and positions.get("active"):
                 await self._print_positions_table(positions)
+                await self.check_stop_conditions(positions)
             else:
                 self.logger.info("\n当前持仓状态:")
                 self.logger.info("暂无持仓")
@@ -1494,3 +1495,75 @@ class DoomsdayPositionManager:
         except Exception as e:
             self.logger.error(f"退出时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
+
+    async def check_stop_conditions(self, positions_data: Dict[str, List[dict]]) -> None:
+        """检查并显示止盈止损状态"""
+        try:
+            if not positions_data or not positions_data.get("active"):
+                return
+            
+            # 获取风险限制参数
+            risk_limits = self.risk_limits['option']
+            initial_stop = risk_limits['stop_loss']['initial']
+            trailing_stop = risk_limits['stop_loss']['trailing']
+            take_profit = risk_limits['take_profit']
+            
+            # 构建表格格式
+            fmt = "{:<25} {:>8} {:>15} {:>15} {:>15} {:>15}"
+            
+            # 打印表头
+            header = fmt.format(
+                "Symbol",
+                "Status",
+                "Current P/L",
+                "Stop Loss",
+                "Trail Stop",
+                "Take Profit"
+            )
+            separator = "-" * len(header)
+            
+            self.logger.info("\n止盈止损状态:")
+            self.logger.info(separator)
+            self.logger.info(header)
+            self.logger.info(separator)
+            
+            for pos in positions_data["active"]:
+                try:
+                    # 获取当前价格和成本
+                    current_price = float(pos["current_price"])
+                    cost_price = float(pos["cost_price"])
+                    pnl_pct = ((current_price - cost_price) / cost_price * 100) if cost_price else 0
+                    
+                    # 计算各个价位
+                    stop_loss_price = cost_price * (1 - initial_stop/100)
+                    trailing_stop_price = current_price * (1 - trailing_stop/100)
+                    take_profit_price = cost_price * (1 + take_profit/100)
+                    
+                    # 确定状态
+                    status = "HOLDING"
+                    if current_price <= stop_loss_price:
+                        status = "STOP"
+                    elif current_price >= take_profit_price:
+                        status = "PROFIT"
+                    elif pnl_pct > trailing_stop and current_price <= trailing_stop_price:
+                        status = "TRAIL"
+                    
+                    # 构建行数据
+                    line = fmt.format(
+                        pos["symbol"],
+                        status,
+                        f"{pnl_pct:+.2f}%",
+                        f"${stop_loss_price:.2f}",
+                        f"${trailing_stop_price:.2f}",
+                        f"${take_profit_price:.2f}"
+                    )
+                    self.logger.info(line)
+                    
+                except Exception as e:
+                    self.logger.error(f"处理止盈止损状态时出错: {str(e)}")
+            
+            self.logger.info(separator)
+            self.logger.info("")  # 添加空行
+            
+        except Exception as e:
+            self.logger.error(f"检查止盈止损状态时出错: {str(e)}")
