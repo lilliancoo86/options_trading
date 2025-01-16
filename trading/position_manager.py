@@ -795,18 +795,17 @@ class DoomsdayPositionManager:
 
             # 构建表格格式
             fmt = (
-                f"{{:<{symbol_width}}} {{:>1}} {{:>8}} {{:>6}} {{:>30}} {{:>10}} {{:>8}}"
+                f"{{:<{symbol_width}}} {{:>8}} {{:>12}} {{:>20}} {{:>25}} {{:>25}}"
             )
             
             # 表头
             header = fmt.format(
                 "Symbol",          # 1. 期权代码
-                "b",              # 2. 买卖方向
-                "Volume",         # 3. 成交量
-                "days",          # 4. 剩余天数
+                "Volume",         # 2. 数量
+                "市值",           # 3. 市值
+                "成本/现价",       # 4. 成本价/现价
                 "last",          # 5. 价格变动
-                "o_date",        # 6. 开仓日期
-                "%"              # 7. 盈亏百分比
+                "当日盈亏/盈亏率"   # 6. 盈亏信息
             )
             
             # 分隔线
@@ -824,35 +823,27 @@ class DoomsdayPositionManager:
                     if quote and len(quote) > 0:
                         quote = quote[0]
                         current_price = float(quote.last_done)
+                        prev_close = float(quote.prev_close)
                         cost_price = float(pos["cost_price"])
                         
                         # 计算涨跌幅
                         price_change_pct = ((current_price - cost_price) / cost_price * 100) if cost_price else 0
+                        day_change_pct = ((current_price - prev_close) / prev_close * 100) if prev_close else 0
                         
-                        # 计算剩余天数（从期权代码中提取到期日）
-                        expiry_date = self._extract_expiry_date(pos["symbol"])
-                        days_left = (expiry_date - datetime.now()).days if expiry_date else 0
-                        
-                        # 获取开仓日期（这里需要添加到持仓数据中）
-                        open_date = pos.get("open_date", "N/A")
-                        if isinstance(open_date, datetime):
-                            open_date = open_date.strftime("%m-%d")
+                        # 计算当日盈亏
+                        day_pnl = (current_price - prev_close) * pos["volume"]
                         
                         # 构建价格变动字符串
-                        price_str = f"{cost_price:.2f} -> {current_price:.2f} ({price_change_pct:+.2f}%)"
-                        
-                        # 确定买卖方向
-                        direction = "1" if pos["volume"] > 0 else "0"
+                        last_str = f"{cost_price:.2f} -> {current_price:.2f} ({price_change_pct:+.2f}%)"
                         
                         # 构建行数据
                         line = fmt.format(
                             pos["symbol"],
-                            direction,
-                            abs(pos["volume"]),
-                            days_left,
-                            price_str,
-                            open_date,
-                            f"{abs(price_change_pct):.2f}"
+                            f"{abs(pos['volume']):d}",
+                            f"${pos['market_value']:.2f}",
+                            f"${cost_price:.2f}/${current_price:.2f}",
+                            last_str,
+                            f"${day_pnl:+.2f}/{day_change_pct:+.2f}%"
                         )
                         self.logger.info(line)
                         
