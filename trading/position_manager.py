@@ -628,8 +628,8 @@ class DoomsdayPositionManager:
             positions_data = {"active": []}
             
             try:
-                # 使用正确的 API 方法获取持仓
-                stock_positions = await self.trade_ctx.get_positions()
+                # 使用 get_today_positions 方法获取持仓
+                stock_positions = await self.trade_ctx.get_today_positions()
                 
                 if stock_positions:
                     for pos in stock_positions:
@@ -643,7 +643,8 @@ class DoomsdayPositionManager:
                             "day_pnl": float(pos.unrealized_pnl),
                             "day_pnl_pct": float(pos.unrealized_pnl_ratio) * 100,
                             "total_pnl": float(pos.unrealized_pnl),
-                            "total_pnl_pct": float(pos.unrealized_pnl_ratio) * 100
+                            "total_pnl_pct": float(pos.unrealized_pnl_ratio) * 100,
+                            "type": "stock" if not self._is_option(pos.symbol) else "option"
                         }
                         
                         # 添加到活跃持仓列表
@@ -667,10 +668,26 @@ class DoomsdayPositionManager:
                 self.logger.error(f"API 方法不存在: {str(e)}")
                 self.logger.info("尝试使用备用方法获取持仓...")
                 
-                # 尝试使用其他可能的方法名
                 try:
-                    stock_positions = await self.trade_ctx.get_position_list()
-                    # 处理持仓数据...
+                    # 尝试使用 get_stock_positions 方法
+                    stock_positions = await self.trade_ctx.get_stock_positions()
+                    if stock_positions:
+                        for pos in stock_positions:
+                            position_data = {
+                                "symbol": pos.symbol,
+                                "volume": pos.quantity,
+                                "cost_price": float(pos.avg_price),
+                                "current_price": float(pos.current_price),
+                                "market_value": float(pos.market_value),
+                                "day_pnl": float(pos.unrealized_pnl),
+                                "day_pnl_pct": float(pos.unrealized_pnl_ratio) * 100,
+                                "total_pnl": float(pos.unrealized_pnl),
+                                "total_pnl_pct": float(pos.unrealized_pnl_ratio) * 100,
+                                "type": "stock" if not self._is_option(pos.symbol) else "option"
+                            }
+                            positions_data["active"].append(position_data)
+                    
+                    return positions_data
                     
                 except Exception as e2:
                     self.logger.error(f"备用方法也失败: {str(e2)}")
