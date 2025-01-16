@@ -639,13 +639,18 @@ class DoomsdayPositionManager:
                         if hasattr(channel, 'positions'):
                             for pos in channel.positions:
                                 self.logger.debug(f"处理持仓: {pos}")
+                                
+                                # 转换数量为整数
+                                quantity = int(pos.quantity)
+                                cost_price = float(pos.cost_price)
+                                
                                 # 转换持仓数据格式
                                 position_data = {
                                     "symbol": pos.symbol,
-                                    "volume": pos.quantity,
-                                    "cost_price": float(pos.cost_price),
-                                    "current_price": float(pos.cost_price),  # 暂时使用成本价
-                                    "market_value": float(pos.cost_price * pos.quantity),
+                                    "volume": quantity,
+                                    "cost_price": cost_price,
+                                    "current_price": cost_price,  # 暂时使用成本价
+                                    "market_value": cost_price * quantity,
                                     "day_pnl": 0.0,  # 需要通过行情更新
                                     "day_pnl_pct": 0.0,  # 需要通过行情更新
                                     "total_pnl": 0.0,  # 需要通过行情更新
@@ -658,13 +663,17 @@ class DoomsdayPositionManager:
                                     quote = self.quote_ctx.quote([pos.symbol])  # 移除 await
                                     if quote and len(quote) > 0:
                                         current_price = float(quote[0].last_done)
+                                        market_value = current_price * float(quantity)
+                                        unrealized_pnl = (current_price - cost_price) * float(quantity)
+                                        unrealized_pnl_ratio = ((current_price - cost_price) / cost_price) * 100 if cost_price != 0 else 0
+                                        
                                         position_data.update({
                                             "current_price": current_price,
-                                            "market_value": current_price * pos.quantity,
-                                            "day_pnl": (current_price - float(pos.cost_price)) * pos.quantity,
-                                            "day_pnl_pct": ((current_price - float(pos.cost_price)) / float(pos.cost_price)) * 100,
-                                            "total_pnl": (current_price - float(pos.cost_price)) * pos.quantity,
-                                            "total_pnl_pct": ((current_price - float(pos.cost_price)) / float(pos.cost_price)) * 100
+                                            "market_value": market_value,
+                                            "day_pnl": unrealized_pnl,
+                                            "day_pnl_pct": unrealized_pnl_ratio,
+                                            "total_pnl": unrealized_pnl,
+                                            "total_pnl_pct": unrealized_pnl_ratio
                                         })
                                         self.logger.debug(f"获取到行情数据: {quote[0]}")
                                 except Exception as e:
@@ -676,8 +685,8 @@ class DoomsdayPositionManager:
                                 # 记录详细日志
                                 self.logger.debug(
                                     f"持仓数据 - {pos.symbol}:\n"
-                                    f"  数量: {pos.quantity}\n"
-                                    f"  成本价: ${float(pos.cost_price):.4f}\n"
+                                    f"  数量: {quantity}\n"
+                                    f"  成本价: ${cost_price:.4f}\n"
                                     f"  现价: ${position_data['current_price']:.4f}\n"
                                     f"  市值: ${position_data['market_value']:.2f}\n"
                                     f"  未实现盈亏: ${position_data['total_pnl']:+.2f}\n"
