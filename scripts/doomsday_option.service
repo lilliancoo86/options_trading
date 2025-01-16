@@ -6,7 +6,7 @@ Wants=mysql.service
 
 [Service]
 # 基本配置
-Type=oneshot
+Type=simple
 RemainAfterExit=yes
 User=trader
 Group=trader
@@ -41,7 +41,7 @@ StandardError=syslog
 CPUQuota=50%
 MemoryLimit=500M
 LimitNOFILE=1024
-TimeoutStartSec=300
+TimeoutStartSec=60
 TimeoutStopSec=60
 TasksMax=100
 LimitNPROC=100
