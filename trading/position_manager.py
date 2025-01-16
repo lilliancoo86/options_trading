@@ -794,18 +794,17 @@ class DoomsdayPositionManager:
 
             # 构建表格格式
             fmt = (
-                f"| {{:<{symbol_width}}} | {{:>8}} | {{:>12}} | {{:>12}} | {{:>12}} | {{:>12}} | {{:>12}} |"
+                f"| {{:<{symbol_width}}} | {{:>8}} | {{:>12}} | {{:>20}} | {{:>12}} | {{:>25}} |"
             )
             
             # 表头
             header = fmt.format(
-                "期权合约",     # 1. 合约代码
-                "数量",        # 2. 持仓数量
-                "成本",        # 3. 成本价
-                "现价",        # 4. 当前价格
-                "涨跌幅",      # 5. 当日涨跌幅
-                "市值",        # 6. 持仓市值
-                "盈亏比例"     # 7. 盈亏百分比
+                "代码",            # 1. 代码
+                "数量",           # 2. 数量
+                "市值",           # 3. 市值
+                "成本/现价",       # 4. 成本价/现价
+                "当日涨跌幅",      # 5. 当日涨跌幅
+                "当日盈亏/盈亏率"   # 6. 当日盈亏/盈亏率
             )
             
             # 计算分隔线长度
@@ -819,7 +818,7 @@ class DoomsdayPositionManager:
             
             # 按代码排序显示所有持仓
             total_value = 0
-            total_pnl = 0
+            total_day_pnl = 0
             
             for pos in sorted(positions, key=lambda x: x["symbol"]):
                 try:
@@ -837,37 +836,36 @@ class DoomsdayPositionManager:
                     cost_price = pos["cost_price"]
                     current_price = pos["current_price"]
                     market_value = pos["market_value"]
-                    pnl_pct = pos["total_pnl_pct"]
+                    day_pnl = (current_price - prev_close) * quantity if 'prev_close' in locals() else 0
+                    day_pnl_pct = price_change_pct
                     
                     # 构建行数据
                     line = fmt.format(
                         pos["symbol"],
                         f"{quantity:d}",
-                        f"${cost_price:.2f}",
-                        f"${current_price:.2f}",
-                        f"{price_change_pct:+.2f}%",
                         f"${market_value:.2f}",
-                        f"{pnl_pct:+.2f}%"
+                        f"${cost_price:.2f}/${current_price:.2f}",
+                        f"{price_change_pct:+.2f}%",
+                        f"${day_pnl:+.2f}/{day_pnl_pct:+.2f}%"
                     )
                     self.logger.info(line)
                     
                     total_value += market_value
-                    total_pnl += pos["total_pnl"]
+                    total_day_pnl += day_pnl
                     
                 except Exception as e:
                     self.logger.error(f"处理持仓显示时出错: {str(e)}")
             
             # 显示合计行
             self.logger.info(separator)
-            total_pnl_pct = (total_pnl / total_value * 100) if total_value else 0
+            total_day_pnl_pct = (total_day_pnl / total_value * 100) if total_value else 0
             summary = fmt.format(
                 f"总计({len(positions)})",
                 "",
-                "",
-                "",
-                "",
                 f"${total_value:.2f}",
-                f"{total_pnl_pct:+.2f}%"
+                "",
+                "",
+                f"${total_day_pnl:+.2f}/{total_day_pnl_pct:+.2f}%"
             )
             self.logger.info(summary)
             self.logger.info(separator)
