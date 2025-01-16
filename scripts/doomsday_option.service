@@ -28,7 +28,10 @@ ExecStart=/home/options_trading/venv/bin/python -m scripts.main
 ExecStartPost=/home/options_trading/venv/bin/python scripts/calculate_startup_delay.py
 
 # 重启配置
-Restart=no
+Restart=on-failure
+RestartSec=10
+StartLimitInterval=5min
+StartLimitBurst=3
 
 # 日志配置
 StandardOutput=syslog
@@ -38,7 +41,7 @@ StandardError=syslog
 CPUQuota=50%
 MemoryLimit=500M
 LimitNOFILE=1024
-TimeoutStartSec=60
+TimeoutStartSec=300
 TimeoutStopSec=60
 TasksMax=100
 LimitNPROC=100
