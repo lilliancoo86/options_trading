@@ -1373,6 +1373,21 @@ class DoomsdayPositionManager:
             # 计算趋势
             prices = [k.close for k in klines]
             change = (prices[-1] - prices[0]) / prices[0] * 100
+            
+            if change >= 20:
+                return "super_strong"
+            elif change >= 10:
+                return "strong"
+            elif change <= -20:
+                return "super_weak"
+            elif change <= -10:
+                return "weak"
+            else:
+                return "normal"
+            
+        except Exception as e:
+            self.logger.error(f"获取价格趋势时出错: {str(e)}")
+            return "normal"
 
     async def get_time_trend(self, symbol: str) -> str:
         """获取分时趋势"""
