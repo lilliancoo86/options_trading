@@ -631,8 +631,11 @@ class DoomsdayPositionManager:
                 # 使用 stock_positions 方法获取持仓（同步方法）
                 stock_positions = self.trade_ctx.stock_positions()
                 
-                if stock_positions:
-                    for pos in stock_positions:
+                # 获取持仓列表
+                positions_list = stock_positions.positions if hasattr(stock_positions, 'positions') else []
+                
+                if positions_list:
+                    for pos in positions_list:
                         # 转换持仓数据格式
                         position_data = {
                             "symbol": pos.symbol,
@@ -671,10 +674,12 @@ class DoomsdayPositionManager:
                 try:
                     # 尝试使用 today_executions 方法作为备用（同步方法）
                     executions = self.trade_ctx.today_executions()
-                    if executions:
+                    executions_list = executions.trades if hasattr(executions, 'trades') else []
+                    
+                    if executions_list:
                         # 按标的分组统计持仓
                         positions = {}
-                        for exec in executions:
+                        for exec in executions_list:
                             symbol = exec.symbol
                             if symbol not in positions:
                                 positions[symbol] = {
@@ -687,12 +692,12 @@ class DoomsdayPositionManager:
                             
                             # 根据买卖方向更新持仓
                             quantity = exec.quantity
-                            if exec.side == OrderSide.Buy:
+                            if exec.trade_side == "Buy":  # 使用 trade_side 字段
                                 positions[symbol]["volume"] += quantity
-                                positions[symbol]["cost_total"] += quantity * exec.price
+                                positions[symbol]["cost_total"] += quantity * float(exec.price)
                             else:  # Sell
                                 positions[symbol]["volume"] -= quantity
-                                positions[symbol]["cost_total"] -= quantity * exec.price
+                                positions[symbol]["cost_total"] -= quantity * float(exec.price)
                         
                         # 获取当前价格并计算持仓数据
                         for symbol, pos in positions.items():
