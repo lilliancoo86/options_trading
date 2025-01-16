@@ -898,33 +898,33 @@ class DoomsdayPositionManager:
             if not positions_data or not positions_data.get("active"):
                 self.logger.info("\n暂无持仓")
                 return
-            
+
             # 表头
-            header = "\n" + "=" * 124 + "\n" + " " * 60 + "持仓汇总" + "\n" + "=" * 124
+            header = "\n" + "=" * 120 + "\n" + " " * 50 + "持仓汇总" + "\n" + "=" * 120
             self.logger.info(header)
-            
-            # 列标题
+
+            # 新的列标题
             columns = (
-                "| {:<20} | {:>10} | {:>12} | {:>26} | {:>20} | {:>20} |"
+                "| {:<15} | {:>12} | {:>15} | {:>12} | {:>25} | {:>25} |"
                 .format(
                     "代码",
-                    "数量",
                     "市值",
-                    "Last Price (Chg%)",
-                    "当日盈亏 (率)",
-                    "持仓盈亏 (率)"
+                    "现价/成本",
+                    "当日涨跌幅",
+                    "当日盈亏/盈亏率",
+                    "持仓盈亏/盈亏率"
                 )
             )
-            separator = "|" + "-" * 22 + "|" + "-" * 12 + "|" + "-" * 14 + "|" + "-" * 28 + "|" + "-" * 22 + "|" + "-" * 22 + "|"
+            separator = "|" + "-" * 17 + "|" + "-" * 14 + "|" + "-" * 17 + "|" + "-" * 14 + "|" + "-" * 27 + "|" + "-" * 27 + "|"
             
             self.logger.info(columns)
             self.logger.info(separator)
-            
+
             # 统计数据
             total_value = 0
             total_day_pnl = 0
             total_position_pnl = 0
-            
+
             # 显示持仓明细
             sorted_positions = sorted(positions_data["active"], key=lambda x: x["symbol"])
             for pos in sorted_positions:
@@ -940,60 +940,60 @@ class DoomsdayPositionManager:
                         current_price = pos.get("cost_price", 0)
                         prev_close = current_price
                         price_change_pct = 0
-                    
-                    # 判断是否为期权
-                    is_option = any(x in pos["symbol"] for x in ['C', 'P'])
-                    
+
                     # 计算持仓数据
                     quantity = pos.get("volume", 0)
-                    multiplier = 100 if is_option else 1  # 期权乘以100
+                    cost_price = pos.get("cost_price", current_price)
+                    multiplier = 100 if any(x in pos["symbol"] for x in ['C', 'P']) else 1
                     position_value = current_price * quantity * multiplier
+                    
+                    # 计算盈亏
                     day_pnl = (current_price - prev_close) * quantity * multiplier
                     day_pnl_pct = day_pnl / (prev_close * quantity * multiplier) * 100 if prev_close and quantity else 0
-                    position_pnl = (current_price - pos.get("cost_price", current_price)) * quantity * multiplier
-                    position_pnl_pct = position_pnl / (pos.get("cost_price", current_price) * quantity * multiplier) * 100 if quantity else 0
-                    
+                    position_pnl = (current_price - cost_price) * quantity * multiplier
+                    position_pnl_pct = position_pnl / (cost_price * quantity * multiplier) * 100 if quantity else 0
+
                     # 格式化行数据
                     line = (
-                        "| {:<20} | {:>8}{:>2} | ${:>10,.0f} | ${:>7.2f} → ${:<7.2f} ({:+.1f}%) | ${:>+8,.0f} ({:+.1f}%) | ${:>+8,.0f} ({:+.1f}%) |"
+                        "| {:<15} | ${:>10,.0f} | ${:>6.2f}/${:<6.2f} | {:>+11.2f}% | ${:>+10,.0f}/{:>+8.1f}% | ${:>+10,.0f}/{:>+8.1f}% |"
                         .format(
                             pos["symbol"],
-                            quantity, "张" if is_option else "股",
                             position_value,
-                            prev_close, current_price, price_change_pct,
+                            current_price, cost_price,
+                            price_change_pct,
                             day_pnl, day_pnl_pct,
                             position_pnl, position_pnl_pct
                         )
                     )
                     self.logger.info(line)
-                    
+
                     # 更新统计数据
                     total_value += position_value
                     total_day_pnl += day_pnl
                     total_position_pnl += position_pnl
-                    
+
                 except Exception as e:
                     self.logger.error(f"处理持仓显示时出错: {str(e)}")
-            
+
             # 显示合计行
             self.logger.info(separator)
             total_day_pnl_pct = total_day_pnl / total_value * 100 if total_value else 0
             total_position_pnl_pct = total_position_pnl / total_value * 100 if total_value else 0
             
             summary = (
-                "| {:<20} | {:>10} | ${:>10,.0f} | {:>26} | ${:>+8,.0f} ({:+.1f}%) | ${:>+8,.0f} ({:+.1f}%) |"
+                "| {:<15} | ${:>10,.0f} | {:>15} | {:>12} | ${:>+10,.0f}/{:>+8.1f}% | ${:>+10,.0f}/{:>+8.1f}% |"
                 .format(
-                    f"总计 ({len(sorted_positions)}个持仓)",
-                    "",
+                    f"总计({len(sorted_positions)})",
                     total_value,
-                    "",
+                    "-",
+                    "-",
                     total_day_pnl, total_day_pnl_pct,
                     total_position_pnl, total_position_pnl_pct
                 )
             )
             self.logger.info(summary)
-            self.logger.info("=" * 124)
-            
+            self.logger.info("=" * 120)
+
         except Exception as e:
             self.logger.error(f"打印持仓表格时出错: {str(e)}")
 
