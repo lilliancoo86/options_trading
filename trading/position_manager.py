@@ -628,8 +628,8 @@ class DoomsdayPositionManager:
             positions_data = {"active": []}
             
             try:
-                # 使用 get_position 方法获取持仓
-                stock_positions = await self.trade_ctx.get_position()
+                # 使用 stock_positions 方法获取持仓
+                stock_positions = await self.trade_ctx.stock_positions()
                 
                 if stock_positions:
                     for pos in stock_positions:
@@ -669,21 +669,23 @@ class DoomsdayPositionManager:
                 self.logger.info("尝试使用备用方法获取持仓...")
                 
                 try:
-                    # 尝试使用 get_today_position 方法
-                    stock_positions = await self.trade_ctx.get_today_position()
-                    if stock_positions:
-                        for pos in stock_positions:
+                    # 尝试使用 today_orders 方法获取当日订单，从中提取持仓信息
+                    today_orders = await self.trade_ctx.today_orders()
+                    if today_orders:
+                        # 处理订单信息，提取持仓
+                        filled_orders = [order for order in today_orders if order.status == "filled"]
+                        for order in filled_orders:
                             position_data = {
-                                "symbol": pos.symbol,
-                                "volume": pos.quantity,
-                                "cost_price": float(pos.avg_price),
-                                "current_price": float(pos.current_price),
-                                "market_value": float(pos.market_value),
-                                "day_pnl": float(pos.unrealized_pnl),
-                                "day_pnl_pct": float(pos.unrealized_pnl_ratio) * 100,
-                                "total_pnl": float(pos.unrealized_pnl),
-                                "total_pnl_pct": float(pos.unrealized_pnl_ratio) * 100,
-                                "type": "stock" if not self._is_option(pos.symbol) else "option"
+                                "symbol": order.symbol,
+                                "volume": order.executed_quantity,
+                                "cost_price": float(order.executed_price),
+                                "current_price": float(order.last_done or order.executed_price),
+                                "market_value": float(order.executed_quantity * order.executed_price),
+                                "day_pnl": 0.0,  # 需要计算
+                                "day_pnl_pct": 0.0,  # 需要计算
+                                "total_pnl": 0.0,  # 需要计算
+                                "total_pnl_pct": 0.0,  # 需要计算
+                                "type": "stock" if not self._is_option(order.symbol) else "option"
                             }
                             positions_data["active"].append(position_data)
                     
