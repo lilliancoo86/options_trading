@@ -900,22 +900,21 @@ class DoomsdayPositionManager:
                 return
 
             # 表头
-            header = "\n" + "=" * 120 + "\n" + " " * 50 + "持仓汇总" + "\n" + "=" * 120
+            header = "\n" + "=" * 100 + "\n" + " " * 40 + "持仓汇总" + "\n" + "=" * 100
             self.logger.info(header)
 
             # 新的列标题
             columns = (
-                "| {:<15} | {:>12} | {:>15} | {:>12} | {:>25} | {:>25} |"
+                "| {:<15} | {:>12} | {:>15} | {:>12} | {:>25} |"
                 .format(
                     "代码",
                     "市值",
                     "现价/成本",
                     "当日涨跌幅",
-                    "当日盈亏/盈亏率",
-                    "持仓盈亏/盈亏率"
+                    "当日盈亏/盈亏率"
                 )
             )
-            separator = "|" + "-" * 17 + "|" + "-" * 14 + "|" + "-" * 17 + "|" + "-" * 14 + "|" + "-" * 27 + "|" + "-" * 27 + "|"
+            separator = "|" + "-" * 17 + "|" + "-" * 14 + "|" + "-" * 17 + "|" + "-" * 14 + "|" + "-" * 27 + "|"
             
             self.logger.info(columns)
             self.logger.info(separator)
@@ -923,7 +922,6 @@ class DoomsdayPositionManager:
             # 统计数据
             total_value = 0
             total_day_pnl = 0
-            total_position_pnl = 0
 
             # 显示持仓明细
             sorted_positions = sorted(positions_data["active"], key=lambda x: x["symbol"])
@@ -947,22 +945,19 @@ class DoomsdayPositionManager:
                     multiplier = 100 if any(x in pos["symbol"] for x in ['C', 'P']) else 1
                     position_value = current_price * quantity * multiplier
                     
-                    # 计算盈亏
+                    # 计算当日盈亏
                     day_pnl = (current_price - prev_close) * quantity * multiplier
                     day_pnl_pct = day_pnl / (prev_close * quantity * multiplier) * 100 if prev_close and quantity else 0
-                    position_pnl = (current_price - cost_price) * quantity * multiplier
-                    position_pnl_pct = position_pnl / (cost_price * quantity * multiplier) * 100 if quantity else 0
 
                     # 格式化行数据
                     line = (
-                        "| {:<15} | ${:>10,.0f} | ${:>6.2f}/${:<6.2f} | {:>+11.2f}% | ${:>+10,.0f}/{:>+8.1f}% | ${:>+10,.0f}/{:>+8.1f}% |"
+                        "| {:<15} | ${:>10,.0f} | ${:>6.2f}/${:<6.2f} | {:>+11.2f}% | ${:>+10,.0f}/{:>+8.1f}% |"
                         .format(
                             pos["symbol"],
                             position_value,
                             current_price, cost_price,
                             price_change_pct,
-                            day_pnl, day_pnl_pct,
-                            position_pnl, position_pnl_pct
+                            day_pnl, day_pnl_pct
                         )
                     )
                     self.logger.info(line)
@@ -970,7 +965,6 @@ class DoomsdayPositionManager:
                     # 更新统计数据
                     total_value += position_value
                     total_day_pnl += day_pnl
-                    total_position_pnl += position_pnl
 
                 except Exception as e:
                     self.logger.error(f"处理持仓显示时出错: {str(e)}")
@@ -978,21 +972,19 @@ class DoomsdayPositionManager:
             # 显示合计行
             self.logger.info(separator)
             total_day_pnl_pct = total_day_pnl / total_value * 100 if total_value else 0
-            total_position_pnl_pct = total_position_pnl / total_value * 100 if total_value else 0
             
             summary = (
-                "| {:<15} | ${:>10,.0f} | {:>15} | {:>12} | ${:>+10,.0f}/{:>+8.1f}% | ${:>+10,.0f}/{:>+8.1f}% |"
+                "| {:<15} | ${:>10,.0f} | {:>15} | {:>12} | ${:>+10,.0f}/{:>+8.1f}% |"
                 .format(
                     f"总计({len(sorted_positions)})",
                     total_value,
                     "-",
                     "-",
-                    total_day_pnl, total_day_pnl_pct,
-                    total_position_pnl, total_position_pnl_pct
+                    total_day_pnl, total_day_pnl_pct
                 )
             )
             self.logger.info(summary)
-            self.logger.info("=" * 120)
+            self.logger.info("=" * 100)
 
         except Exception as e:
             self.logger.error(f"打印持仓表格时出错: {str(e)}")
