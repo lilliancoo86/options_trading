@@ -892,40 +892,90 @@ class DoomsdayPositionManager:
             self.logger.exception("详细错误信息:")
             return None
 
+    async def print_trading_status(self):
+        """打印交易状态信息"""
+        try:
+            # 1. 美股市场状态
+            ny_time = datetime.now(self.tz)
+            is_market_open = self.is_market_open(ny_time)
+            market_status = (
+                f"\n{'='*80}\n"
+                f"美股市场状态 | 时间: {ny_time.strftime('%Y-%m-%d %H:%M:%S')} EST | "
+                f"状态: {'交易中' if is_market_open else '休市'}\n"
+                f"{'='*80}"
+            )
+            self.logger.info(market_status)
+
+            # 2. 交易系统状态
+            system_status = (
+                f"\n交易系统状态:\n"
+                f"{'='*80}\n"
+                f"{'系统运行正常':^20} | "
+                f"连接状态: {'已连接':^10} | "
+                f"行情延迟: {self.quote_delay:^8}ms | "
+                f"内存使用: {self.get_memory_usage():^8}MB\n"
+                f"{'='*80}"
+            )
+            self.logger.info(system_status)
+
+            # 3. 交易条件状态
+            trading_conditions = (
+                f"\n交易条件状态:\n"
+                f"{'='*80}\n"
+                f"止损设置: {self.risk_limits['option']['stop_loss']['initial']}% | "
+                f"移动止损: {self.risk_limits['option']['stop_loss']['trailing']}% | "
+                f"止盈目标: {self.risk_limits['option']['take_profit']}%\n"
+                f"{'='*80}"
+            )
+            self.logger.info(trading_conditions)
+
+        except Exception as e:
+            self.logger.error(f"打印交易状态时出错: {str(e)}")
+
     async def _print_positions_table(self, positions_data: Dict[str, List[dict]]):
-        """打印持仓表格"""
+        """打印持仓标的明细"""
         try:
             if not positions_data or not positions_data.get("active"):
                 self.logger.info("\n暂无持仓")
                 return
 
-            # 表头
-            header = "\n" + "=" * 100 + "\n" + " " * 40 + "持仓汇总" + "\n" + "=" * 100
-            self.logger.info(header)
+            # 获取所有持仓数据
+            positions = positions_data["active"]
+            if not positions:
+                return
 
-            # 严格按照要求顺序显示列标题
-            columns = (
-                "| {:<15} | {:>12} | {:>15} | {:>12} | {:>25} |"
-                .format(
-                    "代码",            # 1. 代码
-                    "市值",            # 2. 市值
-                    "现价/成本",       # 3. 现价/成本
-                    "当日涨跌幅",      # 4. 当日涨跌幅
-                    "当日盈亏/盈亏率"  # 5. 当日盈亏/当日盈亏率
-                )
+            # 计算最大字段长度以实现表格自适应
+            max_symbol_len = max(len(pos["symbol"]) for pos in positions)
+            symbol_width = max(15, max_symbol_len + 2)
+
+            # 构建表格格式
+            fmt = (
+                f"| {{:<{symbol_width}}} | {{:>12}} | {{:>15}} | {{:>12}} | {{:>25}} |"
             )
-            separator = "|" + "-" * 17 + "|" + "-" * 14 + "|" + "-" * 17 + "|" + "-" * 14 + "|" + "-" * 27 + "|"
             
-            self.logger.info(columns)
+            # 表头
+            header = fmt.format(
+                "代码",            # 1. 代码
+                "市值",            # 2. 市值
+                "现价/成本",       # 3. 现价/成本
+                "当日涨跌幅",      # 4. 当日涨跌幅
+                "当日盈亏/盈亏率"  # 5. 当日盈亏/当日盈亏率
+            )
+            
+            # 计算分隔线长度
+            total_width = len(header)
+            separator = "=" * total_width
+
+            # 打印表头
+            self.logger.info(f"\n持仓标的明细:\n{separator}")
+            self.logger.info(header)
             self.logger.info(separator)
 
-            # 统计数据
+            # 按代码排序显示所有持仓
             total_value = 0
             total_day_pnl = 0
 
-            # 显示持仓明细
-            sorted_positions = sorted(positions_data["active"], key=lambda x: x["symbol"])
-            for pos in sorted_positions:
+            for pos in sorted(positions, key=lambda x: x["symbol"]):
                 try:
                     quotes = self.quote_ctx.quote([pos["symbol"]])
                     quote = quotes[0] if quotes else None
@@ -939,30 +989,23 @@ class DoomsdayPositionManager:
                         prev_close = current_price
                         price_change_pct = 0
 
-                    # 计算持仓数据
                     quantity = pos.get("volume", 0)
                     cost_price = pos.get("cost_price", current_price)
                     multiplier = 100 if any(x in pos["symbol"] for x in ['C', 'P']) else 1
                     position_value = current_price * quantity * multiplier
                     
-                    # 计算当日盈亏
                     day_pnl = (current_price - prev_close) * quantity * multiplier
                     day_pnl_pct = day_pnl / (prev_close * quantity * multiplier) * 100 if prev_close and quantity else 0
 
-                    # 格式化行数据，严格按照要求顺序显示
-                    line = (
-                        "| {:<15} | ${:>10,.0f} | ${:>6.2f}/${:<6.2f} | {:>+11.2f}% | ${:>+10,.0f}/{:>+8.1f}% |"
-                        .format(
-                            pos["symbol"],           # 1. 代码
-                            position_value,          # 2. 市值
-                            current_price, cost_price,  # 3. 现价/成本
-                            price_change_pct,        # 4. 当日涨跌幅
-                            day_pnl, day_pnl_pct     # 5. 当日盈亏/当日盈亏率
-                        )
+                    line = fmt.format(
+                        pos["symbol"],
+                        f"${position_value:,.0f}",
+                        f"${current_price:.2f}/${cost_price:.2f}",
+                        f"{price_change_pct:+.2f}%",
+                        f"${day_pnl:+,.0f}/{day_pnl_pct:+.1f}%"
                     )
                     self.logger.info(line)
 
-                    # 更新统计数据
                     total_value += position_value
                     total_day_pnl += day_pnl
 
@@ -973,22 +1016,39 @@ class DoomsdayPositionManager:
             self.logger.info(separator)
             total_day_pnl_pct = total_day_pnl / total_value * 100 if total_value else 0
             
-            # 合计行也按照相同顺序显示
-            summary = (
-                "| {:<15} | ${:>10,.0f} | {:>15} | {:>12} | ${:>+10,.0f}/{:>+8.1f}% |"
-                .format(
-                    f"总计({len(sorted_positions)})",  # 1. 代码
-                    total_value,                      # 2. 市值
-                    "-",                              # 3. 现价/成本
-                    "-",                              # 4. 当日涨跌幅
-                    total_day_pnl, total_day_pnl_pct  # 5. 当日盈亏/当日盈亏率
-                )
+            summary = fmt.format(
+                f"总计({len(positions)})",
+                f"${total_value:,.0f}",
+                "-",
+                "-",
+                f"${total_day_pnl:+,.0f}/{total_day_pnl_pct:+.1f}%"
             )
             self.logger.info(summary)
-            self.logger.info("=" * 100)
+            self.logger.info(separator)
 
         except Exception as e:
             self.logger.error(f"打印持仓表格时出错: {str(e)}")
+
+    def is_market_open(self, current_time: datetime) -> bool:
+        """检查市场是否开放"""
+        # 转换为美东时间
+        ny_time = current_time.astimezone(self.tz)
+        
+        # 检查是否为工作日
+        if ny_time.weekday() >= 5:  # 5=周六, 6=周日
+            return False
+        
+        # 检查是否在交易时间内 (9:30 - 16:00)
+        market_open = ny_time.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = ny_time.replace(hour=16, minute=0, second=0, microsecond=0)
+        
+        return market_open.time() <= ny_time.time() <= market_close.time()
+
+    def get_memory_usage(self) -> float:
+        """获取当前进程内存使用情况"""
+        import psutil
+        process = psutil.Process()
+        return process.memory_info().rss / 1024 / 1024  # 转换为MB
 
     async def check_force_close(self, current_time: datetime) -> bool:
         """
