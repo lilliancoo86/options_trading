@@ -903,15 +903,15 @@ class DoomsdayPositionManager:
             header = "\n" + "=" * 100 + "\n" + " " * 40 + "持仓汇总" + "\n" + "=" * 100
             self.logger.info(header)
 
-            # 新的列标题
+            # 严格按照要求顺序显示列标题
             columns = (
                 "| {:<15} | {:>12} | {:>15} | {:>12} | {:>25} |"
                 .format(
-                    "代码",
-                    "市值",
-                    "现价/成本",
-                    "当日涨跌幅",
-                    "当日盈亏/盈亏率"
+                    "代码",            # 1. 代码
+                    "市值",            # 2. 市值
+                    "现价/成本",       # 3. 现价/成本
+                    "当日涨跌幅",      # 4. 当日涨跌幅
+                    "当日盈亏/盈亏率"  # 5. 当日盈亏/当日盈亏率
                 )
             )
             separator = "|" + "-" * 17 + "|" + "-" * 14 + "|" + "-" * 17 + "|" + "-" * 14 + "|" + "-" * 27 + "|"
@@ -949,15 +949,15 @@ class DoomsdayPositionManager:
                     day_pnl = (current_price - prev_close) * quantity * multiplier
                     day_pnl_pct = day_pnl / (prev_close * quantity * multiplier) * 100 if prev_close and quantity else 0
 
-                    # 格式化行数据
+                    # 格式化行数据，严格按照要求顺序显示
                     line = (
                         "| {:<15} | ${:>10,.0f} | ${:>6.2f}/${:<6.2f} | {:>+11.2f}% | ${:>+10,.0f}/{:>+8.1f}% |"
                         .format(
-                            pos["symbol"],
-                            position_value,
-                            current_price, cost_price,
-                            price_change_pct,
-                            day_pnl, day_pnl_pct
+                            pos["symbol"],           # 1. 代码
+                            position_value,          # 2. 市值
+                            current_price, cost_price,  # 3. 现价/成本
+                            price_change_pct,        # 4. 当日涨跌幅
+                            day_pnl, day_pnl_pct     # 5. 当日盈亏/当日盈亏率
                         )
                     )
                     self.logger.info(line)
@@ -973,14 +973,15 @@ class DoomsdayPositionManager:
             self.logger.info(separator)
             total_day_pnl_pct = total_day_pnl / total_value * 100 if total_value else 0
             
+            # 合计行也按照相同顺序显示
             summary = (
                 "| {:<15} | ${:>10,.0f} | {:>15} | {:>12} | ${:>+10,.0f}/{:>+8.1f}% |"
                 .format(
-                    f"总计({len(sorted_positions)})",
-                    total_value,
-                    "-",
-                    "-",
-                    total_day_pnl, total_day_pnl_pct
+                    f"总计({len(sorted_positions)})",  # 1. 代码
+                    total_value,                      # 2. 市值
+                    "-",                              # 3. 现价/成本
+                    "-",                              # 4. 当日涨跌幅
+                    total_day_pnl, total_day_pnl_pct  # 5. 当日盈亏/当日盈亏率
                 )
             )
             self.logger.info(summary)
