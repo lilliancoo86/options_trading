@@ -1420,3 +1420,142 @@ class DoomsdayPositionManager:
     def update_trading_decision(self, decision_data: dict):
         """更新交易决策信息"""
         self.trading_decision = decision_data
+
+    async def check_position_risks(self):
+        """检查所有持仓的风险状态"""
+        try:
+            positions = await self.get_real_positions()
+            if not positions or not positions.get("active"):
+                return
+            
+            for pos in positions["active"]:
+                try:
+                    # 获取当前趋势信息
+                    price_trend = await self.get_price_trend(pos["symbol"])
+                    time_trend = await self.get_time_trend(pos["symbol"])
+                    
+                    # 计算当前收益率
+                    current_pnl_pct = (pos.get("current_price", 0) - pos.get("cost_price", 0)) / pos.get("cost_price", 1) * 100
+                    
+                    # 检查风险
+                    should_close, reason = self.risk_checker.check_position_risk(
+                        pos["symbol"], 
+                        current_pnl_pct,
+                        price_trend,
+                        time_trend
+                    )
+                    
+                    if should_close:
+                        # 执行平仓
+                        await self.close_position(pos["symbol"], pos["volume"], reason)
+                        self.logger.warning(f"执行风险管理平仓: {pos['symbol']}, 原因: {reason}")
+                        
+                except Exception as e:
+                    self.logger.error(f"检查单个持仓风险时出错 {pos['symbol']}: {str(e)}")
+                
+        except Exception as e:
+            self.logger.error(f"检查持仓风险时出错: {str(e)}")
+
+    async def close_position(self, symbol: str, volume: int, reason: str):
+        """执行平仓操作"""
+        try:
+            self.logger.warning(f"执行平仓: {symbol}, 数量: {volume}, 原因: {reason}")
+            
+            # 提交市价单平仓
+            await self.trade_ctx.submit_order(
+                symbol=symbol,
+                order_type=OrderType.Market,
+                side=OrderSide.Sell,
+                submitted_quantity=volume,
+                time_in_force=TimeInForceType.Day,
+                remark=f"Risk management: {reason}"
+            )
+            
+            self.logger.info(f"平仓订单已提交: {symbol}")
+            
+        except Exception as e:
+            self.logger.error(f"执行平仓操作失败 {symbol}: {str(e)}")
+
+    async def get_price_trend(self, symbol: str) -> str:
+        """获取价格趋势"""
+        try:
+            # 获取K线数据
+            klines = await self.quote_ctx.get_candlesticks(
+                symbol=symbol,
+                period="1d",  # 日K
+                count=10      # 最近10天
+            )
+            
+            if not klines:
+                return "normal"
+            
+            # 计算趋势
+            prices = [k.close for k in klines]
+            change = (prices[-1] - prices[0]) / prices[0] * 100
+            
+            if change >= 20:
+                return "super_strong"
+            elif change >= 10:
+                return "strong"
+            elif change <= -20:
+                return "super_weak"
+            elif change <= -10:
+                return "weak"
+            else:
+                return "normal"
+            
+        except Exception as e:
+            self.logger.error(f"获取价格趋势时出错: {str(e)}")
+            return "normal"
+
+    async def get_time_trend(self, symbol: str) -> str:
+        """获取分时趋势"""
+        try:
+            # 获取分时数据
+            quotes = await self.quote_ctx.get_quote(symbol)
+            if not quotes:
+                return "neutral"
+            
+            quote = quotes[0]
+            change = (quote.last_done - quote.open) / quote.open * 100
+            
+            if change >= 5:
+                return "strong_up"
+            elif change >= 2:
+                return "up"
+            elif change <= -5:
+                return "strong_down"
+            elif change <= -2:
+                return "down"
+            else:
+                return "neutral"
+            
+        except Exception as e:
+            self.logger.error(f"获取分时趋势时出错: {str(e)}")
+            return "neutral"
+
+    async def start_risk_monitoring(self):
+        """启动风险监控"""
+        while True:
+            try:
+                await self.check_position_risks()
+            except Exception as e:
+                self.logger.error(f"风险监控出错: {str(e)}")
+            finally:
+                await asyncio.sleep(5)  # 每5秒检查一次
+
+    async def __aenter__(self):
+        """异步上下文管理器入口"""
+        try:
+            # 初始化交易和行情上下文
+            self.trade_ctx = await TradeContext(self.longport_config).__aenter__()
+            self.quote_ctx = await QuoteContext(self.longport_config).__aenter__()
+            
+            # 启动风险监控
+            asyncio.create_task(self.start_risk_monitoring())
+            
+            return self
+            
+        except Exception as e:
+            self.logger.error(f"初始化失败: {str(e)}")
+            raise
