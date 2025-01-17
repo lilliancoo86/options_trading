@@ -11,6 +11,7 @@ import numpy as np
 from longport.openapi import TradeContext, QuoteContext, SubType, OrderType, OrderSide
 import aiohttp
 from datetime import timezone
+import os
 
 class DoomsdayOptionStrategy:
     def __init__(self, config: Dict[str, Any]):
@@ -102,27 +103,56 @@ class DoomsdayOptionStrategy:
             'access_token': config['longport']['access_token'],  # OpenAPI访问令牌
         }
         
-        # 使用关键词分析替代PortAI
-        self.sentiment_config = {
+        # 优化新闻分析配置
+        self.news_config = {
             'cache_duration': 300,  # 缓存时间5分钟
             'keywords': {
+                'strong_positive': [
+                    'breakthrough', 'exceed', 'record', 'patent', 'partnership',
+                    'acquisition', 'launch', 'win', 'approved', 'exclusive'
+                ],
                 'positive': [
-                    'surge', 'jump', 'beat', 'upgrade', 'positive', 
-                    'bullish', 'outperform', 'buy', 'strong',
-                    'growth', 'innovation', 'partnership', 'launch',
-                    'exceed', 'record', 'success', 'expand'
+                    'surge', 'jump', 'beat', 'upgrade', 'bullish', 'outperform',
+                    'growth', 'innovation', 'expand', 'strong', 'higher'
+                ],
+                'strong_negative': [
+                    'lawsuit', 'investigation', 'recall', 'suspend', 'fraud',
+                    'default', 'bankrupt', 'warning', 'critical', 'emergency'
                 ],
                 'negative': [
-                    'drop', 'fall', 'miss', 'downgrade', 'negative',
-                    'bearish', 'underperform', 'sell', 'weak',
-                    'decline', 'risk', 'concern', 'investigation',
-                    'lawsuit', 'delay', 'suspend', 'warning'
+                    'drop', 'fall', 'miss', 'downgrade', 'bearish', 'underperform',
+                    'decline', 'risk', 'concern', 'weak', 'lower'
                 ]
             },
-            'title_weight': 2.0,      # 标题权重
-            'content_weight': 1.0,    # 内容权重
-            'time_decay': 0.8,        # 时间衰减因子
-            'threshold': 0.6          # 情绪判断阈值
+            'weights': {
+                'title': {
+                    'strong_positive': 3.0,
+                    'positive': 2.0,
+                    'strong_negative': -3.0,
+                    'negative': -2.0
+                },
+                'content': {
+                    'strong_positive': 1.5,
+                    'positive': 1.0,
+                    'strong_negative': -1.5,
+                    'negative': -1.0
+                }
+            },
+            'time_decay': {
+                'recent': 1.0,     # 最近1小时
+                'hour': 0.8,       # 1-3小时
+                'day': 0.6,        # 3-24小时
+                'old': 0.3         # 24小时以上
+            },
+            'source_weight': {     # 不同新闻源的权重
+                'official': 1.5,   # 官方新闻
+                'major': 1.2,      # 主流媒体
+                'normal': 1.0      # 普通来源
+            },
+            'threshold': {
+                'strong': 0.8,     # 强烈信号阈值
+                'normal': 0.5      # 普通信号阈值
+            }
         }
         
         # 如果没有配置PortAI，使用备选方案
@@ -177,6 +207,32 @@ class DoomsdayOptionStrategy:
         
         # 异动标的缓存
         self.active_symbols = []          # 当前活跃的交易标的
+        
+        # 添加机器学习配置
+        self.ml_config = {
+            'model_path': 'models/sentiment_model',  # 模型保存路径
+            'vocab_path': 'models/vocab.json',       # 词汇表路径
+            'update_interval': 7 * 24 * 3600,        # 每周更新一次
+            'min_samples': 1000,                     # 最小训练样本数
+            'features': {
+                'price_change': True,     # 使用价格变化
+                'volume_change': True,    # 使用成交量变化
+                'news_keywords': True,    # 使用新闻关键词
+                'technical_indicators': True  # 使用技术指标
+            }
+        }
+        
+        # 初始化机器学习模型
+        self.ml_model = self._init_ml_model()
+        
+        # 添加关键词自动更新配置
+        self.keyword_update = {
+            'last_update': datetime.now(self.tz),
+            'update_interval': 24 * 3600,  # 每天更新一次
+            'min_correlation': 0.3,        # 最小相关系数
+            'max_keywords': 50,            # 每类最大关键词数
+            'history_days': 30,            # 分析历史天数
+        }
     
     async def init_data(self):
         """初始化历史数据"""
@@ -1192,60 +1248,139 @@ class DoomsdayOptionStrategy:
         opportunities.sort(key=lambda x: x['trend_score'] + x['market_score'], reverse=True)
         return opportunities
 
-    async def _analyze_news_sentiment(self, news: List[Dict]) -> str:
-        """使用关键词分析新闻情绪"""
+    async def _analyze_news_sentiment(self, news: List[Dict]) -> Dict:
+        """分析新闻情绪"""
         try:
-            pos_score = 0
-            neg_score = 0
+            sentiment_score = 0
             total_weight = 0
+            news_impact = {
+                'score': 0,
+                'sentiment': 'neutral',
+                'details': {
+                    'recent_news': [],
+                    'major_news': [],
+                    'keywords_found': set()
+                }
+            }
             
             for item in news:
                 # 计算时间权重
-                if 'time' in item:
-                    news_time = datetime.fromisoformat(item['time'].replace('Z', '+00:00'))
-                    hours_ago = (datetime.now(timezone.utc) - news_time).total_seconds() / 3600
-                    time_weight = max(0.2, self.sentiment_config['time_decay'] ** (hours_ago / 24))
+                news_time = datetime.fromisoformat(item['time'].replace('Z', '+00:00'))
+                hours_ago = (datetime.now(timezone.utc) - news_time).total_seconds() / 3600
+                
+                if hours_ago <= 1:
+                    time_weight = self.news_config['time_decay']['recent']
+                elif hours_ago <= 3:
+                    time_weight = self.news_config['time_decay']['hour']
+                elif hours_ago <= 24:
+                    time_weight = self.news_config['time_decay']['day']
                 else:
-                    time_weight = 1.0
+                    time_weight = self.news_config['time_decay']['old']
+                
+                # 确定新闻源权重
+                source_weight = self._get_source_weight(item.get('source', ''))
                 
                 # 分析标题
                 title = item['title'].lower()
-                for word in self.sentiment_config['keywords']['positive']:
+                title_score = 0
+                
+                # 检查强烈关键词
+                for word in self.news_config['keywords']['strong_positive']:
                     if word in title:
-                        pos_score += self.sentiment_config['title_weight'] * time_weight
-                for word in self.sentiment_config['keywords']['negative']:
+                        title_score += self.news_config['weights']['title']['strong_positive']
+                        news_impact['details']['keywords_found'].add(word)
+                
+                for word in self.news_config['keywords']['strong_negative']:
                     if word in title:
-                        neg_score += self.sentiment_config['title_weight'] * time_weight
+                        title_score += self.news_config['weights']['title']['strong_negative']
+                        news_impact['details']['keywords_found'].add(word)
+                
+                # 检查普通关键词
+                for word in self.news_config['keywords']['positive']:
+                    if word in title:
+                        title_score += self.news_config['weights']['title']['positive']
+                        news_impact['details']['keywords_found'].add(word)
+                
+                for word in self.news_config['keywords']['negative']:
+                    if word in title:
+                        title_score += self.news_config['weights']['title']['negative']
+                        news_impact['details']['keywords_found'].add(word)
                 
                 # 分析内容
                 content = item['content'].lower()
-                for word in self.sentiment_config['keywords']['positive']:
-                    if word in content:
-                        pos_score += self.sentiment_config['content_weight'] * time_weight
-                for word in self.sentiment_config['keywords']['negative']:
-                    if word in content:
-                        neg_score += self.sentiment_config['content_weight'] * time_weight
+                content_score = 0
                 
-                total_weight += (self.sentiment_config['title_weight'] + 
-                               self.sentiment_config['content_weight']) * time_weight
+                # 检查强烈关键词
+                for word in self.news_config['keywords']['strong_positive']:
+                    if word in content:
+                        content_score += self.news_config['weights']['content']['strong_positive']
+                
+                for word in self.news_config['keywords']['strong_negative']:
+                    if word in content:
+                        content_score += self.news_config['weights']['content']['strong_negative']
+                
+                # 检查普通关键词
+                for word in self.news_config['keywords']['positive']:
+                    if word in content:
+                        content_score += self.news_config['weights']['content']['positive']
+                
+                for word in self.news_config['keywords']['negative']:
+                    if word in content:
+                        content_score += self.news_config['weights']['content']['negative']
+                
+                # 计算该条新闻的总分
+                news_score = (title_score + content_score) * time_weight * source_weight
+                
+                # 记录重要新闻
+                if abs(news_score) >= self.news_config['threshold']['normal']:
+                    news_info = {
+                        'title': item['title'],
+                        'time': news_time,
+                        'score': news_score,
+                        'source': item.get('source', 'unknown')
+                    }
+                    
+                    if hours_ago <= 3:
+                        news_impact['details']['recent_news'].append(news_info)
+                    if source_weight > 1.0:
+                        news_impact['details']['major_news'].append(news_info)
+                
+                sentiment_score += news_score
+                total_weight += time_weight * source_weight
             
-            if total_weight == 0:
-                return 'neutral'
+            # 计算最终情绪得分
+            if total_weight > 0:
+                final_score = sentiment_score / total_weight
+                news_impact['score'] = final_score
+                
+                # 判断情绪强度
+                if abs(final_score) >= self.news_config['threshold']['strong']:
+                    news_impact['sentiment'] = 'strong_positive' if final_score > 0 else 'strong_negative'
+                elif abs(final_score) >= self.news_config['threshold']['normal']:
+                    news_impact['sentiment'] = 'positive' if final_score > 0 else 'negative'
             
-            # 计算归一化得分
-            sentiment_score = (pos_score - neg_score) / total_weight
-            
-            # 判断情绪
-            if sentiment_score > self.sentiment_config['threshold']:
-                return 'positive'
-            elif sentiment_score < -self.sentiment_config['threshold']:
-                return 'negative'
-            else:
-                return 'neutral'
+            return news_impact
             
         except Exception as e:
             self.logger.error(f"分析新闻情绪失败: {str(e)}")
-            return 'neutral'
+            return {'score': 0, 'sentiment': 'neutral', 'details': {}}
+
+    def _get_source_weight(self, source: str) -> float:
+        """获取新闻源权重"""
+        source = source.lower()
+        
+        # 官方新闻源
+        if any(x in source for x in ['ir.', 'investor.', 'press.', 'official']):
+            return self.news_config['source_weight']['official']
+        
+        # 主流媒体
+        major_sources = ['bloomberg', 'reuters', 'cnbc', 'wsj', 'ft.com', 
+                        'marketwatch', 'barrons', 'yahoo finance']
+        if any(x in source for x in major_sources):
+            return self.news_config['source_weight']['major']
+        
+        # 普通来源
+        return self.news_config['source_weight']['normal']
 
     async def monitor_option_activity(self):
         """监控期权异动"""
@@ -1460,3 +1595,221 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"判断活跃时段失败: {str(e)}")
             return False
+
+    def _init_ml_model(self):
+        """初始化机器学习模型"""
+        try:
+            import tensorflow as tf
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            
+            # 创建模型
+            model = tf.keras.Sequential([
+                tf.keras.layers.Dense(128, activation='relu'),
+                tf.keras.layers.Dropout(0.2),
+                tf.keras.layers.Dense(64, activation='relu'),
+                tf.keras.layers.Dropout(0.2),
+                tf.keras.layers.Dense(32, activation='relu'),
+                tf.keras.layers.Dense(1, activation='sigmoid')
+            ])
+            
+            # 编译模型
+            model.compile(optimizer='adam',
+                         loss='binary_crossentropy',
+                         metrics=['accuracy'])
+            
+            # 加载已有模型（如果存在）
+            if os.path.exists(self.ml_config['model_path']):
+                model.load_weights(self.ml_config['model_path'])
+            
+            return {
+                'model': model,
+                'vectorizer': TfidfVectorizer(max_features=5000)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"初始化机器学习模型失败: {str(e)}")
+            return None
+
+    async def _update_ml_model(self):
+        """更新机器学习模型"""
+        try:
+            if not self.ml_model:
+                return
+            
+            # 收集训练数据
+            training_data = []
+            for symbol in self.symbols:
+                # 获取历史数据
+                news_data = await self._get_historical_news(symbol, 30)
+                price_data = await self._get_historical_prices(symbol, 30)
+                
+                if not news_data or not price_data:
+                    continue
+                
+                # 准备特征和标签
+                features = self._prepare_ml_features(news_data, price_data)
+                labels = self._prepare_ml_labels(price_data)
+                
+                training_data.extend(zip(features, labels))
+            
+            if len(training_data) < self.ml_config['min_samples']:
+                return
+            
+            # 分割特征和标签
+            X, y = zip(*training_data)
+            
+            # 转换文本特征
+            X_transformed = self.ml_model['vectorizer'].fit_transform(X)
+            
+            # 训练模型
+            self.ml_model['model'].fit(
+                X_transformed, 
+                y,
+                epochs=10,
+                batch_size=32,
+                validation_split=0.2
+            )
+            
+            # 保存模型
+            self.ml_model['model'].save_weights(self.ml_config['model_path'])
+            
+        except Exception as e:
+            self.logger.error(f"更新机器学习模型失败: {str(e)}")
+
+    async def _predict_sentiment(self, text: str) -> float:
+        """使用机器学习模型预测情绪"""
+        try:
+            if not self.ml_model:
+                return 0.5
+            
+            # 转换文本特征
+            X = self.ml_model['vectorizer'].transform([text])
+            
+            # 预测
+            prediction = self.ml_model['model'].predict(X)[0][0]
+            
+            return float(prediction)
+            
+        except Exception as e:
+            self.logger.error(f"预测情绪失败: {str(e)}")
+            return 0.5
+
+    def _prepare_ml_features(self, news_data: List[Dict], price_data: List[Dict]) -> List[str]:
+        """准备机器学习特征"""
+        features = []
+        for news in news_data:
+            feature_text = f"{news['title']} {news['content']}"
+            
+            if self.ml_config['features']['price_change']:
+                # 添加价格变化信息
+                price_change = self._get_price_change_at_time(price_data, news['time'])
+                feature_text += f" price_change_{price_change}"
+            
+            if self.ml_config['features']['volume_change']:
+                # 添加成交量变化信息
+                volume_change = self._get_volume_change_at_time(price_data, news['time'])
+                feature_text += f" volume_change_{volume_change}"
+            
+            if self.ml_config['features']['news_keywords']:
+                # 添加新闻关键词信息
+                news_keywords = self._extract_news_keywords(news['title'] + ' ' + news['content'])
+                feature_text += ' ' + ' '.join(news_keywords)
+            
+            if self.ml_config['features']['technical_indicators']:
+                # 添加技术指标信息
+                technical_indicators = self._extract_technical_indicators(price_data, news['time'])
+                feature_text += ' ' + ' '.join(technical_indicators)
+            
+            features.append(feature_text)
+        
+        return features
+
+    def _prepare_ml_labels(self, price_data: List[Dict]) -> List[int]:
+        """准备机器学习标签"""
+        labels = []
+        for i in range(len(price_data) - 1):
+            # 计算未来价格变化
+            future_return = (price_data[i+1]['close'] - price_data[i]['close']) / price_data[i]['close']
+            labels.append(1 if future_return > 0 else 0)
+        
+        return labels
+
+    async def _update_keywords(self):
+        """自动更新关键词库"""
+        try:
+            now = datetime.now(self.tz)
+            if (now - self.keyword_update['last_update']).total_seconds() < self.keyword_update['update_interval']:
+                return
+            
+            self.logger.info("开始更新关键词库...")
+            new_keywords = {
+                'strong_positive': set(),
+                'positive': set(),
+                'strong_negative': set(),
+                'negative': set()
+            }
+            
+            # 收集历史新闻和价格数据
+            for symbol in self.symbols:
+                # 获取历史新闻
+                news_data = await self._get_historical_news(symbol, self.keyword_update['history_days'])
+                
+                # 获取历史价格数据
+                price_data = await self._get_historical_prices(symbol, self.keyword_update['history_days'])
+                
+                if not news_data or not price_data:
+                    continue
+                
+                # 分析关键词与价格变动的相关性
+                correlations = self._analyze_keyword_correlations(news_data, price_data)
+                
+                # 根据相关性分类关键词
+                for word, corr in correlations.items():
+                    if corr >= self.keyword_update['min_correlation']:
+                        new_keywords['strong_positive'].add(word)
+                    elif 0.3 <= corr < 0.6:
+                        new_keywords['positive'].add(word)
+                    elif corr <= -0.6:
+                        new_keywords['strong_negative'].add(word)
+                    elif -0.6 < corr <= -0.3:
+                        new_keywords['negative'].add(word)
+            
+            # 更新关键词库
+            for category in new_keywords:
+                # 保留原有关键词中最重要的一部分
+                original_keywords = set(self.news_config['keywords'][category])
+                combined_keywords = original_keywords.union(new_keywords[category])
+                
+                # 限制关键词数量
+                if len(combined_keywords) > self.keyword_update['max_keywords']:
+                    # 按重要性排序并截取
+                    sorted_keywords = sorted(combined_keywords, 
+                                          key=lambda x: self._calculate_keyword_importance(x),
+                                          reverse=True)
+                    self.news_config['keywords'][category] = sorted_keywords[:self.keyword_update['max_keywords']]
+                else:
+                    self.news_config['keywords'][category] = list(combined_keywords)
+            
+            self.keyword_update['last_update'] = now
+            self.logger.info("关键词库更新完成")
+            
+        except Exception as e:
+            self.logger.error(f"更新关键词库失败: {str(e)}")
+
+    def _calculate_keyword_importance(self, word: str) -> float:
+        """计算关键词重要性"""
+        try:
+            # 计算关键词在新闻中的出现次数
+            news_count = sum(1 for news in self._get_historical_news(symbol, self.keyword_update['history_days']) for item in news if word in item['title'] or word in item['content'])
+            
+            # 计算关键词在价格数据中的出现次数
+            price_count = sum(1 for price in self._get_historical_prices(symbol, self.keyword_update['history_days']) if word in price['title'] or word in price['content'])
+            
+            # 计算关键词的重要性
+            importance = (news_count + price_count) / (self.keyword_update['max_keywords'] * 2)
+            
+            return importance
+            
+        except Exception as e:
+            self.logger.error(f"计算关键词重要性失败: {str(e)}")
+            return 0.0
