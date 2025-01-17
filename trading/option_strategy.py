@@ -8,14 +8,14 @@ import pytz
 from decimal import Decimal
 import asyncio
 import numpy as np
-from longport import Config  # 从 longport 直接导入 Config
 from longport.openapi import (
     TradeContext, 
     QuoteContext, 
     SubType, 
     OrderType, 
     OrderSide,
-    TimeInForceType
+    TimeInForceType,
+    Config    # 从 openapi 导入 Config
 )
 import aiohttp
 from datetime import timezone
