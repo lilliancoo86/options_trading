@@ -44,8 +44,16 @@ class DoomsdayPositionManager:
     def __init__(self, config, test_mode=False):
         self.config = config
         self.test_mode = test_mode    
-    
+        self.logger = logging.getLogger(__name__)
+        # 添加日志过滤器
+        self.logger.addFilter(MarketInfoFilter())
+        
+        # 初始化为None，将在__aenter__中创建
+        self.trade_ctx = None
+        self.quote_ctx = None
 
+        self.positions = {}
+        
         # 简化的风险控制参数
         self.risk_limits = {
             'option': {
@@ -65,6 +73,63 @@ class DoomsdayPositionManager:
             'force_close_time': '15:45',  # 收盘前15分钟强制平仓
             'warning_time': '15:40'       # 收盘前20分钟发出警告
         }
+
+    async def __aenter__(self):
+        """异步上下文管理器的进入方法"""
+        try:
+            # 创建配置
+            longport_config = Config.from_env()
+            
+            # 创建交易和行情上下文
+            self.trade_ctx = await TradeContext.create(longport_config)
+            self.quote_ctx = await QuoteContext.create(longport_config)
+            
+            self.logger.info("交易和行情连接已建立")
+            return self
+            
+        except Exception as e:
+            self.logger.error(f"初始化失败: {str(e)}")
+            self.logger.exception("详细错误信息:")
+            raise
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """异步上下文管理器的退出方法"""
+        try:
+            # 关闭连接
+            if self.trade_ctx:
+                await self.trade_ctx.close()
+            if self.quote_ctx:
+                await self.quote_ctx.close()
+            
+            self.logger.info("交易和行情连接已关闭")
+            
+        except Exception as e:
+            self.logger.error(f"清理资源时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
+            raise
+
+    async def get_real_positions(self):
+        """获取实际持仓信息"""
+        try:
+            if not self.trade_ctx:
+                raise RuntimeError("交易上下文未初始化")
+                
+            positions = await self.trade_ctx.positions()
+            return {
+                "active": [
+                    {
+                        "symbol": pos.symbol,
+                        "volume": pos.quantity,
+                        "cost_price": pos.cost_price,
+                        "current_price": pos.current_price,
+                        "pnl": pos.pnl
+                    }
+                    for pos in positions
+                ]
+            }
+        except Exception as e:
+            self.logger.error(f"获取持仓信息时出错: {str(e)}")
+            return {"active": []}
 
     async def check_market_close(self, position: Dict[str, Any]) -> bool:
         """检查是否需要收盘平仓"""
