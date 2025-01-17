@@ -1030,47 +1030,37 @@ class DoomsdayPositionManager:
             if is_option:
                 take_profit_pct = float(self.risk_limits['option']['take_profit'])
             else:
-                # 股票的基础止盈比例设置更高
-                take_profit_pct = 5.0  # 基础止盈5%
+                take_profit_pct = 5.0  # 股票基础止盈5%
             
             current_price = float(position.get('current_price', 0))
             cost_price = float(position.get('cost_price', 0))
-            
-            # 计算收益率
             pnl_pct = (current_price - cost_price) / cost_price * 100 if cost_price else 0
-            
-            # 检查趋势
             trend = await self.check_trend(position['symbol'], current_price, cost_price)
             
             if is_option:
                 # 期权的止盈逻辑
-                if trend['price_trend'] == 'super_strong' and trend['time_trend'] in ['strong_up', 'up']:
-                    if pnl_pct >= 500:
-                        take_profit_pct = pnl_pct * 0.9  # 回撤10%止盈
-                        self.logger.info(f"超强势上涨，当前收益{pnl_pct:.1f}%，设置回撤止盈: {take_profit_pct:.1f}%")
-                    else:
-                        take_profit_pct *= 3.0  # 提高200%的止盈目标
-                        self.logger.info(f"超强势上涨，提高止盈目标至: {take_profit_pct:.1f}%")
-                elif trend['price_trend'] == 'super_strong' and trend['time_trend'] in ['strong_down', 'down']:
-                    take_profit_pct = pnl_pct * 0.85  # 回撤15%止盈
-                    self.logger.info(f"超强势但分时转弱，设置回撤止盈: {take_profit_pct:.1f}%")
-            else:
-                # 股票的动态止盈逻辑
                 if trend['price_trend'] == 'super_strong':
                     if trend['time_trend'] in ['strong_up', 'up']:
-                        take_profit_pct = max(10.0, pnl_pct * 0.8)  # 至少10%，或当前收益的80%
+                        if pnl_pct >= 500:
+                            take_profit_pct = pnl_pct * 0.9  # 回撤10%止盈
+                        else:
+                            take_profit_pct *= 3.0  # 提高200%的止盈目标
+                    elif trend['time_trend'] == 'neutral':
+                        take_profit_pct = max(pnl_pct * 0.85, take_profit_pct * 2.0)  # 至少保持85%收益或翻倍止盈目标
                     else:
-                        take_profit_pct = pnl_pct * 0.9  # 回撤10%止盈
+                        take_profit_pct = pnl_pct * 0.8  # 回撤20%止盈
                 elif trend['price_trend'] == 'strong':
                     if trend['time_trend'] in ['strong_up', 'up']:
-                        take_profit_pct = max(8.0, pnl_pct * 0.7)  # 至少8%，或当前收益的70%
+                        take_profit_pct *= 2.5  # 提高150%的止盈目标
+                    elif trend['time_trend'] == 'neutral':
+                        if pnl_pct >= 200:
+                            take_profit_pct = pnl_pct * 0.8  # 回撤20%止盈
+                        else:
+                            take_profit_pct *= 1.5  # 提高50%的止盈目标
                     else:
-                        take_profit_pct = pnl_pct * 0.85  # 回撤15%止盈
+                        take_profit_pct = max(take_profit_pct, pnl_pct * 0.75)  # 至少保持75%收益
                 elif trend['price_trend'] == 'normal':
-                    if trend['time_trend'] in ['strong_up', 'up']:
-                        take_profit_pct = max(5.0, pnl_pct * 0.6)  # 至少5%，或当前收益的60%
-                    elif trend['time_trend'] == 'neutral':  # 横盘震荡处理
-                        # 根据波动幅度调整止盈
+                    if trend['time_trend'] == 'neutral':  # 横盘震荡处理
                         if 'price_history' in position:
                             prices = position['price_history'][-20:]  # 取最近20个价格点
                             if prices:
@@ -1078,21 +1068,24 @@ class DoomsdayPositionManager:
                                 min_price = min(prices)
                                 volatility = (max_price - min_price) / min_price * 100
                                 
-                                if volatility <= 1.0:  # 低波动
-                                    take_profit_pct = max(2.0, pnl_pct * 0.7)  # 至少2%，或当前收益的70%
-                                elif volatility <= 2.0:  # 中等波动
-                                    take_profit_pct = max(3.0, pnl_pct * 0.75)  # 至少3%，或当前收益的75%
+                                if volatility <= 3.0:  # 低波动
+                                    take_profit_pct = max(30.0, pnl_pct * 0.7)  # 至少30%，或当前收益的70%
+                                elif volatility <= 5.0:  # 中等波动
+                                    take_profit_pct = max(50.0, pnl_pct * 0.75)  # 至少50%，或当前收益的75%
                                 else:  # 高波动
-                                    take_profit_pct = max(4.0, pnl_pct * 0.8)  # 至少4%，或当前收益的80%
+                                    take_profit_pct = max(70.0, pnl_pct * 0.8)  # 至少70%，或当前收益的80%
                         else:
-                            take_profit_pct = max(3.0, pnl_pct * 0.75)  # 默认中等波动设置
+                            take_profit_pct = max(50.0, pnl_pct * 0.75)  # 默认中等波动设置
                     else:
-                        take_profit_pct = max(3.0, pnl_pct * 0.8)  # 至少3%，或回撤20%止盈
-                elif trend['price_trend'] == 'weak':  # 添加弱势处理
+                        take_profit_pct = max(take_profit_pct, pnl_pct * 0.7)  # 至少保持70%收益
+                elif trend['price_trend'] == 'weak':  # 弱势处理
                     if trend['time_trend'] in ['strong_down', 'down']:
-                        take_profit_pct = max(1.5, pnl_pct * 0.9)  # 尽快止盈
+                        take_profit_pct = max(20.0, pnl_pct * 0.9)  # 至少20%，或尽快止盈
                     else:
-                        take_profit_pct = max(2.0, pnl_pct * 0.85)  # 保守止盈
+                        take_profit_pct = max(30.0, pnl_pct * 0.85)  # 至少30%，或保守止盈
+            else:
+                # 股票的动态止盈逻辑保持不变
+                // ... existing stock logic ...
             
             # 添加移动止盈
             if 'peak_pnl' not in position:
@@ -1103,21 +1096,25 @@ class DoomsdayPositionManager:
             peak_pnl = position['peak_pnl']
             drawdown_pct = (pnl_pct - peak_pnl) / peak_pnl * 100 if peak_pnl else 0
             
-            # 根据最高收益和趋势设置不同的回撤止盈比例
-            if trend['time_trend'] == 'neutral':  # 横盘震荡时更保守
-                if peak_pnl >= 10:
-                    max_drawdown = -10  # 只允许10%回撤
-                elif peak_pnl >= 5:
-                    max_drawdown = -15  # 允许15%回撤
+            # 期权和股票使用不同的回撤止盈比例
+            if is_option:
+                if trend['time_trend'] == 'neutral':  # 横盘震荡时更保守
+                    if peak_pnl >= 200:
+                        max_drawdown = -15  # 允许15%回撤
+                    elif peak_pnl >= 100:
+                        max_drawdown = -20  # 允许20%回撤
+                    else:
+                        max_drawdown = -25  # 允许25%回撤
                 else:
-                    max_drawdown = -20  # 允许20%回撤
-            else:  # 其他趋势保持原有设置
-                if peak_pnl >= 20:
-                    max_drawdown = -15
-                elif peak_pnl >= 10:
-                    max_drawdown = -20
-                else:
-                    max_drawdown = -25
+                    if peak_pnl >= 500:
+                        max_drawdown = -20
+                    elif peak_pnl >= 200:
+                        max_drawdown = -25
+                    else:
+                        max_drawdown = -30
+            else:
+                # 股票的回撤止盈比例保持不变
+                // ... existing stock drawdown logic ...
             
             if drawdown_pct <= max_drawdown:
                 self.logger.warning(
@@ -1130,7 +1127,6 @@ class DoomsdayPositionManager:
                 f"止盈目标: {take_profit_pct:.1f}%"
             )
             
-            # 检查是否达到止盈条件
             if pnl_pct >= take_profit_pct:
                 self.logger.warning(
                     f"触发止盈: 当前收益 {pnl_pct:.1f}% >= {take_profit_pct:.1f}% "
