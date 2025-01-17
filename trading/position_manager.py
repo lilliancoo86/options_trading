@@ -145,17 +145,17 @@ class DoomsdayPositionManager:
                 },
                 'take_profit': 50.0,  # 基础止盈比例（会根据趋势动态调整）
             }
-            
-            # 趋势判断参数
-            self.trend_config = {
-                'fast_length': 1,      # 快线周期
-                'slow_length': 5,      # 慢线周期
-                'curve_length': 10,    # 曲线周期
-                'trend_period': 5,     # 趋势判断周期
-                'vwap_dev': 2.0,      # VWAP通道宽度
-                'price': 'neutral',    # 价格趋势
-                'time': 'neutral'      # 时间趋势
-            }
+        
+        # 趋势判断参数
+        self.trend_config = {
+            'fast_length': 1,      # 快线周期
+            'slow_length': 5,      # 慢线周期
+            'curve_length': 10,    # 曲线周期
+            'trend_period': 5,     # 趋势判断周期
+            'vwap_dev': 2.0,      # VWAP通道宽度
+            'price': config.get('trend', {}).get('price', 'neutral'),    # 从配置中获取或使用默认值
+            'time': config.get('trend', {}).get('time', 'neutral')       # 从配置中获取或使用默认值
+        }
         
         # 缓存历史数据
         self.price_history = {}
@@ -164,11 +164,6 @@ class DoomsdayPositionManager:
         # 添加quote_delay属性
         self.quote_delay = 0
         self.current_vix = 0  # 同时添加current_vix属性
-
-        self.trend_config = config.get('trend', {
-            'price': 'neutral',
-            'time': 'neutral'
-        })
 
     async def init_contexts(self):
         """初始化交易和行情上下文"""
