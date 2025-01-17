@@ -81,8 +81,8 @@ class DoomsdayPositionManager:
             longport_config = Config.from_env()
             
             # 创建交易和行情上下文
-            self.trade_ctx = await TradeContext.create(longport_config)
-            self.quote_ctx = await QuoteContext.create(longport_config)
+            self.trade_ctx = TradeContext(longport_config)
+            self.quote_ctx = QuoteContext(longport_config)
             
             self.logger.info("交易和行情连接已建立")
             return self
@@ -96,9 +96,9 @@ class DoomsdayPositionManager:
         """异步上下文管理器的退出方法"""
         try:
             # 关闭连接
-            if self.trade_ctx:
+            if hasattr(self.trade_ctx, 'close'):
                 await self.trade_ctx.close()
-            if self.quote_ctx:
+            if hasattr(self.quote_ctx, 'close'):
                 await self.quote_ctx.close()
             
             self.logger.info("交易和行情连接已关闭")
