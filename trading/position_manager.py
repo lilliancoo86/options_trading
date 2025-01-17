@@ -395,7 +395,9 @@ class DoomsdayPositionManager:
                         "数量": pos["volume"],
                         "成本价": f"${pos['cost_price']:.2f}",
                         "现价": f"${pos['current_price']:.2f}",
-                        "盈亏": f"${pos['pnl']:.2f}"
+                        "市值": f"${pos['market_value']:.2f}",
+                        "盈亏": f"${pos['total_pnl']:+.2f}",
+                        "盈亏率": f"{pos['total_pnl_pct']:+.2f}%"
                     })
                 
                 table = tabulate(
