@@ -114,38 +114,56 @@ class DoomsdayPositionManager:
             if not self.trade_ctx:
                 raise RuntimeError("交易上下文未初始化")
                 
-            # 使用正确的API调用获取持仓
-            stock_positions = await self.trade_ctx.stock_positions()
-            option_positions = await self.trade_ctx.option_positions()
-            
-            # 合并股票和期权持仓
+            # 获取持仓信息（同步方法）
+            positions = self.trade_ctx.positions
             all_positions = []
             
-            # 处理股票持仓
-            for pos in stock_positions:
-                all_positions.append({
-                    "symbol": pos.symbol,
-                    "volume": pos.quantity,
-                    "cost_price": pos.cost_price,
-                    "current_price": pos.current_price,
-                    "pnl": pos.pnl,
-                    "type": "stock"
-                })
-                
-            # 处理期权持仓
-            for pos in option_positions:
-                all_positions.append({
-                    "symbol": pos.symbol,
-                    "volume": pos.quantity,
-                    "cost_price": pos.cost_price,
-                    "current_price": pos.current_price,
-                    "pnl": pos.pnl,
-                    "type": "option"
-                })
-                
+            if positions:
+                for pos in positions:
+                    # 获取实时行情
+                    try:
+                        quote = await self.quote_ctx.get_quote([pos.symbol])
+                        current_price = float(quote[0].last_done if quote else pos.current_price)
+                    except Exception as e:
+                        self.logger.warning(f"获取{pos.symbol}行情失败: {str(e)}")
+                        current_price = float(pos.current_price)
+                    
+                    # 计算盈亏
+                    cost_price = float(pos.cost_price)
+                    volume = int(pos.quantity)
+                    market_value = current_price * abs(volume)
+                    cost_value = cost_price * abs(volume)
+                    pnl = market_value - cost_value if volume > 0 else cost_value - market_value
+                    
+                    # 判断是期权还是股票
+                    is_option = bool(re.search(r'\d{6}[CP]\d+', pos.symbol))
+                    
+                    position_info = {
+                        "symbol": pos.symbol,
+                        "volume": volume,
+                        "cost_price": cost_price,
+                        "current_price": current_price,
+                        "market_value": market_value,
+                        "pnl": pnl,
+                        "pnl_ratio": (pnl / cost_value * 100) if cost_value != 0 else 0,
+                        "type": "option" if is_option else "stock"
+                    }
+                    
+                    self.logger.debug(
+                        f"持仓详情:\n"
+                        f"  标的: {position_info['symbol']}\n"
+                        f"  数量: {position_info['volume']}\n"
+                        f"  成本: ${position_info['cost_price']:.2f}\n"
+                        f"  现价: ${position_info['current_price']:.2f}\n"
+                        f"  市值: ${position_info['market_value']:.2f}\n"
+                        f"  盈亏: ${position_info['pnl']:.2f} ({position_info['pnl_ratio']:.2f}%)"
+                    )
+                    
+                    all_positions.append(position_info)
+            
             # 获取账户余额信息
             try:
-                balance = self.trade_ctx.account_balance()
+                balance = self.trade_ctx.account_balance
                 balance_info = balance[0] if balance else None
             except Exception as e:
                 self.logger.warning(f"获取账户余额信息失败: {str(e)}")
