@@ -114,22 +114,44 @@ class DoomsdayPositionManager:
             if not self.trade_ctx:
                 raise RuntimeError("交易上下文未初始化")
                 
-            positions = await self.trade_ctx.positions()
+            # 使用正确的API调用获取持仓
+            positions = await self.trade_ctx.account_balance()
+            stock_positions = await self.trade_ctx.stock_positions()
+            option_positions = await self.trade_ctx.option_positions()
+            
+            # 合并股票和期权持仓
+            all_positions = []
+            
+            # 处理股票持仓
+            for pos in stock_positions:
+                all_positions.append({
+                    "symbol": pos.symbol,
+                    "volume": pos.quantity,
+                    "cost_price": pos.cost_price,
+                    "current_price": pos.current_price,
+                    "pnl": pos.pnl,
+                    "type": "stock"
+                })
+                
+            # 处理期权持仓
+            for pos in option_positions:
+                all_positions.append({
+                    "symbol": pos.symbol,
+                    "volume": pos.quantity,
+                    "cost_price": pos.cost_price,
+                    "current_price": pos.current_price,
+                    "pnl": pos.pnl,
+                    "type": "option"
+                })
+                
             return {
-                "active": [
-                    {
-                        "symbol": pos.symbol,
-                        "volume": pos.quantity,
-                        "cost_price": pos.cost_price,
-                        "current_price": pos.current_price,
-                        "pnl": pos.pnl
-                    }
-                    for pos in positions
-                ]
+                "active": all_positions,
+                "balance": positions
             }
+            
         except Exception as e:
             self.logger.error(f"获取持仓信息时出错: {str(e)}")
-            return {"active": []}
+            return {"active": [], "balance": None}
 
     async def check_market_close(self, position: Dict[str, Any]) -> bool:
         """检查是否需要收盘平仓"""
@@ -429,3 +451,21 @@ class DoomsdayPositionManager:
         except Exception as e:
             self.logger.error(f"获取持仓信息时出错: {str(e)}")
             return {}
+
+    async def check_position_risks(self):
+        """检查所有持仓的风险状态"""
+        try:
+            positions = await self.get_real_positions()
+            if not positions or not positions.get("active"):
+                return
+            
+            for position in positions["active"]:
+                # 检查持仓风险
+                await self.check_position_risk(position)
+                
+                # 检查是否需要收盘平仓
+                await self.check_market_close(position)
+                
+        except Exception as e:
+            self.logger.error(f"检查持仓风险时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
