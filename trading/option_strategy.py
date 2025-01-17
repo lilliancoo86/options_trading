@@ -2308,3 +2308,68 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"上下文初始化失败: {str(e)}")
             raise
+
+    async def close_position(self, position: Dict, reason: str = "Risk management") -> bool:
+        """关闭持仓"""
+        try:
+            symbol = position['symbol']
+            quantity = abs(position['quantity'])
+            
+            # 检查是否有未完成的订单
+            orders = await self.trade_ctx.today_orders()
+            pending_orders = [
+                order for order in orders 
+                if order.symbol == symbol and order.status not in ['Filled', 'Cancelled', 'Rejected']
+            ]
+            
+            # 如果有未完成订单，先取消
+            if pending_orders:
+                self.logger.info(f"取消未完成订单: {len(pending_orders)}个")
+                for order in pending_orders:
+                    try:
+                        await self.trade_ctx.cancel_order(order.order_id)
+                        self.logger.info(f"已取消订单: {order.order_id}")
+                    except Exception as e:
+                        self.logger.error(f"取消订单失败: {str(e)}")
+                
+                # 等待订单取消完成
+                await asyncio.sleep(1)
+            
+            # 再次确认可用持仓
+            positions = await self.trade_ctx.positions()
+            available_position = next(
+                (pos for pos in positions if pos.symbol == symbol),
+                None
+            )
+            
+            if not available_position or available_position.quantity < quantity:
+                self.logger.error(f"可用持仓不足: {symbol}")
+                return False
+            
+            # 提交平仓订单
+            order = await self.trade_ctx.submit_order(
+                symbol=symbol,
+                order_type=OrderType.Market,
+                side=OrderSide.Sell if position['side'] == OrderSide.Buy else OrderSide.Buy,
+                submitted_quantity=Decimal(str(quantity)),
+                time_in_force=TimeInForceType.Day,
+                remark=f"Risk management: {reason}"
+            )
+            
+            # 等待订单执行
+            for i in range(5):
+                await asyncio.sleep(1)
+                order_detail = await self.trade_ctx.order_detail(order.order_id)
+                self.logger.info(f"平仓订单状态 ({i+1}/5): {order_detail.status}")
+                
+                if order_detail.status == 'Filled':
+                    self.logger.info(f"平仓成功: {symbol}, 数量: {quantity}")
+                    return True
+            
+            self.logger.warning(f"平仓订单未能及时完成: {symbol}")
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"执行平仓操作失败 {symbol}: {str(e)}")
+            self.logger.error("详细错误信息:", exc_info=True)
+            return False
