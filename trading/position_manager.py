@@ -1275,7 +1275,13 @@ class DoomsdayPositionManager:
     async def check_position_risks(self):
         """检查持仓风险"""
         try:
-            positions = self.get_positions()  # 获取持仓
+            # 使用 get_real_positions 替代 get_positions
+            positions_data = await self.get_real_positions()
+            if not positions_data or not positions_data.get("active"):
+                self.logger.info("无持仓，跳过风险检查")
+                return
+            
+            positions = positions_data["active"]
             self.logger.info(f"获取到 {len(positions)} 个持仓")
             self.logger.info(f"开始检查持仓风险... 持仓数量: {len(positions)}")
             
@@ -1288,6 +1294,9 @@ class DoomsdayPositionManager:
                     if quotes and len(quotes) > 0:
                         quote = quotes[0]
                         current_price = float(quote.last_done)
+                        
+                        # 更新持仓的当前价格
+                        pos["current_price"] = current_price
                         
                         # 检查风险条件
                         if await self.check_position_risk(pos):
