@@ -136,6 +136,47 @@ class DoomsdayOptionStrategy:
             'options': {},     # 期权链缓存
             'market': {},      # 市场数据缓存
         }
+        
+        # 优化期权异动监控参数
+        self.option_monitor = {
+            'volume_threshold': {
+                'normal': 2.0,       # 常规时段成交量阈值(均值倍数)
+                'open': 3.0,         # 开盘时段成交量阈值
+                'close': 2.5,        # 收盘时段成交量阈值
+                'lunch': 1.5         # 午间时段成交量阈值
+            },
+            'min_volume': {
+                'TSLL.US': 500,      # TSLL最小成交量
+                'NVDA.US': 1000,     # NVDA最小成交量
+                'AAPL.US': 1000,     # AAPL最小成交量
+                'default': 800       # 默认最小成交量
+            },
+            'scan_interval': {
+                'open': 30,          # 开盘30分钟内每30秒扫描
+                'normal': 60,        # 常规时段每60秒扫描
+                'active': 45,        # 活跃时段每45秒扫描
+                'lunch': 120         # 午间每120秒扫描
+            },
+            'top_n': 3,             # 保留前3个异动标的
+            'active_strikes': {
+                'normal': 5,         # 常规时段监控上下5个行权价
+                'volatile': 7        # 波动大时监控上下7个行权价
+            },
+            'min_score': 3.0,       # 最小异动得分
+            'reset_interval': 1800,  # 每30分钟重置异动计数
+            'continuous_threshold': 3 # 连续3次异动才确认
+        }
+        
+        # 异动监控状态
+        self.monitor_state = {
+            'last_reset': datetime.now(self.tz),
+            'continuous_signals': {},  # 记录连续异动
+            'market_status': 'normal', # 市场状态
+            'active_period': False     # 是否处于活跃时段
+        }
+        
+        # 异动标的缓存
+        self.active_symbols = []          # 当前活跃的交易标的
     
     async def init_data(self):
         """初始化历史数据"""
@@ -545,39 +586,39 @@ class DoomsdayOptionStrategy:
             await self.init_data()
             
             while True:
-                # 检查是否在交易时段
-                if not self._is_trading_time():
-                    await asyncio.sleep(60)
-                    continue
-                    
-                # 检查开仓信号
-                signals = await self.check_entry_signals()
+                # 监控期权异动
+                await self.monitor_option_activity()
                 
-                if signals:
-                    # 订阅期权行情
-                    await self.subscribe_options(signals)
+                # 只在有异动标的时执行交易策略
+                if self.active_symbols:
+                    # 分析交易机会
+                    opportunities = await self.find_trading_opportunities()
                     
-                    for signal in signals:
+                    # 过滤只保留异动标的的机会
+                    active_opportunities = [
+                        opp for opp in opportunities
+                        if opp['symbol'] in [item['symbol'] for item in self.active_symbols]
+                    ]
+                    
+                    # 执行交易
+                    for opp in active_opportunities:
                         # 确定交易方向
-                        side = OrderSide.Buy if signal['type'].lower() == 'call' else OrderSide.Sell
+                        side = OrderSide.Buy if opp['type'] == 'call' else OrderSide.Sell
                         
                         # 执行交易
-                        success = await self.execute_trade(signal, side)
+                        success = await self.execute_trade(opp['option'], side)
                         
                         if success:
                             # 记录持仓
-                            self.positions[signal['symbol']] = {
-                                'entry_price': signal['price'],
-                                'quantity': signal['quantity'],
+                            self.positions[opp['symbol']] = {
+                                'entry_price': opp['option']['price'],
+                                'quantity': opp['option']['quantity'],
                                 'side': side,
                                 'entry_time': datetime.now(self.tz)
                             }
                 
-                # 检查持仓风险
-                await self._check_positions()
-                
-                # 等待下一个检查周期
-                await asyncio.sleep(60)
+                # 等待下一次扫描
+                await asyncio.sleep(self.option_monitor['scan_interval'])
                 
         except Exception as e:
             self.logger.error(f"策略运行错误: {str(e)}")
@@ -1205,3 +1246,217 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"分析新闻情绪失败: {str(e)}")
             return 'neutral'
+
+    async def monitor_option_activity(self):
+        """监控期权异动"""
+        try:
+            # 获取当前阈值
+            thresholds = self._get_current_thresholds()
+            
+            # 检查是否需要重置计数
+            now = datetime.now(self.tz)
+            if (now - self.monitor_state['last_reset']).seconds >= self.option_monitor['reset_interval']:
+                self.monitor_state['continuous_signals'] = {}
+                self.monitor_state['last_reset'] = now
+            
+            activity_scores = {}
+            
+            for symbol in self.symbols:
+                # 获取标的特定的最小成交量
+                min_volume = self.option_monitor['min_volume'].get(
+                    symbol, 
+                    self.option_monitor['min_volume']['default']
+                )
+                
+                # 获取期权链
+                chain = await self.quote_ctx.option_chain(
+                    symbol=symbol,
+                    expiry_date_list=[self._get_next_expiry()]
+                )
+                
+                if not chain:
+                    continue
+                
+                # 筛选近月期权
+                active_options = self._filter_active_strikes(
+                    chain, 
+                    self.price_cache[symbol]['close'][-1], 
+                    self.option_monitor['active_strikes']['normal']
+                )
+                
+                # 计算异动得分
+                total_score = 0
+                unusual_count = 0
+                
+                for option in active_options:
+                    # 获取期权成交量数据
+                    volume_data = await self._get_option_volume_history(option['symbol'])
+                    if not volume_data:
+                        continue
+                    
+                    # 计算成交量均值和标准差
+                    avg_volume = np.mean(volume_data)
+                    std_volume = np.std(volume_data)
+                    current_volume = volume_data[-1]
+                    
+                    # 检查是否有异动
+                    if (current_volume > min_volume and 
+                        current_volume > avg_volume * self.option_monitor['volume_threshold']['normal']):
+                        # 计算异动分数
+                        volume_ratio = current_volume / avg_volume
+                        score = volume_ratio * (current_volume / min_volume)
+                        
+                        # 根据期权类型调整得分
+                        if 'C' in option['symbol']:  # 看涨期权
+                            total_score += score
+                        else:  # 看跌期权
+                            total_score -= score
+                        
+                        unusual_count += 1
+                
+                # 更新连续异动计数
+                if unusual_count > 0:
+                    if symbol not in self.monitor_state['continuous_signals']:
+                        self.monitor_state['continuous_signals'][symbol] = {
+                            'count': 1,
+                            'direction': 'call' if total_score > 0 else 'put'
+                        }
+                    else:
+                        prev_signal = self.monitor_state['continuous_signals'][symbol]
+                        current_direction = 'call' if total_score > 0 else 'put'
+                        
+                        if prev_signal['direction'] == current_direction:
+                            prev_signal['count'] += 1
+                        else:
+                            prev_signal['count'] = 1
+                            prev_signal['direction'] = current_direction
+                        
+                        # 只有连续异动达到阈值才记录
+                        if self.monitor_state['continuous_signals'][symbol]['count'] >= self.option_monitor['continuous_threshold']:
+                            activity_scores[symbol] = {
+                                'score': abs(total_score),
+                                'direction': 'call' if total_score > 0 else 'put',
+                                'unusual_count': unusual_count
+                            }
+            
+            # 返回下一次扫描间隔
+            return thresholds['interval']
+            
+        except Exception as e:
+            self.logger.error(f"监控期权异动失败: {str(e)}")
+            return self.option_monitor['scan_interval']['normal']
+
+    def _filter_active_strikes(self, chain: List[Dict], current_price: float, 
+                             num_strikes: int) -> List[Dict]:
+        """筛选最接近现价的期权"""
+        try:
+            # 按行权价排序
+            sorted_options = sorted(chain, key=lambda x: abs(x['strike_price'] - current_price))
+            
+            # 返回最接近的N个行权价的期权
+            return sorted_options[:num_strikes * 2]  # 包括看涨和看跌
+            
+        except Exception as e:
+            self.logger.error(f"筛选活跃期权失败: {str(e)}")
+            return []
+
+    async def _get_option_volume_history(self, option_symbol: str) -> List[float]:
+        """获取期权成交量历史数据"""
+        try:
+            # 获取日内分钟K线数据
+            klines = await self.quote_ctx.history_candlesticks(
+                symbol=option_symbol,
+                period="1m",
+                count=30  # 获取最近30分钟数据
+            )
+            
+            if klines:
+                return [k.volume for k in klines]
+            return []
+            
+        except Exception as e:
+            self.logger.error(f"获取期权成交量历史失败: {str(e)}")
+            return []
+
+    def _get_current_thresholds(self) -> Dict:
+        """获取当前时段的监控阈值"""
+        try:
+            now = datetime.now(self.tz)
+            current_time = now.strftime('%H:%M')
+            
+            # 确定市场状态
+            if '09:30' <= current_time <= '10:00':
+                self.monitor_state['market_status'] = 'open'
+                return {
+                    'volume': self.option_monitor['volume_threshold']['open'],
+                    'interval': self.option_monitor['scan_interval']['open'],
+                    'strikes': self.option_monitor['active_strikes']['volatile']
+                }
+            elif '12:00' <= current_time <= '13:00':
+                self.monitor_state['market_status'] = 'lunch'
+                return {
+                    'volume': self.option_monitor['volume_threshold']['lunch'],
+                    'interval': self.option_monitor['scan_interval']['lunch'],
+                    'strikes': self.option_monitor['active_strikes']['normal']
+                }
+            elif '15:30' <= current_time <= '16:00':
+                self.monitor_state['market_status'] = 'close'
+                return {
+                    'volume': self.option_monitor['volume_threshold']['close'],
+                    'interval': self.option_monitor['scan_interval']['normal'],
+                    'strikes': self.option_monitor['active_strikes']['normal']
+                }
+            else:
+                # 检查是否是活跃时段
+                self.monitor_state['active_period'] = self._is_active_period()
+                if self.monitor_state['active_period']:
+                    return {
+                        'volume': self.option_monitor['volume_threshold']['normal'] * 1.2,
+                        'interval': self.option_monitor['scan_interval']['active'],
+                        'strikes': self.option_monitor['active_strikes']['volatile']
+                    }
+                else:
+                    return {
+                        'volume': self.option_monitor['volume_threshold']['normal'],
+                        'interval': self.option_monitor['scan_interval']['normal'],
+                        'strikes': self.option_monitor['active_strikes']['normal']
+                    }
+                
+        except Exception as e:
+            self.logger.error(f"获取监控阈值失败: {str(e)}")
+            return {
+                'volume': self.option_monitor['volume_threshold']['normal'],
+                'interval': self.option_monitor['scan_interval']['normal'],
+                'strikes': self.option_monitor['active_strikes']['normal']
+            }
+
+    def _is_active_period(self) -> bool:
+        """判断是否处于活跃时段"""
+        try:
+            # 检查最近的成交量和波动率
+            active_symbols = 0
+            
+            for symbol in self.symbols:
+                if symbol not in self.price_cache:
+                    continue
+                
+                volumes = self.price_cache[symbol]['volume'][-10:]  # 最近10分钟
+                prices = self.price_cache[symbol]['close'][-10:]
+                
+                # 计算成交量活跃度
+                avg_volume = np.mean(volumes)
+                current_volume = volumes[-1]
+                
+                # 计算价格波动率
+                price_range = (max(prices) - min(prices)) / min(prices) * 100
+                
+                # 判断是否活跃
+                if (current_volume > avg_volume * 1.5 or price_range > 0.5):
+                    active_symbols += 1
+            
+            # 如果超过半数标的活跃，认为是活跃时段
+            return active_symbols >= len(self.symbols) / 2
+            
+        except Exception as e:
+            self.logger.error(f"判断活跃时段失败: {str(e)}")
+            return False
