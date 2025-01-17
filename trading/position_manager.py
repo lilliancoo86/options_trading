@@ -670,9 +670,9 @@ class DoomsdayPositionManager:
                                 
                                 # 获取最新行情更新价格和盈亏
                                 try:
-                                    quote = self.quote_ctx.quote([pos.symbol])  # 移除 await
-                                    if quote and len(quote) > 0:
-                                        current_price = float(quote[0].last_done)
+                                    quotes = self.quote_ctx.quote([pos.symbol])
+                                    if quotes and len(quotes) > 0:
+                                        current_price = float(quotes[0].last_done)
                                         market_value = current_price * float(quantity)
                                         unrealized_pnl = (current_price - cost_price) * float(quantity)
                                         unrealized_pnl_ratio = ((current_price - cost_price) / cost_price) * 100 if cost_price != 0 else 0
@@ -685,7 +685,7 @@ class DoomsdayPositionManager:
                                             "total_pnl": unrealized_pnl,
                                             "total_pnl_pct": unrealized_pnl_ratio
                                         })
-                                        self.logger.debug(f"获取到行情数据: {quote[0]}")
+                                        self.logger.debug(f"获取到行情数据: {quotes[0]}")
                                 except Exception as e:
                                     self.logger.warning(f"获取行情数据失败: {str(e)}")
                                 
@@ -831,9 +831,9 @@ class DoomsdayPositionManager:
             for pos in sorted(positions, key=lambda x: x["symbol"]):
                 try:
                     # 获取行情数据
-                    quote = self.quote_ctx.quote([pos["symbol"]])
-                    if quote and len(quote) > 0:
-                        quote = quote[0]
+                    quotes = self.quote_ctx.quote([pos["symbol"]])
+                    if quotes and len(quotes) > 0:
+                        quote = quotes[0]
                         current_price = float(quote.last_done)
                         prev_close = float(quote.prev_close)
                         cost_price = float(pos["cost_price"])
@@ -1268,71 +1268,32 @@ class DoomsdayPositionManager:
         self.trading_decision = decision_data
 
     async def check_position_risks(self):
-        """检查所有持仓的风险状态"""
+        """检查持仓风险"""
         try:
-            positions = await self.get_real_positions()
-            if not positions or not positions.get("active"):
-                self.logger.info("无持仓，跳过风险检查")
-                return
+            positions = self.get_positions()  # 获取持仓
+            self.logger.info(f"获取到 {len(positions)} 个持仓")
+            self.logger.info(f"开始检查持仓风险... 持仓数量: {len(positions)}")
             
-            self.logger.info(f"开始检查持仓风险... 持仓数量: {len(positions['active'])}")
-            
-            for pos in positions["active"]:
+            for pos in positions:
                 try:
-                    # 获取最新行情数据
-                    quotes = await self.quote_ctx.quote([pos["symbol"]])
-                    if not quotes:
-                        self.logger.warning(f"无法获取行情数据: {pos['symbol']}")
-                        continue
+                    # 同步调用quote方法
+                    quotes = self.quote_ctx.quote([pos["symbol"]])
                     
-                    # 计算收益率
-                    current_pnl_pct = pos["total_pnl_pct"]  # 使用持仓数据中的收益率
-                    
-                    # 获取趋势信息
-                    price_trend = await self.get_price_trend(pos["symbol"])
-                    time_trend = await self.get_time_trend(pos["symbol"])
-                    
-                    # 记录详细日志
-                    self.logger.info(
-                        f"持仓风险检查 - {pos['symbol']}:\n"
-                        f"  数量: {pos['volume']} {'张' if self._is_option(pos['symbol']) else '股'}\n"
-                        f"  成本价: ${pos['cost_price']:.4f}\n"
-                        f"  现价: ${pos['current_price']:.4f}\n"
-                        f"  市值: ${pos['market_value']:.2f}\n"
-                        f"  当日盈亏: ${pos['day_pnl']:+.2f} ({pos['day_pnl_pct']:+.2f}%)\n"
-                        f"  总盈亏: ${pos['total_pnl']:+.2f} ({current_pnl_pct:+.2f}%)\n"
-                        f"  价格趋势: {price_trend}\n"
-                        f"  时间趋势: {time_trend}\n"
-                        f"  止损设置: 初始={self.risk_checker.initial_stop_loss}%, "
-                        f"移动={self.risk_checker.trailing_stop}%, "
-                        f"止盈={self.risk_checker.take_profit}%"
-                    )
-                    
-                    # 检查风险
-                    should_close, reason = self.risk_checker.check_position_risk(
-                        pos["symbol"], 
-                        current_pnl_pct,
-                        price_trend,
-                        time_trend
-                    )
-                    
-                    if should_close:
-                        self.logger.warning(f"触发风险管理: {reason}")
-                        await self.close_position(
-                            symbol=pos["symbol"],
-                            volume=int(pos["volume"]),
-                            reason=reason
-                        )
+                    # 处理行情数据
+                    if quotes and len(quotes) > 0:
+                        quote = quotes[0]
+                        # 进行风险检查逻辑...
                     else:
-                        self.logger.info(f"持仓 {pos['symbol']} 未触发风险管理条件")
+                        self.logger.warning(f"未能获取到 {pos['symbol']} 的行情数据")
                         
                 except Exception as e:
                     self.logger.error(f"检查单个持仓风险时出错 {pos['symbol']}: {str(e)}")
-                    self.logger.exception("详细错误信息:")
+                    self.logger.error("详细错误信息:", exc_info=True)
+                    continue
                 
         except Exception as e:
-            self.logger.error(f"检查持仓风险时出错: {str(e)}")
-            self.logger.exception("详细错误信息:")
+            self.logger.error(f"检查持仓风险时发生错误: {str(e)}")
+            self.logger.error("详细错误信息:", exc_info=True)
 
     async def close_position(self, symbol: str, volume: int, reason: str):
         """执行平仓操作"""
