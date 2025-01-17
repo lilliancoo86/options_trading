@@ -8,12 +8,19 @@ import pytz
 from decimal import Decimal
 import asyncio
 import numpy as np
-from longport.openapi import TradeContext, QuoteContext, SubType, OrderType, OrderSide
+from longport.openapi import (
+    TradeContext, 
+    QuoteContext, 
+    SubType, 
+    OrderType, 
+    OrderSide,
+    TimeInForceType,
+    Config    # 直接从 openapi 导入 Config
+)
 import aiohttp
 from datetime import timezone
 import os
 import json
-from longport.openapi.config import Config
 
 class DoomsdayOptionStrategy:
     def __init__(self, config: Dict[str, Any]):
@@ -21,6 +28,18 @@ class DoomsdayOptionStrategy:
         self.logger = logging.getLogger(__name__)
         self.config = config
         self.tz = pytz.timezone('America/New_York')
+        
+        # 初始化 Longport 配置
+        try:
+            self.longport_config = Config(
+                app_key=config['longport']['app_key'],
+                app_secret=config['longport']['app_secret'],
+                access_token=config['longport']['access_token']
+            )
+            self.logger.info("Longport配置初始化成功")
+        except Exception as e:
+            self.logger.error(f"Longport配置初始化失败: {str(e)}")
+            raise
         
         # 初始化交易标的
         self.symbols = ["TSLL.US", "NVDA.US", "AAPL.US"]
@@ -109,13 +128,6 @@ class DoomsdayOptionStrategy:
         
         # 持仓管理
         self.positions = {}             # 当前持仓
-        
-        # 初始化Longport配置
-        self.longport_config = Config(
-            app_key=config['longport']['app_key'],
-            app_secret=config['longport']['app_secret'],
-            access_token=config['longport']['access_token']
-        )
         
         # 初始化交易和行情上下文
         self.quote_ctx = QuoteContext(self.longport_config)
