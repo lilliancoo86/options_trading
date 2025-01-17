@@ -161,25 +161,29 @@ class DoomsdayPositionManager:
     async def init_contexts(self):
         """初始化交易和行情上下文"""
         try:
-            # 创建交易上下文
-            self._trade_ctx = TradeContext(self.longport_config)
-            # 创建行情上下文
-            self._quote_ctx = QuoteContext(self.longport_config)
+            # 获取事件循环
+            loop = asyncio.get_event_loop()
             
-            # 验证交易上下文 (同步调用)
-            self._trade_ctx.account_balance()
+            # 验证交易上下文
+            await loop.run_in_executor(None, self._trade_ctx.account_balance)
             self.logger.info("交易上下文初始化成功")
             
-            # 验证行情上下文 (同步调用)
+            # 验证行情上下文
             try:
                 # 使用基本报价类型进行测试
-                self._quote_ctx.subscribe(
-                    symbols=["US.AAPL"],
-                    sub_types=[SubType.Quote]
+                await loop.run_in_executor(
+                    None,
+                    lambda: self._quote_ctx.subscribe(
+                        symbols=["US.AAPL"],
+                        sub_types=[SubType.Quote]
+                    )
                 )
-                self._quote_ctx.unsubscribe(
-                    symbols=["US.AAPL"],
-                    sub_types=[SubType.Quote]
+                await loop.run_in_executor(
+                    None,
+                    lambda: self._quote_ctx.unsubscribe(
+                        symbols=["US.AAPL"],
+                        sub_types=[SubType.Quote]
+                    )
                 )
                 self.logger.info("行情上下文初始化成功")
             except Exception as e:
@@ -188,22 +192,27 @@ class DoomsdayPositionManager:
             
         except Exception as e:
             self.logger.error(f"初始化Longport上下文失败: {str(e)}")
-            self.close_contexts()  # 改为同步调用
+            await self.close_contexts()
             raise
 
-    def close_contexts(self):
+    async def close_contexts(self):
         """关闭所有上下文"""
         try:
+            loop = asyncio.get_event_loop()
+            
             if self._trade_ctx:
+                await loop.run_in_executor(None, self._trade_ctx.close)
                 self._trade_ctx = None
                 self.logger.info("交易上下文已关闭")
             
             if self._quote_ctx:
+                await loop.run_in_executor(None, self._quote_ctx.close)
                 self._quote_ctx = None
                 self.logger.info("行情上下文已关闭")
                 
         except Exception as e:
             self.logger.error(f"关闭Longport上下文时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
 
     @property
     def trade_ctx(self) -> TradeContext:
@@ -1461,8 +1470,11 @@ class DoomsdayPositionManager:
         """异步上下文管理器入口"""
         try:
             # 初始化交易和行情上下文
-            self.trade_ctx = await TradeContext(self.longport_config).__aenter__()
-            self.quote_ctx = await QuoteContext(self.longport_config).__aenter__()
+            self._trade_ctx = TradeContext(self.longport_config)
+            self._quote_ctx = QuoteContext(self.longport_config)
+            
+            # 验证交易上下文
+            await self.init_contexts()
             
             # 启动风险监控任务并保存引用
             self.risk_monitor_task = asyncio.create_task(self.start_risk_monitoring())
@@ -1487,10 +1499,7 @@ class DoomsdayPositionManager:
                     pass
             
             # 关闭上下文
-            if self.trade_ctx:
-                await self.trade_ctx.__aexit__(exc_type, exc_val, exc_tb)
-            if self.quote_ctx:
-                await self.quote_ctx.__aexit__(exc_type, exc_val, exc_tb)
+            await self.close_contexts()
             
         except Exception as e:
             self.logger.error(f"退出时出错: {str(e)}")
