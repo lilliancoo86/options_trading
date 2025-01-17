@@ -233,6 +233,33 @@ class DoomsdayOptionStrategy:
             'max_keywords': 50,            # 每类最大关键词数
             'history_days': 30,            # 分析历史天数
         }
+        
+        # 添加市场资讯监控配置
+        self.market_news_config = {
+            'sources': {
+                'company_news': 2.0,      # 公司新闻权重
+                'industry_news': 1.5,     # 行业新闻权重
+                'market_news': 1.0,       # 市场新闻权重
+                'analyst_ratings': 1.8    # 分析师评级权重
+            },
+            'update_interval': 300,       # 每5分钟更新一次
+            'impact_threshold': 0.6,      # 影响力阈值
+            'categories': {
+                'earnings': 2.0,          # 财报相关
+                'guidance': 1.8,          # 业绩指引
+                'analyst': 1.5,           # 分析师评级
+                'insider': 1.7,           # 内部交易
+                'product': 1.3,           # 产品相关
+                'partnership': 1.4,       # 合作关系
+                'regulatory': 1.6         # 监管相关
+            }
+        }
+        
+        # 资讯缓存
+        self.news_cache = {
+            'market_data': {},
+            'last_update': datetime.now(self.tz)
+        }
     
     async def init_data(self):
         """初始化历史数据"""
@@ -1215,37 +1242,63 @@ class DoomsdayOptionStrategy:
                 if not stock_trend:
                     continue
                 
+                # 分析市场资讯
+                news_impact = await self.analyze_market_news(symbol)
+                
                 # 综合分析
-                if stock_trend['is_uptrend'] and market_context['score'] > 0:
-                    # 上升趋势，寻找看涨期权
+                total_score = (
+                    stock_trend['trend_score'] * 2.0 +  # 技术分析权重
+                    market_context['score'] * 1.5 +     # 市场环境权重
+                    news_impact['score']                # 资讯影响权重
+                )
+                
+                # 上升趋势
+                if (stock_trend['is_uptrend'] and 
+                    market_context['score'] > 0 and 
+                    news_impact['sentiment'] != 'negative'):
+                    
                     best_call = await self._find_best_option(stock_trend, 'call')
                     if best_call:
                         opportunities.append({
                             'symbol': symbol,
                             'option': best_call,
                             'type': 'call',
+                            'score': total_score,
                             'trend_score': stock_trend['trend_score'],
                             'market_score': market_context['score'],
-                            'context': market_context
+                            'news_score': news_impact['score'],
+                            'context': {
+                                'market': market_context,
+                                'news': news_impact
+                            }
                         })
-                elif stock_trend['trend_score'] <= -6 and market_context['score'] < 0:
-                    # 下降趋势，寻找看跌期权
+                
+                # 下降趋势
+                elif (stock_trend['trend_score'] <= -6 and 
+                      market_context['score'] < 0 and 
+                      news_impact['sentiment'] != 'positive'):
+                    
                     best_put = await self._find_best_option(stock_trend, 'put')
                     if best_put:
                         opportunities.append({
                             'symbol': symbol,
                             'option': best_put,
                             'type': 'put',
+                            'score': abs(total_score),
                             'trend_score': abs(stock_trend['trend_score']),
                             'market_score': abs(market_context['score']),
-                            'context': market_context
+                            'news_score': news_impact['score'],
+                            'context': {
+                                'market': market_context,
+                                'news': news_impact
+                            }
                         })
-                
+            
             except Exception as e:
                 self.logger.error(f"分析{symbol}交易机会失败: {str(e)}")
         
         # 按综合得分排序
-        opportunities.sort(key=lambda x: x['trend_score'] + x['market_score'], reverse=True)
+        opportunities.sort(key=lambda x: x['score'], reverse=True)
         return opportunities
 
     async def _analyze_news_sentiment(self, news: List[Dict]) -> Dict:
@@ -1813,3 +1866,135 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"计算关键词重要性失败: {str(e)}")
             return 0.0
+
+    async def analyze_market_news(self, symbol: str) -> Dict:
+        """分析市场资讯"""
+        try:
+            # 检查缓存
+            if (symbol in self.news_cache['market_data'] and 
+                (datetime.now(self.tz) - self.news_cache['market_data'][symbol]['timestamp']).seconds 
+                < self.market_news_config['update_interval']):
+                return self.news_cache['market_data'][symbol]['data']
+            
+            news_impact = {
+                'score': 0,
+                'sentiment': 'neutral',
+                'signals': [],
+                'key_events': [],
+                'details': {
+                    'company_news': [],
+                    'analyst_ratings': [],
+                    'sector_impact': []
+                }
+            }
+            
+            # 获取公司新闻
+            company_news = await self._fetch_company_news(symbol)
+            if company_news:
+                impact = self._analyze_company_news(company_news)
+                news_impact['score'] += impact['score'] * self.market_news_config['sources']['company_news']
+                news_impact['details']['company_news'] = impact['events']
+            
+            # 获取分析师评级
+            ratings = await self._fetch_analyst_ratings(symbol)
+            if ratings:
+                impact = self._analyze_ratings(ratings)
+                news_impact['score'] += impact['score'] * self.market_news_config['sources']['analyst_ratings']
+                news_impact['details']['analyst_ratings'] = impact['ratings']
+            
+            # 获取行业动态
+            sector_news = await self._fetch_sector_news(symbol)
+            if sector_news:
+                impact = self._analyze_sector_impact(sector_news)
+                news_impact['score'] += impact['score'] * self.market_news_config['sources']['industry_news']
+                news_impact['details']['sector_impact'] = impact['events']
+            
+            # 确定整体情绪
+            if news_impact['score'] >= self.market_news_config['impact_threshold']:
+                news_impact['sentiment'] = 'positive'
+            elif news_impact['score'] <= -self.market_news_config['impact_threshold']:
+                news_impact['sentiment'] = 'negative'
+            
+            # 更新缓存
+            self.news_cache['market_data'][symbol] = {
+                'timestamp': datetime.now(self.tz),
+                'data': news_impact
+            }
+            
+            return news_impact
+            
+        except Exception as e:
+            self.logger.error(f"分析市场资讯失败: {str(e)}")
+            return {'score': 0, 'sentiment': 'neutral', 'signals': [], 'key_events': []}
+
+    def _analyze_company_news(self, news: List[Dict]) -> Dict:
+        """分析公司新闻"""
+        try:
+            impact = {
+                'score': 0,
+                'events': []
+            }
+            
+            for item in news:
+                event_score = 0
+                category = self._categorize_news(item['title'], item['content'])
+                
+                # 应用类别权重
+                if category in self.market_news_config['categories']:
+                    event_score = self._calculate_news_score(item) * self.market_news_config['categories'][category]
+                
+                # 记录重要事件
+                if abs(event_score) >= self.market_news_config['impact_threshold']:
+                    impact['events'].append({
+                        'title': item['title'],
+                        'category': category,
+                        'score': event_score,
+                        'time': item['time']
+                    })
+                
+                impact['score'] += event_score
+            
+            return impact
+            
+        except Exception as e:
+            self.logger.error(f"分析公司新闻失败: {str(e)}")
+            return {'score': 0, 'events': []}
+
+    def _analyze_ratings(self, ratings: List[Dict]) -> Dict:
+        """分析分析师评级"""
+        try:
+            impact = {
+                'score': 0,
+                'ratings': []
+            }
+            
+            for rating in ratings:
+                score = 0
+                # 评级变化
+                if rating['action'] == 'upgrade':
+                    score = 1.0
+                elif rating['action'] == 'downgrade':
+                    score = -1.0
+                elif rating['action'] == 'initiate':
+                    score = 0.5 if rating['rating'] in ['buy', 'outperform'] else -0.5
+                
+                # 目标价变化
+                if 'price_target_change' in rating:
+                    pt_change = rating['price_target_change']
+                    score += (pt_change / 100) * 0.5  # 目标价变化每1%影响0.5分
+                
+                impact['ratings'].append({
+                    'firm': rating['firm'],
+                    'action': rating['action'],
+                    'rating': rating['rating'],
+                    'score': score,
+                    'time': rating['time']
+                })
+                
+                impact['score'] += score
+            
+            return impact
+            
+        except Exception as e:
+            self.logger.error(f"分析评级失败: {str(e)}")
+            return {'score': 0, 'ratings': []}
