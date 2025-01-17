@@ -9,6 +9,8 @@ from decimal import Decimal
 import asyncio
 import numpy as np
 from longport.openapi import TradeContext, QuoteContext, SubType, OrderType, OrderSide
+import aiohttp
+from datetime import timezone
 
 class DoomsdayOptionStrategy:
     def __init__(self, config: Dict[str, Any]):
@@ -85,6 +87,13 @@ class DoomsdayOptionStrategy:
             SubType.Depth,       # 盘口
             SubType.Greeks,      # 希腊字母
         ]
+        
+        # 添加PortAI配置
+        self.portai_config = {
+            'api_key': config.get('portai', {}).get('api_key', ''),
+            'base_url': config.get('portai', {}).get('base_url', 'https://portai.longport.com'),
+            'sentiment_threshold': 0.6,  # 情绪判断阈值
+        }
     
     async def init_data(self):
         """初始化历史数据"""
@@ -951,28 +960,106 @@ class DoomsdayOptionStrategy:
             return []
 
     async def _analyze_news_sentiment(self, news: List[Dict]) -> str:
-        """分析新闻情绪"""
+        """使用PortAI分析新闻情绪"""
         try:
-            # 这里可以接入专门的新闻情绪分析服务
-            # 示例实现使用简单的关键词匹配
-            positive_keywords = ['surge', 'jump', 'beat', 'upgrade', 'positive']
-            negative_keywords = ['drop', 'fall', 'miss', 'downgrade', 'negative']
+            if not self.portai_config['api_key']:
+                self.logger.warning("PortAI API key未配置，使用关键词匹配分析")
+                return await self._analyze_news_sentiment_keywords(news)
+            
+            # 准备新闻文本
+            news_texts = []
+            for item in news:
+                # 组合标题和内容，标题权重更高
+                text = f"{item['title']} {item['title']} {item['content']}"
+                news_texts.append(text)
+            
+            if not news_texts:
+                return 'neutral'
+            
+            # 调用PortAI API
+            headers = {
+                'Authorization': f"Bearer {self.portai_config['api_key']}",
+                'Content-Type': 'application/json'
+            }
+            
+            # 批量分析新闻情绪
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.portai_config['base_url']}/v1/sentiment",
+                    headers=headers,
+                    json={'texts': news_texts}
+                ) as response:
+                    if response.status != 200:
+                        self.logger.error(f"PortAI API调用失败: {await response.text()}")
+                        return 'neutral'
+                    
+                    result = await response.json()
+                    
+                    # 分析情绪得分
+                    if 'sentiments' not in result:
+                        return 'neutral'
+                    
+                    # 计算加权平均情绪得分
+                    total_score = 0
+                    weights = []
+                    
+                    for i, sentiment in enumerate(result['sentiments']):
+                        # 最新新闻权重更高
+                        weight = 1.0 / (i + 1)
+                        weights.append(weight)
+                        total_score += sentiment['score'] * weight
+                    
+                    avg_score = total_score / sum(weights)
+                    
+                    # 判断情绪
+                    threshold = self.portai_config['sentiment_threshold']
+                    if avg_score > threshold:
+                        return 'positive'
+                    elif avg_score < -threshold:
+                        return 'negative'
+                    else:
+                        return 'neutral'
+            
+        except Exception as e:
+            self.logger.error(f"PortAI情绪分析失败: {str(e)}")
+            # 失败时回退到关键词匹配
+            return await self._analyze_news_sentiment_keywords(news)
+
+    async def _analyze_news_sentiment_keywords(self, news: List[Dict]) -> str:
+        """使用关键词匹配分析新闻情绪（作为备选方案）"""
+        try:
+            # 移动原来的关键词分析逻辑到这里
+            positive_keywords = ['surge', 'jump', 'beat', 'upgrade', 'positive', 
+                               'bullish', 'outperform', 'buy', 'strong']
+            negative_keywords = ['drop', 'fall', 'miss', 'downgrade', 'negative',
+                               'bearish', 'underperform', 'sell', 'weak']
             
             pos_count = 0
             neg_count = 0
             
             for item in news:
+                # 给最新新闻更高权重
+                weight = 1.0
+                if 'time' in item:
+                    news_time = datetime.fromisoformat(item['time'].replace('Z', '+00:00'))
+                    hours_ago = (datetime.now(timezone.utc) - news_time).total_seconds() / 3600
+                    weight = max(0.5, 1.0 - (hours_ago / 24))  # 24小时内线性衰减
+                
                 title = item['title'].lower()
                 content = item['content'].lower()
                 
-                # 检查标题和内容中的关键词
+                # 标题中的关键词权重更高
                 for word in positive_keywords:
-                    if word in title or word in content:
-                        pos_count += 1
+                    if word in title:
+                        pos_count += 2 * weight
+                    elif word in content:
+                        pos_count += weight
                 
                 for word in negative_keywords:
-                    if word in title or word in content:
-                        neg_count += 1
+                    if word in title:
+                        neg_count += 2 * weight
+                    elif word in content:
+                        neg_count += weight
             
             # 计算情绪得分
             total = pos_count + neg_count
@@ -989,7 +1076,7 @@ class DoomsdayOptionStrategy:
                 return 'neutral'
             
         except Exception as e:
-            self.logger.error(f"分析新闻情绪失败: {str(e)}")
+            self.logger.error(f"关键词情绪分析失败: {str(e)}")
             return 'neutral'
 
     async def find_trading_opportunities(self) -> List[Dict]:
