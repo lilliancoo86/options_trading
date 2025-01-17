@@ -39,11 +39,13 @@ class MarketInfoFilter(logging.Filter):
         message = record.getMessage()
         return not any(s in message for s in filtered_strings)
 
-class DoomsdayPositionManager:
-    def __init__(self, config: Dict[str, Any]):
-        self.logger = logging.getLogger(__name__)
-        self.config = config
         
+class DoomsdayPositionManager:
+    def __init__(self, config, test_mode=False):
+        self.config = config
+        self.test_mode = test_mode    
+    
+
         # 简化的风险控制参数
         self.risk_limits = {
             'option': {
