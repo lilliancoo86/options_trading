@@ -117,14 +117,14 @@ class DoomsdayPositionManager:
             # 获取持仓信息
             try:
                 # 获取股票持仓
-                stock_positions = self.trade_ctx.stock_positions()
-                self.logger.debug(f"股票持仓响应: {stock_positions}")
+                stock_positions_resp = self.trade_ctx.stock_positions()
+                self.logger.debug(f"股票持仓响应: {stock_positions_resp}")
                 
                 all_positions = []
                 
                 # 处理持仓
-                if stock_positions:
-                    for pos in stock_positions:
+                if stock_positions_resp and hasattr(stock_positions_resp, 'list'):
+                    for pos in stock_positions_resp.list:
                         try:
                             # 获取实时行情
                             quote = await self.quote_ctx.get_quote([pos.symbol])
