@@ -157,6 +157,10 @@ class DoomsdayPositionManager:
         # 缓存历史数据
         self.price_history = {}
         self.vwap_history = {}
+        
+        # 添加quote_delay属性
+        self.quote_delay = 0
+        self.current_vix = 0  # 同时添加current_vix属性
 
     async def init_contexts(self):
         """初始化交易和行情上下文"""
@@ -735,8 +739,9 @@ class DoomsdayPositionManager:
                 f"\n交易系统状态:\n"
                 f"{'='*80}\n"
                 f"连接状态: {'已连接':^10} | "
-                f"行情延迟: {self.quote_delay:^8}ms | "
-                f"VIX指数: {self.current_vix:.2f} (限制范围: {self.risk_limits['volatility']['min_vix']}-"
+                f"行情延迟: {self.quote_delay or 0:^8}ms | "  # 使用 or 0 作为默认值
+                f"VIX指数: {getattr(self, 'current_vix', 0):.2f} (限制范围: "
+                f"{self.risk_limits['volatility']['min_vix']}-"
                 f"{self.risk_limits['volatility']['max_vix']})\n"
                 f"{'='*80}"
             )
@@ -786,7 +791,7 @@ class DoomsdayPositionManager:
 
         except Exception as e:
             self.logger.error(f"打印交易状态时出错: {str(e)}")
-            self.logger.exception("详细错误信息:")
+            self.logger.error("详细错误信息:", exc_info=True)
 
     async def _print_positions_table(self, positions_data: Dict[str, List[dict]]):
         """打印持仓标的明细"""
@@ -1282,7 +1287,15 @@ class DoomsdayPositionManager:
                     # 处理行情数据
                     if quotes and len(quotes) > 0:
                         quote = quotes[0]
-                        # 进行风险检查逻辑...
+                        current_price = float(quote.last_done)
+                        
+                        # 检查风险条件
+                        if await self.check_position_risk(pos):
+                            await self.close_position(
+                                symbol=pos["symbol"],
+                                volume=int(pos["volume"]),
+                                reason="Risk management"
+                            )
                     else:
                         self.logger.warning(f"未能获取到 {pos['symbol']} 的行情数据")
                         
