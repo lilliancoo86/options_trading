@@ -200,9 +200,8 @@ async def run_strategy(strategy, position_manager, risk_checker, time_checker, l
 
         current_time = datetime.now()
 
-        if not hasattr(run_strategy, '_last_status_log') or \
-
-           (current_time - run_strategy._last_status_log).seconds >= 300:
+        if (not hasattr(run_strategy, '_last_status_log') or 
+                (current_time - run_strategy._last_status_log).seconds >= 300):
 
             
 
@@ -274,9 +273,8 @@ async def run_strategy(strategy, position_manager, risk_checker, time_checker, l
 
         # 只在状态变化时记录日志
 
-        if not hasattr(run_strategy, '_last_market_condition') or \
-
-           run_strategy._last_market_condition != market_condition:
+        if (not hasattr(run_strategy, '_last_market_condition') or 
+                run_strategy._last_market_condition != market_condition):
 
             if not market_condition:
 
