@@ -1340,41 +1340,40 @@ class DoomsdayPositionManager:
                 self.logger.error("交易上下文未初始化")
                 return
             
-            # 检查账户状态
-            account = await self.trade_ctx.account()
-            if not account or account.status != "normal":
-                self.logger.error(f"账户状态异常: {account.status if account else 'unknown'}")
-                return
-            
-            # 提交市价单平仓
-            order_resp = await self.trade_ctx.submit_order(
-                symbol=symbol,
-                order_type=OrderType.Market,  # 使用市价单确保执行
-                side=OrderSide.Sell,
-                submitted_quantity=volume,
-                time_in_force=TimeInForceType.Day,
-                remark=f"Risk management: {reason}"
-            )
-            
-            self.logger.info(f"平仓订单已提交: {symbol}, 订单ID: {order_resp.order_id}")
-            
-            # 等待并检查订单状态
-            max_retries = 5
-            for i in range(max_retries):
-                await asyncio.sleep(1)
-                order_status = await self.trade_ctx.get_order(order_resp.order_id)
-                self.logger.info(f"平仓订单状态 ({i+1}/{max_retries}): {order_status.status}")
+            try:
+                # 提交市价单平仓
+                order_resp = self.trade_ctx.submit_order(
+                    symbol=symbol,
+                    order_type=OrderType.Market,  # 使用市价单确保执行
+                    side=OrderSide.Sell,
+                    submitted_quantity=volume,
+                    time_in_force=TimeInForceType.Day,
+                    remark=f"Risk management: {reason}"
+                )
                 
-                if order_status.status in ["filled", "partially_filled"]:
-                    self.logger.info(f"平仓订单执行成功: {symbol}")
-                    break
-                elif order_status.status in ["rejected", "failed"]:
-                    self.logger.error(f"平仓订单被拒绝: {symbol}, 原因: {order_status.reject_reason}")
-                    break
+                self.logger.info(f"平仓订单已提交: {symbol}, 订单ID: {order_resp.order_id}")
                 
+                # 等待并检查订单状态
+                max_retries = 5
+                for i in range(max_retries):
+                    await asyncio.sleep(1)
+                    order_status = self.trade_ctx.order_detail(order_resp.order_id)
+                    self.logger.info(f"平仓订单状态 ({i+1}/{max_retries}): {order_status.status}")
+                    
+                    if order_status.status in ["filled", "partially_filled"]:
+                        self.logger.info(f"平仓订单执行成功: {symbol}")
+                        break
+                    elif order_status.status in ["rejected", "failed"]:
+                        self.logger.error(f"平仓订单被拒绝: {symbol}, 原因: {order_status.reject_reason}")
+                        break
+                    
+            except Exception as e:
+                self.logger.error(f"提交平仓订单失败: {str(e)}")
+                raise
+            
         except Exception as e:
             self.logger.error(f"执行平仓操作失败 {symbol}: {str(e)}")
-            self.logger.exception("详细错误信息:")
+            self.logger.error("详细错误信息:", exc_info=True)
 
     async def get_price_trend(self, symbol: str) -> str:
         """获取价格趋势"""
