@@ -46,6 +46,13 @@ class DoomsdayOptionStrategy:
             'news_score_threshold': 0.6,   # 新闻情绪分数阈值
             'volume_surge_ratio': 2.0,     # 成交量放大倍数阈值
             'gap_threshold': 1.5,          # 跳空缺口阈值(%)
+            'premarket_weight': 2.0,     # 盘前因素权重
+            'news_weight': 1.5,          # 新闻因素权重
+            'volume_weight': 1.0,        # 成交量因素权重
+            'trend_weight': 2.0,         # 趋势因素权重
+            'min_total_score': 8.0,      # 最小开仓总分
+            'max_positions_per_symbol': 2,# 每个标的最大持仓数
+            'position_sizing_atr': 2.0,  # 基于ATR的仓位大小
         }
         
         # 趋势判断参数
@@ -90,9 +97,18 @@ class DoomsdayOptionStrategy:
         
         # 添加PortAI配置
         self.portai_config = {
-            'api_key': config.get('portai', {}).get('api_key', ''),
+            'api_key': config.get('portai', {}).get('api_key', ''),  # 从开发者中心获取: https://open.longportapp.com/
             'base_url': config.get('portai', {}).get('base_url', 'https://portai.longport.com'),
-            'sentiment_threshold': 0.6,  # 情绪判断阈值
+            'sentiment_threshold': 0.6,
+            'cache_duration': 300,  # 缓存时间5分钟
+        }
+        
+        # 添加缓存
+        self.cache = {
+            'news': {},        # 新闻缓存
+            'sentiment': {},   # 情绪分析缓存
+            'options': {},     # 期权链缓存
+            'market': {},      # 市场数据缓存
         }
     
     async def init_data(self):
@@ -459,25 +475,38 @@ class DoomsdayOptionStrategy:
     def _calculate_position_size(self, option: Dict) -> int:
         """计算开仓数量"""
         try:
-            # 获取期权价格
-            price = (option['ask'] + option['bid']) / 2
+            # 获取账户信息
+            account = self.trade_ctx.account_balance()
+            available_cash = float(account.cash_balance)
             
-            # 计算每手价值
-            contract_value = price * 100  # 每张期权对应100股
+            # 计算ATR
+            highs = self.price_cache[option['symbol']]['high'][-20:]
+            lows = self.price_cache[option['symbol']]['low'][-20:]
+            closes = self.price_cache[option['symbol']]['close'][-20:]
             
-            # 获取账户可用资金(示例)
-            cash = Decimal('100000')  # 实际应该从账户获取
+            atr = self._calculate_atr(highs, lows, closes)
             
-            # 计算最大可开仓数量
-            max_contracts = int(cash / contract_value)
+            # 计算每手风险
+            option_price = (option['ask'] + option['bid']) / 2
+            contract_value = option_price * 100  # 每张期权对应100股
             
-            # 根据风险限制计算实际开仓数量
+            # 基于ATR的风险计算
+            risk_per_contract = atr * 100  # ATR对应的每张合约风险
+            
+            # 计算可承受的最大亏损
+            max_loss = available_cash * 0.02  # 最大承受2%账户亏损
+            
+            # 计算合适的合约数量
+            position_size = int(max_loss / risk_per_contract)
+            
+            # 应用限制
             position_size = min(
-                max_contracts,
-                self.params['max_position_size']
+                position_size,
+                self.params['max_position_size'],
+                int(available_cash * 0.1 / contract_value)  # 最多使用10%可用资金
             )
             
-            return position_size
+            return max(1, position_size)  # 至少开仓1张
             
         except Exception as e:
             self.logger.error(f"计算开仓数量失败: {str(e)}")
@@ -893,51 +922,68 @@ class DoomsdayOptionStrategy:
     async def analyze_market_context(self, symbol: str) -> Dict:
         """分析市场环境"""
         try:
+            # 检查缓存
+            cache_key = f"{symbol}_market"
+            if cache_key in self.cache['market']:
+                cached_data = self.cache['market'][cache_key]
+                if (datetime.now() - cached_data['timestamp']).seconds < self.portai_config['cache_duration']:
+                    return cached_data['data']
+            
             context = {
                 'premarket_change': 0,
                 'news_sentiment': 'neutral',
                 'volume_surge': False,
                 'gap_detected': False,
                 'market_status': 'normal',
-                'score': 0
+                'score': 0,
+                'details': {}
             }
             
             # 获取盘前数据
             premarket = await self.quote_ctx.quote([symbol])
             if premarket:
+                quote = premarket[0]
+                prev_close = float(quote.prev_close)
+                current = float(quote.last_done)
+                
                 # 计算盘前涨跌幅
-                prev_close = float(premarket[0].prev_close)
-                current = float(premarket[0].last_done)
                 context['premarket_change'] = (current - prev_close) / prev_close * 100
                 
-                # 检查是否有显著跳空
+                # 添加更多市场细节
+                context['details'].update({
+                    'bid_ask_spread': (quote.ask[0] - quote.bid[0]) / quote.bid[0] * 100,
+                    'volume': quote.volume,
+                    'turnover': quote.turnover,
+                    'high_low_range': (quote.high - quote.low) / quote.low * 100
+                })
+                
+                # 计算加权得分
                 if abs(context['premarket_change']) > self.params['gap_threshold']:
                     context['gap_detected'] = True
-                    context['score'] += 1 if context['premarket_change'] > 0 else -1
+                    context['score'] += (context['premarket_change'] / self.params['gap_threshold']) * self.params['premarket_weight']
             
-            # 获取新闻数据
-            news = await self._get_stock_news(symbol)
-            if news:
-                # 分析新闻情绪
-                sentiment = await self._analyze_news_sentiment(news)
-                context['news_sentiment'] = sentiment
-                if sentiment == 'positive':
-                    context['score'] += 2
-                elif sentiment == 'negative':
-                    context['score'] -= 2
+            # 获取新闻情绪
+            sentiment_data = await self._get_cached_sentiment(symbol)
+            if sentiment_data:
+                context['news_sentiment'] = sentiment_data['sentiment']
+                context['details']['news_count'] = sentiment_data['news_count']
+                context['details']['sentiment_score'] = sentiment_data['score']
+                
+                # 加权新闻得分
+                context['score'] += sentiment_data['score'] * self.params['news_weight']
             
-            # 检查成交量异常
-            volume_data = self.price_cache[symbol]['volume']
-            avg_volume = np.mean(volume_data[-20:])  # 20分钟平均成交量
-            if volume_data[-1] > avg_volume * self.params['volume_surge_ratio']:
-                context['volume_surge'] = True
-                context['score'] += 1 if context['premarket_change'] > 0 else -1
+            # 分析成交量
+            volume_analysis = self._analyze_volume_pattern(symbol)
+            if volume_analysis:
+                context['volume_surge'] = volume_analysis['is_surge']
+                context['details']['volume_pattern'] = volume_analysis['pattern']
+                context['score'] += volume_analysis['score'] * self.params['volume_weight']
             
-            # 综合评估市场状态
-            if abs(context['score']) >= 3:
-                context['market_status'] = 'strong_trend'
-            elif abs(context['score']) >= 2:
-                context['market_status'] = 'trend'
+            # 更新缓存
+            self.cache['market'][cache_key] = {
+                'timestamp': datetime.now(),
+                'data': context
+            }
             
             return context
             
@@ -945,139 +991,90 @@ class DoomsdayOptionStrategy:
             self.logger.error(f"分析市场环境失败: {str(e)}")
             return None
 
-    async def _get_stock_news(self, symbol: str) -> List[Dict]:
-        """获取股票相关新闻"""
+    async def _get_cached_sentiment(self, symbol: str) -> Optional[Dict]:
+        """获取缓存的情绪分析结果"""
         try:
-            # 获取过去24小时的新闻
-            news = await self.quote_ctx.news(
-                symbol=symbol,
-                count=20,
-                begin_time=(datetime.now() - timedelta(hours=self.params['news_impact_hours']))
-            )
-            return news
-        except Exception as e:
-            self.logger.error(f"获取新闻失败: {str(e)}")
-            return []
-
-    async def _analyze_news_sentiment(self, news: List[Dict]) -> str:
-        """使用PortAI分析新闻情绪"""
-        try:
-            if not self.portai_config['api_key']:
-                self.logger.warning("PortAI API key未配置，使用关键词匹配分析")
-                return await self._analyze_news_sentiment_keywords(news)
+            cache_key = f"{symbol}_sentiment"
+            now = datetime.now()
             
-            # 准备新闻文本
-            news_texts = []
-            for item in news:
-                # 组合标题和内容，标题权重更高
-                text = f"{item['title']} {item['title']} {item['content']}"
-                news_texts.append(text)
+            # 检查缓存
+            if cache_key in self.cache['sentiment']:
+                cached_data = self.cache['sentiment'][cache_key]
+                if (now - cached_data['timestamp']).seconds < self.portai_config['cache_duration']:
+                    return cached_data['data']
             
-            if not news_texts:
-                return 'neutral'
+            # 获取新闻
+            news = await self._get_stock_news(symbol)
+            if not news:
+                return None
             
-            # 调用PortAI API
-            headers = {
-                'Authorization': f"Bearer {self.portai_config['api_key']}",
-                'Content-Type': 'application/json'
+            # 分析情绪
+            sentiment = await self._analyze_news_sentiment(news)
+            
+            # 准备结果
+            result = {
+                'sentiment': sentiment,
+                'news_count': len(news),
+                'score': 0
             }
             
-            # 批量分析新闻情绪
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.portai_config['base_url']}/v1/sentiment",
-                    headers=headers,
-                    json={'texts': news_texts}
-                ) as response:
-                    if response.status != 200:
-                        self.logger.error(f"PortAI API调用失败: {await response.text()}")
-                        return 'neutral'
-                    
-                    result = await response.json()
-                    
-                    # 分析情绪得分
-                    if 'sentiments' not in result:
-                        return 'neutral'
-                    
-                    # 计算加权平均情绪得分
-                    total_score = 0
-                    weights = []
-                    
-                    for i, sentiment in enumerate(result['sentiments']):
-                        # 最新新闻权重更高
-                        weight = 1.0 / (i + 1)
-                        weights.append(weight)
-                        total_score += sentiment['score'] * weight
-                    
-                    avg_score = total_score / sum(weights)
-                    
-                    # 判断情绪
-                    threshold = self.portai_config['sentiment_threshold']
-                    if avg_score > threshold:
-                        return 'positive'
-                    elif avg_score < -threshold:
-                        return 'negative'
-                    else:
-                        return 'neutral'
-            
-        except Exception as e:
-            self.logger.error(f"PortAI情绪分析失败: {str(e)}")
-            # 失败时回退到关键词匹配
-            return await self._analyze_news_sentiment_keywords(news)
-
-    async def _analyze_news_sentiment_keywords(self, news: List[Dict]) -> str:
-        """使用关键词匹配分析新闻情绪（作为备选方案）"""
-        try:
-            # 移动原来的关键词分析逻辑到这里
-            positive_keywords = ['surge', 'jump', 'beat', 'upgrade', 'positive', 
-                               'bullish', 'outperform', 'buy', 'strong']
-            negative_keywords = ['drop', 'fall', 'miss', 'downgrade', 'negative',
-                               'bearish', 'underperform', 'sell', 'weak']
-            
-            pos_count = 0
-            neg_count = 0
-            
-            for item in news:
-                # 给最新新闻更高权重
-                weight = 1.0
-                if 'time' in item:
-                    news_time = datetime.fromisoformat(item['time'].replace('Z', '+00:00'))
-                    hours_ago = (datetime.now(timezone.utc) - news_time).total_seconds() / 3600
-                    weight = max(0.5, 1.0 - (hours_ago / 24))  # 24小时内线性衰减
-                
-                title = item['title'].lower()
-                content = item['content'].lower()
-                
-                # 标题中的关键词权重更高
-                for word in positive_keywords:
-                    if word in title:
-                        pos_count += 2 * weight
-                    elif word in content:
-                        pos_count += weight
-                
-                for word in negative_keywords:
-                    if word in title:
-                        neg_count += 2 * weight
-                    elif word in content:
-                        neg_count += weight
-            
             # 计算情绪得分
-            total = pos_count + neg_count
-            if total == 0:
-                return 'neutral'
+            if sentiment == 'positive':
+                result['score'] = len(news) * 0.2  # 每条正面新闻0.2分
+            elif sentiment == 'negative':
+                result['score'] = -len(news) * 0.2  # 每条负面新闻-0.2分
             
-            sentiment_score = (pos_count - neg_count) / total
+            # 更新缓存
+            self.cache['sentiment'][cache_key] = {
+                'timestamp': now,
+                'data': result
+            }
             
-            if sentiment_score > self.params['news_score_threshold']:
-                return 'positive'
-            elif sentiment_score < -self.params['news_score_threshold']:
-                return 'negative'
-            else:
-                return 'neutral'
+            return result
             
         except Exception as e:
-            self.logger.error(f"关键词情绪分析失败: {str(e)}")
-            return 'neutral'
+            self.logger.error(f"获取情绪分析缓存失败: {str(e)}")
+            return None
+
+    def _analyze_volume_pattern(self, symbol: str) -> Dict:
+        """分析成交量模式"""
+        try:
+            volumes = np.array(self.price_cache[symbol]['volume'][-20:])  # 取最近20个成交量
+            vol_ma = np.mean(volumes)
+            vol_std = np.std(volumes)
+            current_vol = volumes[-1]
+            
+            result = {
+                'is_surge': False,
+                'pattern': 'normal',
+                'score': 0
+            }
+            
+            # 检查成交量突破
+            if current_vol > vol_ma + 2 * vol_std:
+                result['is_surge'] = True
+                result['pattern'] = 'strong_surge'
+                result['score'] = 2
+            elif current_vol > vol_ma + vol_std:
+                result['is_surge'] = True
+                result['pattern'] = 'surge'
+                result['score'] = 1
+            elif current_vol < vol_ma - vol_std:
+                result['pattern'] = 'weak'
+                result['score'] = -1
+            
+            # 检查成交量趋势
+            vol_trend = np.polyfit(range(len(volumes)), volumes, 1)[0]
+            if vol_trend > 0:
+                result['score'] += 0.5
+            elif vol_trend < 0:
+                result['score'] -= 0.5
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"分析成交量模式失败: {str(e)}")
+            return None
 
     async def find_trading_opportunities(self) -> List[Dict]:
         """寻找交易机会"""
