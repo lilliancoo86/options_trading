@@ -14,6 +14,7 @@ from tabulate import tabulate
 import asyncio
 from trading.risk_checker import RiskChecker  # 添加导入
 import re
+import traceback
 
 class MarketInfoFilter(logging.Filter):
     """过滤掉市场权限信息的日志过滤器"""
@@ -161,6 +162,11 @@ class DoomsdayPositionManager:
         # 添加quote_delay属性
         self.quote_delay = 0
         self.current_vix = 0  # 同时添加current_vix属性
+
+        self.trend_config = config.get('trend', {
+            'price': 'neutral',
+            'time': 'neutral'
+        })
 
     async def init_contexts(self):
         """初始化交易和行情上下文"""
@@ -420,26 +426,23 @@ class DoomsdayPositionManager:
             self.logger.error(f"期权开仓失败: {str(e)}")
             return False
 
-    def close_position(self, symbol: str, current_price: float) -> Dict[str, Any]:
-        """
-        平仓
-        
-        Args:
-            symbol: 交易标的代码
-            current_price: 当前价格
-            
-        Returns:
-            Dict: 平仓信息
-        """
+    def close_position(self, position, reason=""):
+        """平仓函数"""
         try:
-            if symbol not in self.positions:
-                return {'success': False, 'error': 'Position not found'}
+            # 获取要平仓的数量的绝对值
+            quantity = abs(position.quantity)
             
-            position = self.positions[symbol]
-            exit_price = Decimal(str(current_price))
+            # 提交平仓订单
+            self.trade_api.submit_order(
+                symbol=position.symbol,
+                order_type=OrderType.Market,
+                side=OrderSide.Buy if position.quantity < 0 else OrderSide.Sell,
+                submitted_quantity=quantity,  # 使用正数数量
+                remark=f"Risk management: {reason}"
+            )
             
             # 计算盈亏
-            pnl = (exit_price - position['entry_price']) * Decimal(str(position['quantity']))
+            pnl = (position.current_price - position.entry_price) * Decimal(str(position.quantity))
             self.daily_pnl += pnl
             
             # 更新统计数据
@@ -457,20 +460,22 @@ class DoomsdayPositionManager:
                 self.stats['max_drawdown'] = drawdown
             
             # 删除持仓
-            del self.positions[symbol]
+            del self.positions[position.symbol]
             
             return {
                 'success': True,
-                'symbol': symbol,
-                'quantity': position['quantity'],
-                'entry_price': position['entry_price'],
-                'exit_price': exit_price,
+                'symbol': position.symbol,
+                'quantity': position.quantity,
+                'entry_price': position.entry_price,
+                'exit_price': position.current_price,
                 'pnl': pnl,
                 'holding_time': datetime.now(self.tz) - position['entry_time']
             }
             
         except Exception as e:
-            self.logger.error(f"平仓失败: {str(e)}")
+            self.logger.error(f"执行平仓操作失败 {position.symbol}: {e}")
+            self.logger.error("详细错误信息:")
+            self.logger.error(traceback.format_exc())
             return {'success': False, 'error': str(e)}
 
     def should_close_position(self, symbol: str, current_price: float) -> bool:
