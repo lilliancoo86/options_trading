@@ -594,16 +594,29 @@ class DoomsdayPositionManager:
 
     def get_all_positions(self) -> Dict[str, Dict[str, Any]]:
         """获取所有当前持仓"""
-        positions_with_time = {}
-        for symbol, pos in self.positions.items():
-            pos_copy = pos.copy()
-            # 确保有 holding_time 字段
-            if 'entry_time' in pos_copy:
-                pos_copy['holding_time'] = datetime.now() - pos_copy['entry_time']
-            else:
-                pos_copy['holding_time'] = timedelta(0)  # 默认持仓时间为0
-            positions_with_time[symbol] = pos_copy
-        return positions_with_time
+        try:
+            positions_with_time = {}
+            positions_data = self.trade_ctx.stock_positions()
+            
+            if hasattr(positions_data, 'channels'):
+                for channel in positions_data.channels:
+                    if hasattr(channel, 'positions'):
+                        for pos in channel.positions:
+                            pos_copy = {
+                                'symbol': pos.symbol,
+                                'volume': int(pos.quantity),
+                                'cost_price': float(pos.cost_price),
+                                'current_price': float(pos.cost_price),  # 初始使用成本价
+                                'entry_time': datetime.now(self.tz),  # 使用当前时间作为入场时间
+                                'market_value': float(pos.cost_price) * int(pos.quantity)
+                            }
+                            positions_with_time[pos.symbol] = pos_copy
+            
+            return positions_with_time
+        except Exception as e:
+            self.logger.error(f"获取所有持仓时出错: {str(e)}")
+            self.logger.error("详细错误信息:", exc_info=True)
+            return {}
 
     def get_position_stats(self) -> Dict[str, Any]:
         """
@@ -1275,7 +1288,7 @@ class DoomsdayPositionManager:
     async def check_position_risks(self):
         """检查持仓风险"""
         try:
-            # 使用 get_real_positions 替代 get_positions
+            # 使用 get_real_positions 获取持仓
             positions_data = await self.get_real_positions()
             if not positions_data or not positions_data.get("active"):
                 self.logger.info("无持仓，跳过风险检查")
