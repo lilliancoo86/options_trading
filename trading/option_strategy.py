@@ -31,6 +31,14 @@ class DoomsdayOptionStrategy:
             'max_loss_pct': 25,         # 最大止损比例
             'profit_target_pct': 50,    # 目标止盈比例
             'time_stop': '15:45',       # 最晚平仓时间
+            'min_delta': 0.3,           # 最小Delta值
+            'max_delta': 0.7,           # 最大Delta值
+            'min_theta': -0.1,          # 最小Theta值
+            'max_days_to_expiry': 14,   # 最大到期天数
+            'min_days_to_expiry': 3,    # 最小到期天数
+            'trend_confirm_periods': 3,  # 趋势确认周期数
+            'entry_rsi_threshold': 55,   # RSI入场阈值
+            'momentum_threshold': 0.02,  # 动量阈值(2%)
         }
         
         # 趋势判断参数
@@ -44,6 +52,13 @@ class DoomsdayOptionStrategy:
             'vwap_dev_up': 1.5,         # VWAP上轨偏差
             'vwap_dev_down': 1.5,       # VWAP下轨偏差
             'vwap_period': 30,          # VWAP计算周期(分钟)
+            'ema_fast': 5,              # 5分钟EMA
+            'ema_mid': 13,              # 13分钟EMA
+            'ema_slow': 21,             # 21分钟EMA
+            'momentum_period': 10,       # 动量周期
+            'macd_fast': 12,            # MACD快线
+            'macd_slow': 26,            # MACD慢线
+            'macd_signal': 9,           # MACD信号线
         }
         
         # 缓存数据
@@ -697,3 +712,167 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"执行平仓失败: {str(e)}")
             return False
+
+    async def _analyze_stock_trend(self, symbol: str) -> Dict:
+        """分析正股趋势"""
+        try:
+            data = self.price_cache[symbol]
+            closes = np.array(data['close'])
+            volumes = np.array(data['volume'])
+            
+            # 计算EMA
+            ema_fast = self._calculate_ema(closes, self.trend_params['ema_fast'])
+            ema_mid = self._calculate_ema(closes, self.trend_params['ema_mid'])
+            ema_slow = self._calculate_ema(closes, self.trend_params['ema_slow'])
+            
+            # 计算MACD
+            macd, signal, hist = self._calculate_macd(closes)
+            
+            # 计算动量
+            momentum = (closes[-1] - closes[-self.trend_params['momentum_period']]) / closes[-self.trend_params['momentum_period']]
+            
+            # 计算RSI
+            rsi = self._calculate_rsi(closes.tolist())
+            
+            # 计算VWAP
+            vwap_data = self._calculate_vwap(
+                data['high'][-self.trend_params['vwap_period']:],
+                data['low'][-self.trend_params['vwap_period']:],
+                data['close'][-self.trend_params['vwap_period']:],
+                data['volume'][-self.trend_params['vwap_period']:]
+            )
+            
+            # 趋势评分系统
+            trend_score = 0
+            
+            # EMA趋势判断
+            if ema_fast > ema_mid > ema_slow:
+                trend_score += 2
+            elif ema_fast > ema_mid:
+                trend_score += 1
+                
+            # MACD判断
+            if hist[-1] > 0 and hist[-1] > hist[-2]:
+                trend_score += 2
+            elif hist[-1] > 0:
+                trend_score += 1
+                
+            # 动量判断
+            if momentum > self.params['momentum_threshold']:
+                trend_score += 2
+                
+            # RSI判断
+            if rsi > self.params['entry_rsi_threshold']:
+                trend_score += 1
+                
+            # VWAP判断
+            if closes[-1] > vwap_data['vwap']:
+                trend_score += 1
+                
+            # 成交量判断
+            vol_ma = np.mean(volumes[-self.trend_params['volume_ma']:])
+            if volumes[-1] > vol_ma * 1.2:  # 成交量放大20%
+                trend_score += 1
+                
+            return {
+                'symbol': symbol,
+                'trend_score': trend_score,
+                'is_uptrend': trend_score >= 6,  # 至少6分才确认上升趋势
+                'momentum': momentum,
+                'rsi': rsi,
+                'last_price': closes[-1],
+                'details': {
+                    'ema_fast': ema_fast,
+                    'ema_mid': ema_mid,
+                    'ema_slow': ema_slow,
+                    'macd': macd[-1],
+                    'macd_signal': signal[-1],
+                    'macd_hist': hist[-1],
+                    'volume_ratio': volumes[-1] / vol_ma
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"分析{symbol}趋势失败: {str(e)}")
+            return None
+
+    async def _find_best_option(self, stock_trend: Dict) -> Optional[Dict]:
+        """查找最佳期权"""
+        try:
+            if not stock_trend['is_uptrend']:
+                return None
+                
+            # 获取期权链
+            chain = await self.quote_ctx.option_chain(
+                symbol=stock_trend['symbol'],
+                expiry_date_list=[self._get_next_expiry()]
+            )
+            
+            if not chain:
+                return None
+                
+            valid_options = []
+            for option in chain:
+                # 只考虑看涨期权
+                if 'P' in option['symbol']:
+                    continue
+                    
+                # 检查到期时间
+                days_to_expiry = (option['expiry_date'] - datetime.now(self.tz)).days
+                if not (self.params['min_days_to_expiry'] <= days_to_expiry <= self.params['max_days_to_expiry']):
+                    continue
+                    
+                # 检查Delta
+                if not (self.params['min_delta'] <= abs(option['delta']) <= self.params['max_delta']):
+                    continue
+                    
+                # 检查Theta
+                if option['theta'] < self.params['min_theta']:
+                    continue
+                    
+                # 计算期权得分
+                score = self._calculate_option_score(option, stock_trend)
+                if score > 0:
+                    option['score'] = score
+                    valid_options.append(option)
+            
+            # 按得分排序
+            valid_options.sort(key=lambda x: x['score'], reverse=True)
+            
+            return valid_options[0] if valid_options else None
+            
+        except Exception as e:
+            self.logger.error(f"查找最佳期权失败: {str(e)}")
+            return None
+
+    def _calculate_option_score(self, option: Dict, stock_trend: Dict) -> float:
+        """计算期权得分"""
+        try:
+            score = 0
+            
+            # 基础分数来自股票趋势
+            score += stock_trend['trend_score'] * 2
+            
+            # Delta得分（偏好接近0.5的Delta）
+            delta_score = 1 - abs(abs(option['delta']) - 0.5)
+            score += delta_score * 3
+            
+            # Theta得分（偏好较小的时间衰减）
+            theta_score = 1 - abs(option['theta']) / 0.1  # 假设-0.1是基准Theta
+            score += theta_score * 2
+            
+            # 流动性得分
+            score += min(option['volume'] / self.params['min_volume'], 5)
+            score += min(option['open_interest'] / self.params['min_open_interest'], 5)
+            
+            # IV得分（偏好适中的IV）
+            if 40 <= option['iv_percentile'] <= 60:
+                score += 3
+            elif 30 <= option['iv_percentile'] <= 70:
+                score += 2
+            
+            return max(0, score)
+            
+        except Exception as e:
+            self.logger.error(f"计算期权得分失败: {str(e)}")
+            return 0
