@@ -163,7 +163,9 @@ class DoomsdayPositionManager:
         
         # 添加quote_delay属性
         self.quote_delay = 0
-        self.current_vix = 0  # 同时添加current_vix属性
+        
+        # 删除 current_vix 属性
+        # self.current_vix = 0  # 同时添加current_vix属性
 
     async def init_contexts(self):
         """初始化交易和行情上下文"""
@@ -258,13 +260,12 @@ class DoomsdayPositionManager:
                 raise
         return self._quote_ctx
 
-    async def can_open_position(self, symbol: str, vix_level: float) -> bool:
+    async def can_open_position(self, symbol: str) -> bool:
         """
         检查是否可以开新仓位
         
         Args:
             symbol: 交易标的代码
-            vix_level: 当前VIX指数水平
             
         Returns:
             bool: 是否可以开仓
@@ -298,14 +299,6 @@ class DoomsdayPositionManager:
                 self.logger.warning(f"达到最大持仓数量限制: {max_positions}")
                 return False
 
-            # 检查VIX限制
-            volatility_limits = self.risk_limits.get('volatility', {})
-            min_vix = volatility_limits.get('min_vix', 15)
-            max_vix = volatility_limits.get('max_vix', 40)
-            if not (min_vix <= vix_level <= max_vix):
-                self.logger.warning(f"VIX超出允许范围: {vix_level} (限制: {min_vix}-{max_vix})")
-                return False
-
             # 检查是否已持有该标的
             for pos in active_positions:
                 if pos["symbol"] == symbol:
@@ -334,7 +327,7 @@ class DoomsdayPositionManager:
             quantity = order['quantity']
             
             # 检查是否可以开仓
-            if not await self.can_open_position(symbol, order.get('vix', 20)):
+            if not await self.can_open_position(symbol):
                 self.logger.warning(f"不满足开仓条件: {symbol}")
                 return False
             
@@ -1219,14 +1212,13 @@ class DoomsdayPositionManager:
             self.logger.error(f"检查持仓风险时出错: {str(e)}")
             return False
 
-    async def test_risk_management(self, position: Dict[str, Any], current_price: float, vix: float = None) -> bool:
+    async def test_risk_management(self, position: Dict[str, Any], current_price: float) -> bool:
         """
         测试风险管理逻辑
         
         Args:
             position: 持仓信息
             current_price: 当前价格
-            vix: VIX指数值 (可选)
             
         Returns:
             bool: 是否需要平仓
@@ -1237,13 +1229,6 @@ class DoomsdayPositionManager:
             
             # 获取趋势数据
             trend = await self.check_trend(position['symbol'], current_price, position['cost_price'])
-            
-            # 检查市场条件（如果提供了VIX）
-            if vix is not None:
-                current_time = datetime.now(self.tz).strftime('%H:%M:%S')
-                if not self.risk_checker.check_market_condition(vix, current_time):
-                    self.logger.warning(f"市场条件不适合交易: VIX={vix}")
-                    return True
             
             # 检查持仓风险
             if await self.risk_checker.check_position_risk(position, trend):
