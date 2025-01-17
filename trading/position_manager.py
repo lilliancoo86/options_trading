@@ -306,3 +306,71 @@ class DoomsdayPositionManager:
         except Exception as e:
             self.logger.error(f"执行止盈时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
+
+    async def print_trading_status(self):
+        """打印交易状态"""
+        try:
+            # 获取当前持仓
+            positions = await self.get_real_positions()
+            
+            # 获取当前时间
+            current_time = datetime.now(self.tz)
+            
+            # 打印基本信息
+            self.logger.info("\n=== 交易状态报告 ===")
+            self.logger.info(f"当前时间: {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            self.logger.info(f"交易模式: {'测试模式' if self.test_mode else '实盘模式'}")
+            
+            # 打印持仓信息
+            if positions["active"]:
+                position_data = []
+                for pos in positions["active"]:
+                    position_data.append({
+                        "标的": pos["symbol"],
+                        "数量": pos["volume"],
+                        "成本价": f"${pos['cost_price']:.2f}",
+                        "现价": f"${pos['current_price']:.2f}",
+                        "盈亏": f"${pos['pnl']:.2f}"
+                    })
+                
+                table = tabulate(
+                    position_data,
+                    headers="keys",
+                    tablefmt="grid",
+                    numalign="right"
+                )
+                self.logger.info("\n当前持仓:")
+                self.logger.info(f"\n{table}")
+            else:
+                self.logger.info("\n当前无持仓")
+            
+            # 打印风险限制信息
+            self.logger.info("\n风险控制参数:")
+            risk_data = [
+                {
+                    "类型": "期权",
+                    "止损线": f"{self.risk_limits['option']['stop_loss']}%",
+                    "止盈线": "不设置" if self.risk_limits['option']['take_profit'] is None else f"{self.risk_limits['option']['take_profit']}%"
+                },
+                {
+                    "类型": "股票",
+                    "止损线": f"{self.risk_limits['stock']['stop_loss']}%",
+                    "止盈线": f"{self.risk_limits['stock']['take_profit']}%"
+                }
+            ]
+            table = tabulate(
+                risk_data,
+                headers="keys",
+                tablefmt="grid",
+                numalign="right"
+            )
+            self.logger.info(f"\n{table}")
+            
+            # 打印收盘时间设置
+            self.logger.info("\n收盘设置:")
+            self.logger.info(f"预警时间: {self.market_close['warning_time']}")
+            self.logger.info(f"强制平仓时间: {self.market_close['force_close_time']}")
+            
+        except Exception as e:
+            self.logger.error(f"打印交易状态时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
