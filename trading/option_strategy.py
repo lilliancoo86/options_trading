@@ -12,6 +12,7 @@ from longport.openapi import TradeContext, QuoteContext, SubType, OrderType, Ord
 import aiohttp
 from datetime import timezone
 import os
+import json
 
 class DoomsdayOptionStrategy:
     def __init__(self, config: Dict[str, Any]):
@@ -259,6 +260,17 @@ class DoomsdayOptionStrategy:
         self.news_cache = {
             'market_data': {},
             'last_update': datetime.now(self.tz)
+        }
+        
+        # 添加交易日志配置
+        self.trade_log_config = {
+            'log_file': 'logs/trade_log.json',
+            'detail_levels': {
+                'basic': ['symbol', 'type', 'price', 'quantity', 'time'],
+                'signals': ['technical', 'news', 'market', 'option_flow'],
+                'analysis': ['trend', 'sentiment', 'volatility'],
+                'risk': ['position_size', 'account_risk', 'market_risk']
+            }
         }
     
     async def init_data(self):
@@ -587,40 +599,186 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"订阅期权行情失败: {str(e)}")
     
-    async def execute_trade(self, option: Dict, side: OrderSide):
+    async def execute_trade(self, option: Dict, side: OrderSide, signals: Dict):
         """执行期权交易"""
         try:
+            # 生成交易ID
+            trade_id = f"{datetime.now(self.tz).strftime('%Y%m%d_%H%M%S')}_{option['symbol']}"
+            
+            # 记录交易前的信号和分析
+            trade_log = {
+                'trade_id': trade_id,
+                'timestamp': datetime.now(self.tz).isoformat(),
+                'action': 'BUY' if side == OrderSide.Buy else 'SELL',
+                'symbol': option['symbol'],
+                'option_type': 'CALL' if 'C' in option['symbol'] else 'PUT',
+                'price': option['price'],
+                'signals': {
+                    'technical': {
+                        'trend_score': signals['trend_score'],
+                        'trend_direction': signals['trend_direction'],
+                        'key_levels': signals['key_levels'],
+                        'momentum': signals['momentum']
+                    },
+                    'market': {
+                        'market_score': signals['market_score'],
+                        'volatility': signals['volatility'],
+                        'sector_performance': signals['sector_performance']
+                    },
+                    'news': {
+                        'sentiment': signals['news_sentiment'],
+                        'impact_score': signals['news_score'],
+                        'key_events': signals['key_events']
+                    },
+                    'option_flow': {
+                        'unusual_activity': signals['unusual_activity'],
+                        'volume_surge': signals['volume_surge'],
+                        'open_interest_change': signals['oi_change']
+                    }
+                },
+                'reasons': [],  # 用于存储交易原因
+                'risk_metrics': {
+                    'position_size': None,
+                    'account_risk': None,
+                    'market_risk': None
+                }
+            }
+            
+            # 分析并记录交易原因
+            trade_log['reasons'] = self._analyze_trade_reasons(signals)
+            
             # 计算下单数量
             quantity = self._calculate_position_size(option)
+            trade_log['quantity'] = quantity
             
-            # 提交市价单
+            # 记录风险指标
+            trade_log['risk_metrics'] = self._calculate_risk_metrics(option, quantity)
+            
+            # 执行交易
             order_resp = await self.trade_ctx.submit_order(
                 symbol=option['symbol'],
-                order_type=OrderType.MO,  # 市价单
+                order_type=OrderType.MO,
                 side=side,
                 submitted_quantity=Decimal(str(quantity)),
                 time_in_force=TimeInForceType.Day,
-                remark="Doomsday Option Strategy"
+                remark=f"Trade ID: {trade_id}"
             )
             
-            self.logger.info(f"提交订单成功: {option['symbol']}, 方向: {side}, "
-                            f"数量: {quantity}, 订单ID: {order_resp.order_id}")
+            # 更新交易日志
+            trade_log['order'] = {
+                'order_id': order_resp.order_id,
+                'status': 'SUBMITTED'
+            }
             
-            # 等待订单状态
+            # 等待并记录订单执行
             for i in range(5):
                 await asyncio.sleep(1)
                 order = await self.trade_ctx.order_detail(order_resp.order_id)
-                self.logger.info(f"订单状态 ({i+1}/5): {order.status}")
+                trade_log['order']['status'] = order.status
                 
                 if order.status in ["filled", "partially_filled"]:
-                    self.logger.info(f"订单执行成功: {option['symbol']}")
+                    trade_log['order']['filled_price'] = float(order.filled_price)
+                    trade_log['order']['filled_quantity'] = int(order.filled_quantity)
+                    
+                    # 记录成功交易日志
+                    self.logger.info(self._format_trade_log(trade_log))
+                    await self._save_trade_log(trade_log)
                     return True
                     
+            # 记录失败交易日志
+            trade_log['order']['failure_reason'] = "Order timeout or rejected"
+            self.logger.warning(self._format_trade_log(trade_log))
+            await self._save_trade_log(trade_log)
             return False
             
         except Exception as e:
             self.logger.error(f"执行交易失败: {str(e)}")
             return False
+
+    def _analyze_trade_reasons(self, signals: Dict) -> List[str]:
+        """分析交易原因"""
+        reasons = []
+        
+        # 技术分析原因
+        if signals['trend_score'] >= 6:
+            reasons.append(f"强劲上升趋势 (趋势得分: {signals['trend_score']})")
+        elif signals['trend_score'] <= -6:
+            reasons.append(f"强劲下降趋势 (趋势得分: {signals['trend_score']})")
+        
+        # 市场环境原因
+        if abs(signals['market_score']) > 1.5:
+            direction = "利好" if signals['market_score'] > 0 else "利空"
+            reasons.append(f"市场环境{direction} (得分: {signals['market_score']:.2f})")
+        
+        # 新闻影响
+        if signals['news_score'] != 0:
+            sentiment = "正面" if signals['news_score'] > 0 else "负面"
+            reasons.append(f"新闻情绪{sentiment} (得分: {signals['news_score']:.2f})")
+            if signals['key_events']:
+                reasons.append(f"关键事件: {', '.join(signals['key_events'][:2])}")
+        
+        # 期权异动
+        if signals['unusual_activity']:
+            reasons.append(f"期权异常活动 (成交量激增: {signals['volume_surge']}倍)")
+        
+        # 波动率机会
+        if signals['volatility'].get('opportunity'):
+            reasons.append(f"波动率机会: {signals['volatility']['description']}")
+        
+        return reasons
+
+    def _format_trade_log(self, trade_log: Dict) -> str:
+        """格式化交易日志"""
+        log_lines = [
+            f"\n{'='*50} 交易执行日志 {'='*50}",
+            f"交易ID: {trade_log['trade_id']}",
+            f"时间: {trade_log['timestamp']}",
+            f"标的: {trade_log['symbol']} ({trade_log['option_type']})",
+            f"操作: {trade_log['action']}",
+            f"数量: {trade_log['quantity']}",
+            f"价格: ${trade_log['price']:.2f}",
+            "\n交易原因:",
+        ]
+        
+        for i, reason in enumerate(trade_log['reasons'], 1):
+            log_lines.append(f"{i}. {reason}")
+        
+        log_lines.extend([
+            "\n信号详情:",
+            f"技术分析: 趋势得分 {trade_log['signals']['technical']['trend_score']:.2f}",
+            f"市场环境: 市场得分 {trade_log['signals']['market']['market_score']:.2f}",
+            f"新闻情绪: {trade_log['signals']['news']['sentiment']} (得分: {trade_log['signals']['news']['impact_score']:.2f})",
+            "\n风险指标:",
+            f"仓位大小: {trade_log['risk_metrics']['position_size']}",
+            f"账户风险: {trade_log['risk_metrics']['account_risk']:.2f}%",
+            f"市场风险: {trade_log['risk_metrics']['market_risk']}",
+            f"\n订单状态: {trade_log['order']['status']}",
+            f"{'='*120}\n"
+        ])
+        
+        return '\n'.join(log_lines)
+
+    async def _save_trade_log(self, trade_log: Dict):
+        """保存交易日志"""
+        try:
+            # 确保日志目录存在
+            os.makedirs(os.path.dirname(self.trade_log_config['log_file']), exist_ok=True)
+            
+            # 读取现有日志
+            existing_logs = []
+            if os.path.exists(self.trade_log_config['log_file']):
+                with open(self.trade_log_config['log_file'], 'r') as f:
+                    existing_logs = json.load(f)
+            
+            # 添加新日志
+            existing_logs.append(trade_log)
+            
+            # 保存日志
+            with open(self.trade_log_config['log_file'], 'w') as f:
+                json.dump(existing_logs, f, indent=2)
+                
+        except Exception as e:
+            self.logger.error(f"保存交易日志失败: {str(e)}")
     
     def _calculate_position_size(self, option: Dict) -> int:
         """计算开仓数量"""
@@ -689,7 +847,7 @@ class DoomsdayOptionStrategy:
                         side = OrderSide.Buy if opp['type'] == 'call' else OrderSide.Sell
                         
                         # 执行交易
-                        success = await self.execute_trade(opp['option'], side)
+                        success = await self.execute_trade(opp['option'], side, opp['context'])
                         
                         if success:
                             # 记录持仓
