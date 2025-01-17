@@ -374,3 +374,58 @@ class DoomsdayPositionManager:
         except Exception as e:
             self.logger.error(f"打印交易状态时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
+
+    async def check_force_close(self, current_time: datetime) -> bool:
+        """检查是否需要强制平仓"""
+        try:
+            # 转换为美东时间字符串
+            current_time_str = current_time.strftime('%H:%M')
+            force_close_time = self.market_close['force_close_time']
+            warning_time = self.market_close['warning_time']
+            
+            # 检查是否到达预警时间
+            if current_time_str >= warning_time and current_time_str < force_close_time:
+                self.logger.warning("接近收盘时间，准备强制平仓")
+                
+            # 检查是否需要强制平仓
+            if current_time_str >= force_close_time:
+                positions = await self.get_real_positions()
+                if positions and positions.get("active"):
+                    self.logger.warning(
+                        f"触发强制平仓:\n"
+                        f"  当前时间: {current_time_str}\n"
+                        f"  强制平仓时间: {force_close_time}"
+                    )
+                    return True
+                    
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"检查强制平仓时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
+            return False
+
+    async def get_all_positions(self) -> Dict[str, Any]:
+        """获取所有持仓"""
+        try:
+            if not self.trade_ctx:
+                return {}
+            
+            positions = await self.get_real_positions()
+            result = {}
+            
+            if positions and positions.get("active"):
+                for pos in positions["active"]:
+                    result[pos["symbol"]] = {
+                        "quantity": pos["volume"],
+                        "entry_price": pos["cost_price"],
+                        "current_price": pos["current_price"],
+                        "pnl": pos["pnl"],
+                        "holding_time": datetime.now(self.tz) - datetime.fromtimestamp(0, self.tz)  # 临时占位
+                    }
+                    
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"获取持仓信息时出错: {str(e)}")
+            return {}
