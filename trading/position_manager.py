@@ -575,7 +575,7 @@ class DoomsdayPositionManager:
                     # 提交市价单平仓
                     self.trade_ctx.submit_order(
                         symbol=pos["symbol"],
-                        order_type=OrderType.Market,  # 使用市价单
+                        order_type=OrderType.MO,  # 使用 MO 代替 Market
                         side=OrderSide.Sell,
                         submitted_quantity=pos["volume"],
                         time_in_force=TimeInForceType.Day,
@@ -1260,7 +1260,7 @@ class DoomsdayPositionManager:
                     # 提交市价单平仓
                     self.trade_ctx.submit_order(
                         symbol=pos["symbol"],
-                        order_type=OrderType.Market,  # 使用市价单
+                        order_type=OrderType.MO,  # 使用 MO 代替 Market
                         side=OrderSide.Sell,
                         submitted_quantity=pos["volume"],
                         time_in_force=TimeInForceType.Day,
@@ -1344,7 +1344,7 @@ class DoomsdayPositionManager:
                 # 提交市价单平仓
                 order_resp = self.trade_ctx.submit_order(
                     symbol=symbol,
-                    order_type=OrderType.Market,  # 使用市价单确保执行
+                    order_type=OrderType.MO,  # 使用 MO 代替 Market
                     side=OrderSide.Sell,
                     submitted_quantity=volume,
                     time_in_force=TimeInForceType.Day,
