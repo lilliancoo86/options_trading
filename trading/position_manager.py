@@ -729,167 +729,56 @@ class DoomsdayPositionManager:
             return None
 
     async def print_trading_status(self):
-        """打印交易状态信息"""
+        """打印交易状态"""
         try:
-            # 1. 美股市场状态
+            # 获取美东时间
             ny_time = datetime.now(self.tz)
-            is_market_open = self.is_market_open(ny_time)
-            market_status = (
-                f"\n{'='*80}\n"
-                f"美股市场状态 | 时间: {ny_time.strftime('%Y-%m-%d %H:%M:%S')} EST | "
-                f"状态: {'交易中' if is_market_open else '休市'}\n"
-                f"{'='*80}"
-            )
-            self.logger.info(market_status)
-
-            # 2. 交易系统状态
-            system_status = (
-                f"\n交易系统状态:\n"
-                f"{'='*80}\n"
-                f"连接状态: {'已连接':^10} | "
-                f"行情延迟: {self.quote_delay or 0:^8}ms | "  # 使用 or 0 作为默认值
-                f"VIX指数: {getattr(self, 'current_vix', 0):.2f} (限制范围: "
-                f"{self.risk_limits['volatility']['min_vix']}-"
-                f"{self.risk_limits['volatility']['max_vix']})\n"
-                f"{'='*80}"
-            )
-            self.logger.info(system_status)
-
-            # 3. 交易条件状态
-            risk_limits = self.risk_limits['option']
-            trading_conditions = (
-                f"\n交易条件状态:\n"
-                f"{'='*80}\n"
-                f"止损设置: {risk_limits['stop_loss']['initial']}% | "
-                f"移动止损: {risk_limits['stop_loss']['trailing']}% | "
-                f"止盈目标: {risk_limits['take_profit']}%"
-            )
-
-            # 添加交易决策信息
-            if hasattr(self, 'trading_decision'):
-                decision = self.trading_decision
-                trading_conditions += (
-                    f"\n交易决策: {decision.get('action', '未知')} | "
-                    f"价格趋势: {decision.get('price_trend', '-')} | "
-                    f"分时趋势: {decision.get('time_trend', '-')} | "
-                    f"当前收益: {decision.get('pnl_pct', 0):+.1f}%"
-                )
-
-                # 如果有决策原因
-                if 'reason' in decision:
-                    trading_conditions += f"\n决策原因: {decision['reason']}"
-
-            trading_conditions += f"\n{'='*80}"
-            self.logger.info(trading_conditions)
-
-            # 4. 持仓状态
+            
+            # 获取持仓数据
             positions = await self.get_real_positions()
-            if positions and positions.get("active"):
-                await self._print_positions_table(positions)
-                await self.check_stop_conditions(positions)
-            else:
-                self.logger.info("\n当前持仓状态:")
+            if not positions or not positions.get("active"):
                 self.logger.info("暂无持仓")
-
-            # 5. 市场条件检查
-            if self.risk_checker.check_market_condition(self.current_vix, ny_time.strftime('%H:%M:%S')):
-                self.logger.info("市场条件满足交易要求")
-            else:
-                self.logger.info("市场条件不适合交易")
-
+                return
+            
+            # 打印持仓状态表格
+            headers = ["Symbol", "Quantity", "Cost", "Current", "P/L%", "Time"]
+            rows = []
+            
+            for pos in positions["active"]:
+                entry_time = pos.get("entry_time", datetime.now(self.tz))
+                holding_time = ny_time - entry_time
+                hours = holding_time.total_seconds() / 3600
+                
+                row = [
+                    pos["symbol"],
+                    pos["volume"],
+                    f"${pos['cost_price']:.2f}",
+                    f"${pos['current_price']:.2f}",
+                    f"{pos['total_pnl_pct']:+.2f}%",
+                    f"{hours:.1f}h"
+                ]
+                rows.append(row)
+            
+            table = tabulate(
+                rows,
+                headers=headers,
+                tablefmt="grid",
+                numalign="right",
+                stralign="left"
+            )
+            
+            self.logger.info("\n=== 当前持仓状态 ===")
+            self.logger.info(f"\n{table}")
+            
+            # 打印风险状态
+            self.logger.info("\n=== 风险状态 ===")
+            self.logger.info(f"市场状态: {'开放' if self.is_market_open(ny_time) else '休市'}")
+            self.logger.info(f"当前时间: {ny_time.strftime('%H:%M:%S')}")
+            self.logger.info(f"内存使用: {self.get_memory_usage():.1f}MB")
+            
         except Exception as e:
             self.logger.error(f"打印交易状态时出错: {str(e)}")
             self.logger.error("详细错误信息:", exc_info=True)
-
-    async def _print_positions_table(self, positions_data: Dict[str, List[dict]]):
-        """打印持仓标的明细"""
-        try:
-            if not positions_data or not positions_data.get("active"):
-                self.logger.info("\n暂无持仓")
-                return
-            
-            positions = positions_data["active"]
-            if not positions:
-                return
-
-            # 计算最大字段长度以实现表格自适应
-            max_symbol_len = max(len(pos["symbol"]) for pos in positions)
-            symbol_width = max(25, max_symbol_len + 2)  # 至少25个字符宽
-
-            # 构建表格格式
-            fmt = (
-                f"{{:<{symbol_width}}} {{:>8}} {{:>12}} {{:>30}} {{:>25}}"
-            )
-            
-            # 表头
-            header = fmt.format(
-                "Symbol",          # 1. 期权代码
-                "Volume",         # 2. 数量
-                "市值",           # 3. 市值
-                "last",          # 4. 价格变动
-                "当日盈亏/盈亏率"   # 5. 盈亏信息
-            )
-            
-            # 分隔线
-            separator = "-" * len(header)
-
-            # 打印表头和分隔线
-            self.logger.info("\n当前持仓状态:")
-            self.logger.info(separator)
-            self.logger.info(header)
-            self.logger.info(separator)
-            
-            # 按代码排序显示所有持仓
-            total_value = 0
-            for pos in sorted(positions, key=lambda x: x["symbol"]):
-                try:
-                    # 获取行情数据
-                    quotes = self.quote_ctx.quote([pos["symbol"]])
-                    if quotes and len(quotes) > 0:
-                        quote = quotes[0]
-                        current_price = float(quote.last_done)
-                        prev_close = float(quote.prev_close)
-                        cost_price = float(pos["cost_price"])
-                        
-                        # 计算涨跌幅
-                        price_change_pct = ((current_price - cost_price) / cost_price * 100) if cost_price else 0
-                        day_change_pct = ((current_price - prev_close) / prev_close * 100) if prev_close else 0
-                        
-                        # 计算当日盈亏
-                        day_pnl = (current_price - prev_close) * pos["volume"]
-                        
-                        # 构建价格变动字符串
-                        last_str = f"{cost_price:.2f} -> {current_price:.2f} ({price_change_pct:+.2f}%)"
-                        
-                        # 构建行数据
-                        line = fmt.format(
-                            pos["symbol"],
-                            f"{abs(pos['volume']):d}",
-                            f"${pos['market_value']:.2f}",
-                            last_str,
-                            f"${day_pnl:+.2f}/{day_change_pct:+.2f}%"
-                        )
-                        self.logger.info(line)
-                        total_value += pos['market_value']
-                
-                except Exception as e:
-                    self.logger.error(f"处理持仓显示时出错: {str(e)}")
-            
-            # 显示总计
-            self.logger.info(separator)
-            summary = fmt.format(
-                "总计",
-                f"{len(positions)}",
-                f"${total_value:.2f}",
-                "",
-                ""
-            )
-            self.logger.info(summary)
-            self.logger.info(separator)
-            self.logger.info("")  # 添加空行
-            
-        except Exception as e:
-            self.logger.error(f"打印持仓表格时出错: {str(e)}")
 
     def _extract_expiry_date(self, symbol: str) -> Optional[datetime]:
         """从期权代码中提取到期日"""
