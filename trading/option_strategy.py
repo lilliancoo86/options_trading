@@ -17,24 +17,14 @@ import json
 class DoomsdayOptionStrategy:
     def __init__(self, config: Dict[str, Any]):
         """初始化策略"""
-        # 设置时区
-        self.tz = pytz.timezone('America/New_York')  # 使用美东时间
-        
-        # 设置日志
         self.logger = logging.getLogger(__name__)
-        
-        # 添加波动率阈值配置
-        self.volatility_threshold = {
-            'high': 0.4,  # 高波动率阈值
-            'low': 0.2    # 低波动率阈值
-        }
-        
         self.config = config
+        self.tz = pytz.timezone('America/New_York')
         
-        # 监控的标的
+        # 初始化交易标的
         self.symbols = ["TSLL.US", "NVDA.US", "AAPL.US"]
         
-        # 交易参数
+        # 添加期权策略参数
         self.params = {
             'min_days_to_expiry': 3,     # 最小到期天数
             'max_days_to_expiry': 14,    # 最大到期天数
@@ -44,14 +34,48 @@ class DoomsdayOptionStrategy:
             'min_volume': 100,           # 最小成交量
             'min_open_interest': 500,    # 最小持仓量
             'max_spread_pct': 10,        # 最大价差百分比
+            'min_iv_percentile': 20,     # 最小IV百分位
+            'max_iv_percentile': 80,     # 最大IV百分位
             'momentum_threshold': 0.02,   # 动量阈值
             'entry_rsi_threshold': 60,    # 入场RSI阈值
             'gap_threshold': 2.0,        # 跳空阈值
             'premarket_weight': 1.5,     # 盘前权重
             'news_weight': 1.0,          # 新闻权重
             'volume_weight': 1.0,        # 成交量权重
-            'max_position_size': 10,     # 最大持仓数量
-            'time_stop': '15:45'         # 强制平仓时间
+            'max_position_size': 10      # 最大持仓数量
+        }
+        
+        # 添加信号缓存
+        self.signals = {
+            symbol: {
+                'options': [],           # 期权信号
+                'trend': None,           # 趋势信号
+                'momentum': None,        # 动量信号
+                'volatility': None,      # 波动率信号
+                'last_update': None      # 最后更新时间
+            } for symbol in self.symbols
+        }
+        
+        # 添加订阅类型
+        self.sub_types = [
+            SubType.QUOTE,              # 报价
+            SubType.TRADE,              # 成交
+            SubType.DEPTH,              # 深度
+            SubType.OPTION_GREEKS       # 期权希腊字母
+        ]
+        
+        # 添加缓存
+        self.cache = {
+            'news': {},        # 新闻缓存
+            'sentiment': {},   # 情绪分析缓存
+            'options': {},     # 期权链缓存
+            'market': {},      # 市场数据缓存
+        }
+        
+        # 添加波动率阈值配置
+        self.volatility_threshold = {
+            'high': 0.4,  # 高波动率阈值
+            'low': 0.2    # 低波动率阈值
         }
         
         # 趋势判断参数
@@ -81,7 +105,6 @@ class DoomsdayOptionStrategy:
             } for symbol in self.symbols
         }
         self.iv_cache = {}              # 隐波缓存
-        self.signals = {}               # 交易信号缓存
         
         # 持仓管理
         self.positions = {}             # 当前持仓
@@ -89,139 +112,6 @@ class DoomsdayOptionStrategy:
         # 添加交易和行情上下文
         self.quote_ctx = QuoteContext(config)
         self.trade_ctx = TradeContext(config)
-        
-        # 添加期权订阅类型
-        self.sub_types = [
-            SubType.Quote,       # 实时报价
-            SubType.Trade,       # 实时成交
-            SubType.Depth,       # 盘口
-            SubType.Greeks,      # 希腊字母
-        ]
-        
-        # 初始化Longport配置
-        self.longport_config = {
-            'app_key': config['longport']['app_key'],            # OpenAPI密钥
-            'app_secret': config['longport']['app_secret'],      # OpenAPI密钥
-            'access_token': config['longport']['access_token'],  # OpenAPI访问令牌
-        }
-        
-        # 优化新闻分析配置
-        self.news_config = {
-            'cache_duration': 300,  # 缓存时间5分钟
-            'keywords': {
-                'strong_positive': [
-                    'breakthrough', 'exceed', 'record', 'patent', 'partnership',
-                    'acquisition', 'launch', 'win', 'approved', 'exclusive'
-                ],
-                'positive': [
-                    'surge', 'jump', 'beat', 'upgrade', 'bullish', 'outperform',
-                    'growth', 'innovation', 'expand', 'strong', 'higher'
-                ],
-                'strong_negative': [
-                    'lawsuit', 'investigation', 'recall', 'suspend', 'fraud',
-                    'default', 'bankrupt', 'warning', 'critical', 'emergency'
-                ],
-                'negative': [
-                    'drop', 'fall', 'miss', 'downgrade', 'bearish', 'underperform',
-                    'decline', 'risk', 'concern', 'weak', 'lower'
-                ]
-            },
-            'weights': {
-                'title': {
-                    'strong_positive': 3.0,
-                    'positive': 2.0,
-                    'strong_negative': -3.0,
-                    'negative': -2.0
-                },
-                'content': {
-                    'strong_positive': 1.5,
-                    'positive': 1.0,
-                    'strong_negative': -1.5,
-                    'negative': -1.0
-                }
-            },
-            'time_decay': {
-                'recent': 1.0,     # 最近1小时
-                'hour': 0.8,       # 1-3小时
-                'day': 0.6,        # 3-24小时
-                'old': 0.3         # 24小时以上
-            },
-            'source_weight': {     # 不同新闻源的权重
-                'official': 1.5,   # 官方新闻
-                'major': 1.2,      # 主流媒体
-                'normal': 1.0      # 普通来源
-            },
-            'threshold': {
-                'strong': 0.8,     # 强烈信号阈值
-                'normal': 0.5      # 普通信号阈值
-            }
-        }
-        
-        # 添加缓存
-        self.cache = {
-            'news': {},        # 新闻缓存
-            'sentiment': {},   # 情绪分析缓存
-            'options': {},     # 期权链缓存
-            'market': {},      # 市场数据缓存
-        }
-        
-        # 优化期权异动监控参数
-        self.option_monitor = {
-            'volume_threshold': {
-                'normal': 2.0,       # 常规时段成交量阈值(均值倍数)
-                'open': 3.0,         # 开盘时段成交量阈值
-                'close': 2.5,        # 收盘时段成交量阈值
-                'lunch': 1.5         # 午间时段成交量阈值
-            },
-            'min_volume': {
-                'TSLL.US': 500,      # TSLL最小成交量
-                'NVDA.US': 1000,     # NVDA最小成交量
-                'AAPL.US': 1000,     # AAPL最小成交量
-                'default': 800       # 默认最小成交量
-            },
-            'scan_interval': {
-                'open': 30,          # 开盘30分钟内每30秒扫描
-                'normal': 60,        # 常规时段每60秒扫描
-                'active': 45,        # 活跃时段每45秒扫描
-                'lunch': 120         # 午间每120秒扫描
-            },
-            'top_n': 3,             # 保留前3个异动标的
-            'active_strikes': {
-                'normal': 5,         # 常规时段监控上下5个行权价
-                'volatile': 7        # 波动大时监控上下7个行权价
-            },
-            'min_score': 3.0,       # 最小异动得分
-            'reset_interval': 1800,  # 每30分钟重置异动计数
-            'continuous_threshold': 3 # 连续3次异动才确认
-        }
-        
-        # 异动监控状态
-        self.monitor_state = {
-            'last_reset': datetime.now(self.tz),
-            'continuous_signals': {},  # 记录连续异动
-            'market_status': 'normal', # 市场状态
-            'active_period': False     # 是否处于活跃时段
-        }
-        
-        # 异动标的缓存
-        self.active_symbols = []          # 当前活跃的交易标的
-        
-        # 添加机器学习配置
-        self.ml_config = {
-            'model_path': 'models/sentiment_model',  # 模型保存路径
-            'vocab_path': 'models/vocab.json',       # 词汇表路径
-            'update_interval': 7 * 24 * 3600,        # 每周更新一次
-            'min_samples': 1000,                     # 最小训练样本数
-            'features': {
-                'price_change': True,     # 使用价格变化
-                'volume_change': True,    # 使用成交量变化
-                'news_keywords': True,    # 使用新闻关键词
-                'technical_indicators': True  # 使用技术指标
-            }
-        }
-        
-        # 初始化机器学习模型
-        self.ml_model = self._init_ml_model()
         
         # 添加关键词自动更新配置
         self.keyword_update = {
