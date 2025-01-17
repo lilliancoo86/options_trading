@@ -241,7 +241,7 @@ class DoomsdayPositionManager:
             order = await self.trade_ctx.submit_order(
                 symbol=symbol,
                 order_type=OrderType.MO,  # 使用市价单
-                side=OrderSide.SELL if position["volume"] > 0 else OrderSide.BUY,
+                side=OrderSide.Sell if position["volume"] > 0 else OrderSide.Buy,  # 使用 Sell/Buy
                 quantity=volume,
                 time_in_force=TimeInForceType.DAY,
                 remark="Market Close"
@@ -537,7 +537,7 @@ class DoomsdayPositionManager:
                 order_resp = self.trade_ctx.submit_order(
                     symbol=symbol,
                     order_type=OrderType.MO,  # 使用市价单
-                    side=OrderSide.SELL,      # 平仓都是卖出
+                    side=OrderSide.Sell,      # 使用 Sell 而不是 SELL
                     submitted_quantity=volume,
                     time_in_force=TimeInForceType.Day,
                     remark=f"Close position: {reason}"
