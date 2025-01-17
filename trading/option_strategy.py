@@ -39,6 +39,11 @@ class DoomsdayOptionStrategy:
             'trend_confirm_periods': 3,  # 趋势确认周期数
             'entry_rsi_threshold': 55,   # RSI入场阈值
             'momentum_threshold': 0.02,  # 动量阈值(2%)
+            'premarket_threshold': 2.0,    # 盘前涨跌幅阈值(%)
+            'news_impact_hours': 24,       # 新闻影响时间(小时)
+            'news_score_threshold': 0.6,   # 新闻情绪分数阈值
+            'volume_surge_ratio': 2.0,     # 成交量放大倍数阈值
+            'gap_threshold': 1.5,          # 跳空缺口阈值(%)
         }
         
         # 趋势判断参数
@@ -796,12 +801,9 @@ class DoomsdayOptionStrategy:
             self.logger.error(f"分析{symbol}趋势失败: {str(e)}")
             return None
 
-    async def _find_best_option(self, stock_trend: Dict) -> Optional[Dict]:
+    async def _find_best_option(self, stock_trend: Dict, option_type: str) -> Optional[Dict]:
         """查找最佳期权"""
         try:
-            if not stock_trend['is_uptrend']:
-                return None
-                
             # 获取期权链
             chain = await self.quote_ctx.option_chain(
                 symbol=stock_trend['symbol'],
@@ -810,13 +812,15 @@ class DoomsdayOptionStrategy:
             
             if not chain:
                 return None
-                
+            
             valid_options = []
             for option in chain:
-                # 只考虑看涨期权
-                if 'P' in option['symbol']:
+                # 检查期权类型
+                if option_type == 'call' and 'P' in option['symbol']:
                     continue
-                    
+                if option_type == 'put' and 'C' in option['symbol']:
+                    continue
+                
                 # 检查到期时间
                 days_to_expiry = (option['expiry_date'] - datetime.now(self.tz)).days
                 if not (self.params['min_days_to_expiry'] <= days_to_expiry <= self.params['max_days_to_expiry']):
@@ -876,3 +880,163 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"计算期权得分失败: {str(e)}")
             return 0
+
+    async def analyze_market_context(self, symbol: str) -> Dict:
+        """分析市场环境"""
+        try:
+            context = {
+                'premarket_change': 0,
+                'news_sentiment': 'neutral',
+                'volume_surge': False,
+                'gap_detected': False,
+                'market_status': 'normal',
+                'score': 0
+            }
+            
+            # 获取盘前数据
+            premarket = await self.quote_ctx.quote([symbol])
+            if premarket:
+                # 计算盘前涨跌幅
+                prev_close = float(premarket[0].prev_close)
+                current = float(premarket[0].last_done)
+                context['premarket_change'] = (current - prev_close) / prev_close * 100
+                
+                # 检查是否有显著跳空
+                if abs(context['premarket_change']) > self.params['gap_threshold']:
+                    context['gap_detected'] = True
+                    context['score'] += 1 if context['premarket_change'] > 0 else -1
+            
+            # 获取新闻数据
+            news = await self._get_stock_news(symbol)
+            if news:
+                # 分析新闻情绪
+                sentiment = await self._analyze_news_sentiment(news)
+                context['news_sentiment'] = sentiment
+                if sentiment == 'positive':
+                    context['score'] += 2
+                elif sentiment == 'negative':
+                    context['score'] -= 2
+            
+            # 检查成交量异常
+            volume_data = self.price_cache[symbol]['volume']
+            avg_volume = np.mean(volume_data[-20:])  # 20分钟平均成交量
+            if volume_data[-1] > avg_volume * self.params['volume_surge_ratio']:
+                context['volume_surge'] = True
+                context['score'] += 1 if context['premarket_change'] > 0 else -1
+            
+            # 综合评估市场状态
+            if abs(context['score']) >= 3:
+                context['market_status'] = 'strong_trend'
+            elif abs(context['score']) >= 2:
+                context['market_status'] = 'trend'
+            
+            return context
+            
+        except Exception as e:
+            self.logger.error(f"分析市场环境失败: {str(e)}")
+            return None
+
+    async def _get_stock_news(self, symbol: str) -> List[Dict]:
+        """获取股票相关新闻"""
+        try:
+            # 获取过去24小时的新闻
+            news = await self.quote_ctx.news(
+                symbol=symbol,
+                count=20,
+                begin_time=(datetime.now() - timedelta(hours=self.params['news_impact_hours']))
+            )
+            return news
+        except Exception as e:
+            self.logger.error(f"获取新闻失败: {str(e)}")
+            return []
+
+    async def _analyze_news_sentiment(self, news: List[Dict]) -> str:
+        """分析新闻情绪"""
+        try:
+            # 这里可以接入专门的新闻情绪分析服务
+            # 示例实现使用简单的关键词匹配
+            positive_keywords = ['surge', 'jump', 'beat', 'upgrade', 'positive']
+            negative_keywords = ['drop', 'fall', 'miss', 'downgrade', 'negative']
+            
+            pos_count = 0
+            neg_count = 0
+            
+            for item in news:
+                title = item['title'].lower()
+                content = item['content'].lower()
+                
+                # 检查标题和内容中的关键词
+                for word in positive_keywords:
+                    if word in title or word in content:
+                        pos_count += 1
+                
+                for word in negative_keywords:
+                    if word in title or word in content:
+                        neg_count += 1
+            
+            # 计算情绪得分
+            total = pos_count + neg_count
+            if total == 0:
+                return 'neutral'
+            
+            sentiment_score = (pos_count - neg_count) / total
+            
+            if sentiment_score > self.params['news_score_threshold']:
+                return 'positive'
+            elif sentiment_score < -self.params['news_score_threshold']:
+                return 'negative'
+            else:
+                return 'neutral'
+            
+        except Exception as e:
+            self.logger.error(f"分析新闻情绪失败: {str(e)}")
+            return 'neutral'
+
+    async def find_trading_opportunities(self) -> List[Dict]:
+        """寻找交易机会"""
+        opportunities = []
+        
+        for symbol in self.symbols:
+            try:
+                # 分析市场环境
+                market_context = await self.analyze_market_context(symbol)
+                if not market_context:
+                    continue
+                
+                # 分析技术趋势
+                stock_trend = await self._analyze_stock_trend(symbol)
+                if not stock_trend:
+                    continue
+                
+                # 综合分析
+                if stock_trend['is_uptrend'] and market_context['score'] > 0:
+                    # 上升趋势，寻找看涨期权
+                    best_call = await self._find_best_option(stock_trend, 'call')
+                    if best_call:
+                        opportunities.append({
+                            'symbol': symbol,
+                            'option': best_call,
+                            'type': 'call',
+                            'trend_score': stock_trend['trend_score'],
+                            'market_score': market_context['score'],
+                            'context': market_context
+                        })
+                elif stock_trend['trend_score'] <= -6 and market_context['score'] < 0:
+                    # 下降趋势，寻找看跌期权
+                    best_put = await self._find_best_option(stock_trend, 'put')
+                    if best_put:
+                        opportunities.append({
+                            'symbol': symbol,
+                            'option': best_put,
+                            'type': 'put',
+                            'trend_score': abs(stock_trend['trend_score']),
+                            'market_score': abs(market_context['score']),
+                            'context': market_context
+                        })
+                
+            except Exception as e:
+                self.logger.error(f"分析{symbol}交易机会失败: {str(e)}")
+        
+        # 按综合得分排序
+        opportunities.sort(key=lambda x: x['trend_score'] + x['market_score'], reverse=True)
+        return opportunities
