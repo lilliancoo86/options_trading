@@ -40,1059 +40,122 @@ class MarketInfoFilter(logging.Filter):
         return not any(s in message for s in filtered_strings)
 
 class DoomsdayPositionManager:
-    def __init__(self, config: Dict[str, Any], test_mode: bool = False):
-        """
-        初始化持仓管理器
-        
-        Args:
-            config: 配置字典，包含交易和风险控制参数
-            test_mode: 是否为测试模式
-        """
-        self.config = config
+    def __init__(self, config: Dict[str, Any]):
         self.logger = logging.getLogger(__name__)
-        self.positions = {}  # 当前持仓
-        self.daily_pnl = Decimal('0')  # 每日盈亏
-        self.tz = pytz.timezone('America/New_York')
+        self.config = config
         
-        # 初始化Longport配置
-        load_dotenv()  # 加载环境变量
-        self.app_key = os.getenv('LONGPORT_APP_KEY')
-        self.app_secret = os.getenv('LONGPORT_APP_SECRET')
-        self.access_token = os.getenv('LONGPORT_ACCESS_TOKEN')
-        self.trade_env = os.getenv('TRADE_ENV', 'PAPER')
-        
-        if not all([self.app_key, self.app_secret, self.access_token]):
-            raise ValueError("缺少必要的Longport配置，请检查环境变量")
-        
-        # 初始化Longport配置
-        self.longport_config = Config(
-            app_key=self.app_key,
-            app_secret=self.app_secret,
-            access_token=self.access_token
-        )
-        
-        # 初始化交易和行情上下文
-        self._trade_ctx = None
-        self._quote_ctx = None
-        
-        # 初始化风险检查器
-        self.risk_checker = RiskChecker(config)
-        
-        try:
-            # 创建并验证交易上下文
-            self._trade_ctx = TradeContext(self.longport_config)
-            self._trade_ctx.account_balance()
-            self.logger.debug("交易上下文初始化成功")
-            
-            # 创建并验证行情上下文
-            self._quote_ctx = QuoteContext(self.longport_config)
-            # 测试行情订阅
-            self._quote_ctx.subscribe(
-                symbols=["AAPL.US"],  # 使用一个常见股票测试
-                sub_types=[SubType.Quote],
-                is_first_push=False  # 不需要首次推送
-            )
-            self._quote_ctx.unsubscribe(
-                symbols=["AAPL.US"],
-                sub_types=[SubType.Quote]
-            )
-            self.logger.debug("行情上下文初始化成功")
-            
-        except Exception as e:
-            self.logger.error(f"上下文初始化失败: {str(e)}")
-            if self._trade_ctx:
-                self._trade_ctx = None
-            if self._quote_ctx:
-                self._quote_ctx = None
-        
-        # 从配置中获取限制
-        self.position_limits = config['position_sizing']
-        self.risk_limits = config['risk_limits']
-        
-        # 初始化统计数据
-        self.stats = {
-            'total_trades': 0,
-            'winning_trades': 0,
-            'losing_trades': 0,
-            'max_drawdown': Decimal('0'),
-            'peak_value': Decimal('0'),
-            'current_value': Decimal('0')
-        }
-        
-        # 添加移动止损配置
-        self.trailing_stop = {
-            'activation_return': Decimal('0.10'),  # 10%收益激活移动止损
-            'trailing_distance': Decimal('0.05'),  # 5%移动止损距离
-            'min_profit_lock': Decimal('0.05')    # 5%最小锁定收益
-        }
-        
-        # 设置日志级别为 DEBUG
-        self.logger.setLevel(logging.DEBUG)
-        
-        # 添加日志过滤器
-        log_filter = MarketInfoFilter()
-        for handler in logging.getLogger().handlers:
-            handler.addFilter(log_filter)
-        
-        self.test_mode = test_mode
-        
-        # 测试模式下的风控参数
-        if test_mode:
-            self.risk_limits['option'] = {
-                'stop_loss': {
-                    'initial': 10.0,  # 10%固定止损
-                    'trailing': 10.0  # 10%移动止损
-                },
-                'take_profit': 50.0,  # 基础止盈比例（会根据趋势动态调整）
+        # 简化的风险控制参数
+        self.risk_limits = {
+            'option': {
+                'stop_loss': -10.0,  # 期权固定10%止损
+                'take_profit': None  # 期权不设固定止盈
+            },
+            'stock': {
+                'stop_loss': -3.0,   # 股票固定3%止损
+                'take_profit': 5.0    # 股票固定5%止盈
             }
-        
-        # 趋势判断参数
-        self.trend_config = {
-            'fast_length': 1,      # 快线周期
-            'slow_length': 5,      # 慢线周期
-            'curve_length': 10,    # 曲线周期
-            'trend_period': 5,     # 趋势判断周期
-            'vwap_dev': 2.0,      # VWAP通道宽度
-            'price': config.get('trend', {}).get('price', 'neutral'),    # 从配置中获取或使用默认值
-            'time': config.get('trend', {}).get('time', 'neutral')       # 从配置中获取或使用默认值
         }
+
+        self.tz = pytz.timezone('America/New_York')  # 添加时区
         
-        # 缓存历史数据
-        self.price_history = {}
-        self.vwap_history = {}
-        
-        # 添加quote_delay属性
-        self.quote_delay = 0
-        
-        # 删除 current_vix 属性
-        # self.current_vix = 0  # 同时添加current_vix属性
-
-    async def init_contexts(self):
-        """初始化交易和行情上下文"""
-        try:
-            # 获取事件循环
-            loop = asyncio.get_event_loop()
-            
-            # 验证交易上下文
-            await loop.run_in_executor(None, self._trade_ctx.account_balance)
-            self.logger.info("交易上下文初始化成功")
-            
-            # 验证行情上下文
-            try:
-                # 使用基本报价类型进行测试
-                await loop.run_in_executor(
-                    None,
-                    lambda: self._quote_ctx.subscribe(
-                        symbols=["US.AAPL"],
-                        sub_types=[SubType.Quote]
-                    )
-                )
-                await loop.run_in_executor(
-                    None,
-                    lambda: self._quote_ctx.unsubscribe(
-                        symbols=["US.AAPL"],
-                        sub_types=[SubType.Quote]
-                    )
-                )
-                self.logger.info("行情上下文初始化成功")
-            except Exception as e:
-                self.logger.error(f"行情上下文验证失败: {str(e)}")
-                raise
-            
-        except Exception as e:
-            self.logger.error(f"初始化Longport上下文失败: {str(e)}")
-            await self.close_contexts()
-            raise
-
-    async def close_contexts(self):
-        """关闭所有上下文"""
-        try:
-            loop = asyncio.get_event_loop()
-            
-            if self._trade_ctx:
-                await loop.run_in_executor(None, self._trade_ctx.close)
-                self._trade_ctx = None
-                self.logger.info("交易上下文已关闭")
-            
-            if self._quote_ctx:
-                await loop.run_in_executor(None, self._quote_ctx.close)
-                self._quote_ctx = None
-                self.logger.info("行情上下文已关闭")
-                
-        except Exception as e:
-            self.logger.error(f"关闭Longport上下文时出错: {str(e)}")
-            self.logger.exception("详细错误信息:")
-
-    @property
-    def trade_ctx(self) -> TradeContext:
-        """获取交易上下文"""
-        if self._trade_ctx is None:
-            self._trade_ctx = TradeContext(self.longport_config)
-            # 验证交易上下文
-            try:
-                self._trade_ctx.account_balance()
-                self.logger.debug("交易上下文初始化成功")
-            except Exception as e:
-                self.logger.error(f"交易上下文初始化失败: {str(e)}")
-                self._trade_ctx = None
-                raise
-        return self._trade_ctx
-    
-    @property
-    def quote_ctx(self) -> QuoteContext:
-        """获取行情上下文"""
-        if self._quote_ctx is None:
-            try:
-                self._quote_ctx = QuoteContext(self.longport_config)
-                # 测试行情订阅以验证上下文
-                self._quote_ctx.subscribe(
-                    symbols=["AAPL.US"],
-                    sub_types=[SubType.Quote],
-                    is_first_push=False
-                )
-                self._quote_ctx.unsubscribe(
-                    symbols=["AAPL.US"],
-                    sub_types=[SubType.Quote]
-                )
-                self.logger.debug("行情上下文初始化成功")
-            except Exception as e:
-                self.logger.error(f"行情上下文初始化失败: {str(e)}")
-                raise
-        return self._quote_ctx
-
-    async def can_open_position(self, symbol: str) -> bool:
-        """
-        检查是否可以开新仓位
-        
-        Args:
-            symbol: 交易标的代码
-            
-        Returns:
-            bool: 是否可以开仓
-        """
-        try:
-            # 检查是否是期权
-            if not (symbol.endswith('.US') and ('C' in symbol or 'P' in symbol)):
-                self.logger.warning(f"不是期权合约: {symbol}")
-                return False
-            
-            # 检查是否是监控标的的期权
-            base_symbols = [s.split('.')[0] for s in self.config.get('symbols', [])]
-            option_base = symbol.split('C')[0].split('P')[0]  # 获取期权的基础资产代码
-            if option_base not in base_symbols:
-                self.logger.warning(f"不是监控标的的期权: {symbol}")
-                return False
-            
-            # 检查持仓数量限制
-            max_positions = self.position_limits.get('size_limit', {}).get('max', 5)
-            
-            # 获取实际持仓数据
-            real_positions = await self.get_real_positions()
-            if real_positions is None:
-                self.logger.error("无法获取实际持仓数据")
-                return False
-            
-            active_positions = real_positions.get("active", [])
-            
-            # 检查总持仓数量
-            if len(active_positions) >= max_positions:
-                self.logger.warning(f"达到最大持仓数量限制: {max_positions}")
-                return False
-
-            # 检查是否已持有该标的
-            for pos in active_positions:
-                if pos["symbol"] == symbol:
-                    self.logger.warning(f"已持有该期权: {symbol}")
-                    return False
-
-            # 计算当前总持仓市值
-            total_value = sum(float(pos.get("value", 0)) for pos in active_positions)
-            
-            # 检查总持仓市值限制
-            max_total_value = self.position_limits.get('value_limit', {}).get('max', 100000)
-            if total_value >= max_total_value:
-                self.logger.warning(f"达到总持仓市值限制: {total_value:.2f}")
-                return False
-
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"检查开仓条件时出错: {str(e)}")
-            return False
-
-    async def open_position(self, order: Dict[str, Any]) -> bool:
-        """开仓"""
-        try:
-            symbol = order['symbol']
-            quantity = order['quantity']
-            
-            # 检查是否可以开仓
-            if not await self.can_open_position(symbol):
-                self.logger.warning(f"不满足开仓条件: {symbol}")
-                return False
-            
-            # 执行开仓操作
-            try:
-                # 获取最新行情
-                quote = self.quote_ctx.quote([symbol])
-                if not quote:
-                    self.logger.error("无法获取行情数据")
-                    return False
-                    
-                current_quote = quote[0]
-                bid_price = float(current_quote.bid_price)
-                ask_price = float(current_quote.ask_price)
-                
-                # 检查买卖价差
-                spread = (ask_price - bid_price) / bid_price
-                max_spread = self.config.get('order_config', {}).get('price_limit', {}).get('max_spread', 0.05)  # 期权允许更大的价差
-                
-                if spread > max_spread:
-                    self.logger.warning(f"期权买卖价差过大: {spread:.2%} > {max_spread:.2%}")
-                    return False
-                
-                # 提交市价单
-                submit_order_resp = self.trade_ctx.submit_order(
-                    symbol=symbol,
-                    order_type=OrderType.MO,  # 市价单
-                    side=OrderSide.Buy,       # 买入
-                    submitted_quantity=quantity,
-                    time_in_force=TimeInForceType.Day,  # 当日有效
-                    remark="DoomsdayOption"  # 订单备注
-                )
-                
-                # 检查订单提交结果
-                if submit_order_resp and hasattr(submit_order_resp, 'order_id'):
-                    order_id = submit_order_resp.order_id
-                    self.logger.info(f"市价单提交成功: {order_id}")
-                    
-                    # 等待订单成交
-                    max_wait = self.config.get('order_config', {}).get('max_wait_seconds', 5)  # 市价单等待时间可以短一些
-                    for _ in range(max_wait):
-                        # 查询订单状态
-                        order_detail = self.trade_ctx.order_detail(order_id)
-                        if order_detail:
-                            status = order_detail.status
-                            if status == "Filled":  # 完全成交
-                                executed_price = float(order_detail.executed_price)
-                                executed_quantity = int(order_detail.executed_quantity)
-                                
-                                # 记录持仓信息
-                                self.positions[symbol] = {
-                                    'entry_time': datetime.now(),
-                                    'entry_price': executed_price,
-                                    'quantity': executed_quantity,
-                                    'current_price': executed_price,
-                                    'high_price': executed_price,
-                                    'stop_price': executed_price * (1 - self.trailing_stop['trailing_distance']),
-                                    'status': 'active',
-                                    'order_id': order_id
-                                }
-                                
-                                self.logger.info(f"期权开仓成功: {symbol}, 数量: {executed_quantity}张, 成交价: ${executed_price:.3f}")
-                                return True
-                                
-                            elif status in ["Failed", "Rejected", "Cancelled"]:
-                                self.logger.error(f"期权订单失败: {status}")
-                                return False
-                                
-                        await asyncio.sleep(1)
-                    
-                    # 超时处理
-                    self.logger.warning(f"期权订单等待超时: {order_id}")
-                    # 市价单通常不需要撤单，但为了安全起见还是撤一下
-                    self.trade_ctx.cancel_order(order_id)
-                    return False
-                    
-                else:
-                    self.logger.error("期权订单提交失败")
-                    return False
-                    
-            except Exception as e:
-                self.logger.error(f"执行期权开仓操作失败: {str(e)}")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"期权开仓失败: {str(e)}")
-            return False
-
-    def close_position(self, position, reason=""):
-        """平仓函数"""
-        try:
-            # 获取要平仓的数量的绝对值
-            quantity = abs(position.quantity)
-            
-            # 提交平仓订单
-            self.trade_api.submit_order(
-                symbol=position.symbol,
-                order_type=OrderType.Market,
-                side=OrderSide.Buy if position.quantity < 0 else OrderSide.Sell,
-                submitted_quantity=quantity,  # 使用正数数量
-                remark=f"Risk management: {reason}"
-            )
-            
-            # 计算盈亏
-            pnl = (position.current_price - position.entry_price) * Decimal(str(position.quantity))
-            self.daily_pnl += pnl
-            
-            # 更新统计数据
-            if pnl > 0:
-                self.stats['winning_trades'] += 1
-            else:
-                self.stats['losing_trades'] += 1
-            
-            # 更新最大回撤
-            self.stats['current_value'] += pnl
-            if self.stats['current_value'] > self.stats['peak_value']:
-                self.stats['peak_value'] = self.stats['current_value']
-            drawdown = (self.stats['peak_value'] - self.stats['current_value']) / self.stats['peak_value']
-            if drawdown > self.stats['max_drawdown']:
-                self.stats['max_drawdown'] = drawdown
-            
-            # 删除持仓
-            del self.positions[position.symbol]
-            
-            return {
-                'success': True,
-                'symbol': position.symbol,
-                'quantity': position.quantity,
-                'entry_price': position.entry_price,
-                'exit_price': position.current_price,
-                'pnl': pnl,
-                'holding_time': datetime.now(self.tz) - position['entry_time']
-            }
-            
-        except Exception as e:
-            self.logger.error(f"执行平仓操作失败 {position.symbol}: {e}")
-            self.logger.error("详细错误信息:")
-            self.logger.error(traceback.format_exc())
-            return {'success': False, 'error': str(e)}
-
-    def should_close_position(self, symbol: str, current_price: float) -> bool:
-        """检查是否应该平仓"""
-        try:
-            if symbol not in self.positions:
-                return False
-            
-            position = self.positions[symbol]
-            entry_price = position['entry_price']
-            
-            # 计算盈亏比例
-            pnl_ratio = (current_price - entry_price) / entry_price
-            
-            # 获取期权特定的止损止盈设置
-            option_risk = self.risk_limits.get('option', {})
-            stop_loss = option_risk.get('stop_loss', {})
-            
-            # 期权特定的止损设置 - 更严格的止损比例
-            initial_stop = stop_loss.get('initial', 0.10)     # 最大止损10%
-            trailing_stop = stop_loss.get('trailing', 0.07)   # 移动止损7%
-            time_based_stop = stop_loss.get('time_based', 0.05)  # 基于时间的止损5%
-            max_holding_time = option_risk.get('max_holding_time', 60)  # 最大持仓时间60分钟
-            
-            # 计算持仓时间（分钟）
-            holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
-            
-            # 1. 固定止损检查 - 最高优先级
-            if pnl_ratio < -initial_stop:
-                self.logger.info(f"{symbol} 触发固定止损: {pnl_ratio:.2%} (止损线: -{initial_stop:.1%})")
-                return True
-            
-            # 2. 移动止盈检查
-            if pnl_ratio > trailing_stop:
-                # 更新移动止损价格
-                position['stop_price'] = current_price * (1 - trailing_stop)
-                position['high_price'] = max(current_price, position.get('high_price', current_price))
-                
-                # 计算从最高点回撤的比例
-                drawdown = (position['high_price'] - current_price) / position['high_price']
-                if drawdown > trailing_stop:
-                    self.logger.info(f"{symbol} 触发移动止盈: 从最高点回撤 {drawdown:.2%}")
-                    return True
-            
-            # 3. 时间止损检查
-            if holding_time > max_holding_time:
-                self.logger.info(f"{symbol} 触发时间止损: 持仓时间 {holding_time:.1f}分钟")
-                return True
-            
-            # 4. 基于时间的动态止损
-            time_ratio = holding_time / max_holding_time
-            dynamic_stop = min(time_based_stop * (1 + time_ratio), 0.10)  # 确保不超过10%
-            if pnl_ratio < -dynamic_stop:
-                self.logger.info(f"{symbol} 触发时间动态止损: {pnl_ratio:.2%} (阈值: {-dynamic_stop:.2%})")
-                return True
-            
-            # 5. 盈利目标检查
-            take_profit = option_risk.get('take_profit', 0.30)  # 降低盈利目标到30%
-            if pnl_ratio > take_profit:
-                self.logger.info(f"{symbol} 达到盈利目标: {pnl_ratio:.2%}")
-                return True
-            
-            # 记录当前持仓状态
-            if not hasattr(self, '_last_position_log') or \
-               (datetime.now() - self._last_position_log).seconds >= 60:
-                self.logger.info(f"\n=== 持仓状态 [{symbol}] ===")
-                status = {
-                    "持仓时间": f"{holding_time:.1f}分钟",
-                    "当前盈亏": f"{pnl_ratio:.2%}",
-                    "止损线": f"{-initial_stop:.1%}",
-                    "动态止损": f"{-dynamic_stop:.1%}",
-                    "移动止盈": f"{trailing_stop:.1%}"
-                }
-                table = tabulate(
-                    [status],
-                    headers="keys",
-                    tablefmt="grid",
-                    numalign="right",
-                    stralign="left"
-                )
-                self.logger.info(f"\n{table}")
-                self._last_position_log = datetime.now()
-            
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"检查平仓条件时发生错误: {str(e)}")
-            return False
-
-    async def force_close_all(self):
-        """强制平仓所有持仓"""
-        try:
-            positions = await self.get_real_positions()
-            if not positions or not positions.get("active"):
-                self.logger.info("没有需要平仓的持仓")
-                return
-            
-            self.logger.warning("开始执行强制平仓...")
-            
-            for pos in positions["active"]:
-                try:
-                    # 提交市价单平仓
-                    self.trade_ctx.submit_order(
-                        symbol=pos["symbol"],
-                        order_type=OrderType.MO,  # 使用 MO 代替 Market
-                        side=OrderSide.Sell,
-                        submitted_quantity=pos["volume"],
-                        time_in_force=TimeInForceType.Day,
-                        remark="Force close position"
-                    )
-                    self.logger.info(f"已提交市价平仓订单: {pos['symbol']}, 数量: {pos['volume']}")
-                    
-                except Exception as e:
-                    self.logger.error(f"平仓 {pos['symbol']} 失败: {str(e)}")
-                    continue
-                
-            self.logger.info("强制平仓执行完成")
-            
-        except Exception as e:
-            self.logger.error(f"强制平仓失败: {str(e)}")
-
-    def get_all_positions(self) -> Dict[str, Dict[str, Any]]:
-        """获取所有当前持仓"""
-        try:
-            positions_with_time = {}
-            positions_data = self.trade_ctx.stock_positions()
-            
-            if hasattr(positions_data, 'channels'):
-                for channel in positions_data.channels:
-                    if hasattr(channel, 'positions'):
-                        for pos in channel.positions:
-                            pos_copy = {
-                                'symbol': pos.symbol,
-                                'volume': int(pos.quantity),
-                                'cost_price': float(pos.cost_price),
-                                'current_price': float(pos.cost_price),  # 初始使用成本价
-                                'entry_time': datetime.now(self.tz),  # 使用当前时间作为入场时间
-                                'market_value': float(pos.cost_price) * int(pos.quantity)
-                            }
-                            positions_with_time[pos.symbol] = pos_copy
-            
-            return positions_with_time
-        except Exception as e:
-            self.logger.error(f"获取所有持仓时出错: {str(e)}")
-            self.logger.error("详细错误信息:", exc_info=True)
-            return {}
-
-    def get_position_stats(self) -> Dict[str, Any]:
-        """
-        获取持仓统计信息
-        
-        Returns:
-            Dict: 统计信息字典
-        """
-        stats = {
-            'total_trades': self.stats['total_trades'],
-            'winning_trades': self.stats['winning_trades'],
-            'losing_trades': self.stats['losing_trades'],
-            'win_rate': self.stats['winning_trades'] / self.stats['total_trades'] if self.stats['total_trades'] > 0 else 0,
-            'max_drawdown': float(self.stats['max_drawdown']),
-            'daily_pnl': float(self.daily_pnl),
-            'current_positions': len(self.positions)
+        # 添加收盘平仓时间设置
+        self.market_close = {
+            'force_close_time': '15:45',  # 收盘前15分钟强制平仓
+            'warning_time': '15:40'       # 收盘前20分钟发出警告
         }
-        
-        # 添加移动止损相关统计
-        stats['positions_with_trailing_stop'] = sum(
-            1 for pos in self.positions.values()
-            if (pos.get('high_price', pos['entry_price']) - pos['entry_price']) / pos['entry_price']
-            >= self.trailing_stop['activation_return']
-        )
-        
-        return stats
 
-    async def get_real_positions(self):
-        """获取实际持仓数据"""
+    async def check_market_close(self, position: Dict[str, Any]) -> bool:
+        """检查是否需要收盘平仓"""
         try:
-            if not self.trade_ctx:
-                self.logger.error("交易上下文未初始化")
-                return None
-
-            # 获取持仓数据
-            positions_data = {"active": []}
+            current_time = datetime.now(self.tz).strftime('%H:%M')
             
-            try:
-                # 使用 stock_positions 方法获取持仓（同步方法）
-                self.logger.debug("正在获取持仓数据...")
-                stock_positions = self.trade_ctx.stock_positions()
-                self.logger.debug(f"原始持仓数据: {stock_positions}")
-                
-                # 获取持仓列表
-                if hasattr(stock_positions, 'channels'):
-                    for channel in stock_positions.channels:
-                        if hasattr(channel, 'positions'):
-                            for pos in channel.positions:
-                                self.logger.debug(f"处理持仓: {pos}")
-                                
-                                # 转换数量为整数
-                                quantity = int(pos.quantity)
-                                cost_price = float(pos.cost_price)
-                                
-                                # 转换持仓数据格式
-                                position_data = {
-                                    "symbol": pos.symbol,
-                                    "volume": quantity,
-                                    "cost_price": cost_price,
-                                    "current_price": cost_price,  # 暂时使用成本价
-                                    "market_value": cost_price * quantity,
-                                    "day_pnl": 0.0,  # 需要通过行情更新
-                                    "day_pnl_pct": 0.0,  # 需要通过行情更新
-                                    "total_pnl": 0.0,  # 需要通过行情更新
-                                    "total_pnl_pct": 0.0,  # 需要通过行情更新
-                                    "type": "option" if self._is_option(pos.symbol) else "stock"
-                                }
-                                
-                                # 获取最新行情更新价格和盈亏
-                                try:
-                                    quotes = self.quote_ctx.quote([pos.symbol])
-                                    if quotes and len(quotes) > 0:
-                                        current_price = float(quotes[0].last_done)
-                                        market_value = current_price * float(quantity)
-                                        unrealized_pnl = (current_price - cost_price) * float(quantity)
-                                        unrealized_pnl_ratio = ((current_price - cost_price) / cost_price) * 100 if cost_price != 0 else 0
-                                        
-                                        position_data.update({
-                                            "current_price": current_price,
-                                            "market_value": market_value,
-                                            "day_pnl": unrealized_pnl,
-                                            "day_pnl_pct": unrealized_pnl_ratio,
-                                            "total_pnl": unrealized_pnl,
-                                            "total_pnl_pct": unrealized_pnl_ratio
-                                        })
-                                        self.logger.debug(f"获取到行情数据: {quotes[0]}")
-                                except Exception as e:
-                                    self.logger.warning(f"获取行情数据失败: {str(e)}")
-                                
-                                # 添加到活跃持仓列表
-                                positions_data["active"].append(position_data)
-                                
-                                # 记录详细日志
-                                self.logger.debug(
-                                    f"持仓数据 - {pos.symbol}:\n"
-                                    f"  数量: {quantity}\n"
-                                    f"  成本价: ${cost_price:.4f}\n"
-                                    f"  现价: ${position_data['current_price']:.4f}\n"
-                                    f"  市值: ${position_data['market_value']:.2f}\n"
-                                    f"  未实现盈亏: ${position_data['total_pnl']:+.2f}\n"
-                                    f"  盈亏比例: {position_data['total_pnl_pct']:+.2f}%"
-                                )
-                
-                self.logger.info(f"获取到 {len(positions_data['active'])} 个持仓")
-                return positions_data
-
-            except Exception as e:
-                self.logger.error(f"获取持仓数据时出错: {str(e)}")
-                self.logger.exception("详细错误信息:")
-                return None
-
+            # 收盘前警告
+            if current_time >= self.market_close['warning_time']:
+                self.logger.warning(f"接近收盘时间，准备平仓: {position['symbol']}")
+            
+            # 强制平仓检查
+            if current_time >= self.market_close['force_close_time']:
+                self.logger.warning(
+                    f"收盘前强制平仓:\n"
+                    f"  标的: {position['symbol']}\n"
+                    f"  当前时间: {current_time}\n"
+                    f"  平仓类型: 收盘平仓"
+                )
+                await self._execute_market_close(position)
+                return True
+            
+            return False
+            
         except Exception as e:
-            self.logger.error(f"获取持仓数据时出错: {str(e)}")
-            self.logger.exception("详细错误信息:")
-            return None
+            self.logger.error(f"检查收盘平仓时出错: {str(e)}")
+            return False
 
-    async def print_trading_status(self):
-        """打印交易状态"""
+    async def _execute_market_close(self, position: dict):
+        """执行收盘平仓"""
         try:
-            # 获取美东时间
-            ny_time = datetime.now(self.tz)
+            symbol = position["symbol"]
+            volume = abs(position["volume"])
             
-            # 获取持仓数据
-            positions = await self.get_real_positions()
-            if not positions or not positions.get("active"):
-                self.logger.info("暂无持仓")
-                return
-            
-            # 打印持仓状态表格
-            headers = ["Symbol", "Quantity", "Cost", "Current", "P/L%", "Time"]
-            rows = []
-            
-            for pos in positions["active"]:
-                entry_time = pos.get("entry_time", datetime.now(self.tz))
-                holding_time = ny_time - entry_time
-                hours = holding_time.total_seconds() / 3600
-                
-                row = [
-                    pos["symbol"],
-                    pos["volume"],
-                    f"${pos['cost_price']:.2f}",
-                    f"${pos['current_price']:.2f}",
-                    f"{pos['total_pnl_pct']:+.2f}%",
-                    f"{hours:.1f}h"
-                ]
-                rows.append(row)
-            
-            table = tabulate(
-                rows,
-                headers=headers,
-                tablefmt="grid",
-                numalign="right",
-                stralign="left"
+            self.logger.warning(
+                f"执行收盘平仓:\n"
+                f"  标的: {symbol}\n"
+                f"  数量: {volume}\n"
+                f"  成本价: ${position['cost_price']:.2f}\n"
+                f"  现价: ${position['current_price']:.2f}\n"
+                f"  平仓原因: 收盘前强制平仓"
             )
             
-            self.logger.info("\n=== 当前持仓状态 ===")
-            self.logger.info(f"\n{table}")
-            
-            # 打印风险状态
-            self.logger.info("\n=== 风险状态 ===")
-            self.logger.info(f"市场状态: {'开放' if self.is_market_open(ny_time) else '休市'}")
-            self.logger.info(f"当前时间: {ny_time.strftime('%H:%M:%S')}")
-            self.logger.info(f"内存使用: {self.get_memory_usage():.1f}MB")
-            
-        except Exception as e:
-            self.logger.error(f"打印交易状态时出错: {str(e)}")
-            self.logger.error("详细错误信息:", exc_info=True)
-
-    def _extract_expiry_date(self, symbol: str) -> Optional[datetime]:
-        """从期权代码中提取到期日"""
-        try:
-            # 假设格式为 XXXYYMMDDCNN.US
-            date_str = re.search(r'(\d{6})[CP]', symbol)
-            if date_str:
-                date_str = date_str.group(1)
-                return datetime.strptime(f"20{date_str}", "%Y%m%d")
-            return None
-        except Exception:
-            return None
-
-    def is_market_open(self, current_time: datetime) -> bool:
-        """检查市场是否开放"""
-        # 转换为美东时间
-        ny_time = current_time.astimezone(self.tz)
-        
-        # 检查是否为工作日
-        if ny_time.weekday() >= 5:  # 5=周六, 6=周日
-            return False
-        
-        # 检查是否在交易时间内 (9:30 - 16:00)
-        market_open = ny_time.replace(hour=9, minute=30, second=0, microsecond=0)
-        market_close = ny_time.replace(hour=16, minute=0, second=0, microsecond=0)
-        
-        return market_open.time() <= ny_time.time() <= market_close.time()
-
-    def get_memory_usage(self) -> float:
-        """获取当前进程内存使用情况"""
-        import psutil
-        process = psutil.Process()
-        return process.memory_info().rss / 1024 / 1024  # 转换为MB
-
-    async def check_force_close(self, current_time: datetime) -> bool:
-        """
-        检查是否需要强制平仓
-        
-        Args:
-            current_time: 当前时间
-        
-        Returns:
-            bool: 是否需要强制平仓
-        """
-        try:
-            # 获取美东时间
-            ny_time = current_time.astimezone(self.tz)
-            
-            # 设置强制平仓时间（美东时间15:45）
-            force_close_time = ny_time.replace(
-                hour=15,
-                minute=45,
-                second=0,
-                microsecond=0
+            # 执行市价单平仓
+            order = await self.trade_ctx.submit_order(
+                symbol=symbol,
+                order_type=OrderType.MO,  # 使用市价单
+                side=OrderSide.SELL if position["volume"] > 0 else OrderSide.BUY,
+                quantity=volume,
+                time_in_force=TimeInForceType.DAY,
+                remark="Market Close"
             )
             
-            # 如果已过强制平仓时间，检查是否还有持仓
-            if ny_time.time() >= force_close_time.time():
-                positions = await self.get_real_positions()
-                if positions and positions.get("active"):
-                    self.logger.warning(
-                        f"已过强制平仓时间 ({force_close_time.strftime('%H:%M:%S')}), "
-                        f"当前持仓数: {len(positions['active'])}"
-                    )
-                    return True
+            self.logger.info(f"收盘平仓订单已提交 - 订单号: {order.order_id}")
             
-            return False
+            # 等待订单状态更新
+            await asyncio.sleep(1)
+            order_status = await self.trade_ctx.get_order(order.order_id)
+            self.logger.info(f"收盘平仓订单状态: {order_status.status}")
             
         except Exception as e:
-            self.logger.error(f"检查强制平仓时出错: {str(e)}")
+            self.logger.error(f"执行收盘平仓时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
-            return False
 
-    async def check_stop_loss(self, position: Dict[str, Any]) -> bool:
-        """
-        检查是否触发止损
-        
-        Args:
-            position: 持仓信息
-        
-        Returns:
-            bool: 是否需要止损
-        """
+    async def check_position_risk(self, position: Dict[str, Any]) -> bool:
+        """检查持仓风险"""
         try:
-            # 获取止损设置
-            stop_loss_pct = float(self.risk_limits['option']['stop_loss']['initial'])  # 固定止损比例
-            trailing_stop_pct = float(self.risk_limits['option']['stop_loss']['trailing'])  # 移动止损比例
+            # 首先检查是否需要收盘平仓（最高优先级）
+            if await self.check_market_close(position):
+                return True
             
             # 获取当前价格和成本价
             current_price = float(position.get('current_price', 0))
             cost_price = float(position.get('cost_price', 0))
             
-            # 计算当前收益率
-            pnl_pct = (current_price - cost_price) / cost_price * 100 if cost_price else 0
-            
-            # 1. 固定止损检查
-            if pnl_pct <= -stop_loss_pct:
-                self.logger.warning(f"触发固定止损: 当前亏损 {pnl_pct:.1f}% <= -{stop_loss_pct:.1f}%")
-                return True
-            
-            # 2. 移动止损检查
-            if 'peak_price' not in position:
-                position['peak_price'] = current_price
-            else:
-                position['peak_price'] = max(position['peak_price'], current_price)
-            
-            peak_price = float(position['peak_price'])
-            drawdown_pct = (current_price - peak_price) / peak_price * 100
-            
-            # 只有在盈利时才启用移动止损
-            if pnl_pct > 0 and drawdown_pct <= -trailing_stop_pct:
-                self.logger.warning(
-                    f"触发移动止损: 从最高点回撤 {drawdown_pct:.1f}% <= -{trailing_stop_pct:.1f}%, "
-                    f"最高价 ${peak_price:.2f}, 当前价 ${current_price:.2f}"
-                )
-                return True
-            
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"检查止损条件时出错: {str(e)}")
-            return False
-
-    async def check_take_profit(self, position: Dict[str, Any]) -> bool:
-        """检查是否触发止盈"""
-        try:
-            # 区分期权和股票
-            is_option = self._is_option(position["symbol"])
-            
-            # 获取基础止盈比例
-            if is_option:
-                take_profit_pct = float(self.risk_limits['option']['take_profit'])
-            else:
-                take_profit_pct = 5.0  # 股票基础止盈5%
-            
-            current_price = float(position.get('current_price', 0))
-            cost_price = float(position.get('cost_price', 0))
-            pnl_pct = (current_price - cost_price) / cost_price * 100 if cost_price else 0
-            trend = await self.check_trend(position['symbol'], current_price, cost_price)
-            
-            if is_option:
-                # 期权的止盈逻辑
-                if trend['price_trend'] == 'super_strong':
-                    if trend['time_trend'] in ['strong_up', 'up']:
-                        if pnl_pct >= 500:
-                            take_profit_pct = pnl_pct * 0.9  # 回撤10%止盈
-                        else:
-                            take_profit_pct *= 3.0  # 提高200%的止盈目标
-                    elif trend['time_trend'] == 'neutral':
-                        take_profit_pct = max(pnl_pct * 0.85, take_profit_pct * 2.0)  # 至少保持85%收益或翻倍止盈目标
-                    else:
-                        take_profit_pct = pnl_pct * 0.8  # 回撤20%止盈
-                elif trend['price_trend'] == 'strong':
-                    if trend['time_trend'] in ['strong_up', 'up']:
-                        take_profit_pct *= 2.5  # 提高150%的止盈目标
-                    elif trend['time_trend'] == 'neutral':
-                        if pnl_pct >= 200:
-                            take_profit_pct = pnl_pct * 0.8  # 回撤20%止盈
-                        else:
-                            take_profit_pct *= 1.5  # 提高50%的止盈目标
-                    else:
-                        take_profit_pct = max(take_profit_pct, pnl_pct * 0.75)  # 至少保持75%收益
-                elif trend['price_trend'] == 'normal':
-                    if trend['time_trend'] == 'neutral':  # 横盘震荡处理
-                        if 'price_history' in position:
-                            prices = position['price_history'][-20:]  # 取最近20个价格点
-                            if prices:
-                                max_price = max(prices)
-                                min_price = min(prices)
-                                volatility = (max_price - min_price) / min_price * 100
-                                
-                                if volatility <= 3.0:  # 低波动
-                                    take_profit_pct = max(30.0, pnl_pct * 0.7)  # 至少30%，或当前收益的70%
-                                elif volatility <= 5.0:  # 中等波动
-                                    take_profit_pct = max(50.0, pnl_pct * 0.75)  # 至少50%，或当前收益的75%
-                                else:  # 高波动
-                                    take_profit_pct = max(70.0, pnl_pct * 0.8)  # 至少70%，或当前收益的80%
-                        else:
-                            take_profit_pct = max(50.0, pnl_pct * 0.75)  # 默认中等波动设置
-                    else:
-                        take_profit_pct = max(take_profit_pct, pnl_pct * 0.7)  # 至少保持70%收益
-                elif trend['price_trend'] == 'weak':  # 弱势处理
-                    if trend['time_trend'] in ['strong_down', 'down']:
-                        take_profit_pct = max(20.0, pnl_pct * 0.9)  # 至少20%，或尽快止盈
-                    else:
-                        take_profit_pct = max(30.0, pnl_pct * 0.85)  # 至少30%，或保守止盈
-            else:
-                # 股票的动态止盈逻辑
-                if trend['price_trend'] == 'super_strong':
-                    if trend['time_trend'] in ['strong_up', 'up']:
-                        take_profit_pct = max(10.0, pnl_pct * 0.8)  # 至少10%，或当前收益的80%
-                    else:
-                        take_profit_pct = pnl_pct * 0.9  # 回撤10%止盈
-                elif trend['price_trend'] == 'strong':
-                    if trend['time_trend'] in ['strong_up', 'up']:
-                        take_profit_pct = max(8.0, pnl_pct * 0.7)  # 至少8%，或当前收益的70%
-                    else:
-                        take_profit_pct = pnl_pct * 0.85  # 回撤15%止盈
-                elif trend['price_trend'] == 'normal':
-                    if trend['time_trend'] == 'neutral':  # 横盘震荡处理
-                        if 'price_history' in position:
-                            prices = position['price_history'][-20:]  # 取最近20个价格点
-                            if prices:
-                                max_price = max(prices)
-                                min_price = min(prices)
-                                volatility = (max_price - min_price) / min_price * 100
-                                
-                                if volatility <= 1.0:  # 低波动
-                                    take_profit_pct = max(2.0, pnl_pct * 0.7)  # 至少2%，或当前收益的70%
-                                elif volatility <= 2.0:  # 中等波动
-                                    take_profit_pct = max(3.0, pnl_pct * 0.75)  # 至少3%，或当前收益的75%
-                                else:  # 高波动
-                                    take_profit_pct = max(4.0, pnl_pct * 0.8)  # 至少4%，或当前收益的80%
-                        else:
-                            take_profit_pct = max(3.0, pnl_pct * 0.75)  # 默认中等波动设置
-                    else:
-                        take_profit_pct = max(3.0, pnl_pct * 0.8)  # 至少3%，或回撤20%止盈
-                elif trend['price_trend'] == 'weak':  # 弱势处理
-                    if trend['time_trend'] in ['strong_down', 'down']:
-                        take_profit_pct = max(1.5, pnl_pct * 0.9)  # 尽快止盈
-                    else:
-                        take_profit_pct = max(2.0, pnl_pct * 0.85)  # 保守止盈
-            
-            # 添加移动止盈
-            if 'peak_pnl' not in position:
-                position['peak_pnl'] = pnl_pct
-            else:
-                position['peak_pnl'] = max(position['peak_pnl'], pnl_pct)
-            
-            peak_pnl = position['peak_pnl']
-            drawdown_pct = (pnl_pct - peak_pnl) / peak_pnl * 100 if peak_pnl else 0
-            
-            # 期权和股票使用不同的回撤止盈比例
-            if is_option:
-                if trend['time_trend'] == 'neutral':  # 横盘震荡时更保守
-                    if peak_pnl >= 200:
-                        max_drawdown = -15  # 允许15%回撤
-                    elif peak_pnl >= 100:
-                        max_drawdown = -20  # 允许20%回撤
-                    else:
-                        max_drawdown = -25  # 允许25%回撤
-                else:
-                    if peak_pnl >= 500:
-                        max_drawdown = -20
-                    elif peak_pnl >= 200:
-                        max_drawdown = -25
-                    else:
-                        max_drawdown = -30
-            else:
-                # 股票的回撤止盈比例
-                if trend['time_trend'] == 'neutral':  # 横盘震荡时更保守
-                    if peak_pnl >= 10:
-                        max_drawdown = -10  # 只允许10%回撤
-                    elif peak_pnl >= 5:
-                        max_drawdown = -15  # 允许15%回撤
-                    else:
-                        max_drawdown = -20  # 允许20%回撤
-                else:  # 其他趋势保持原有设置
-                    if peak_pnl >= 20:
-                        max_drawdown = -15
-                    elif peak_pnl >= 10:
-                        max_drawdown = -20
-                    else:
-                        max_drawdown = -25
-            
-            if drawdown_pct <= max_drawdown:
-                self.logger.warning(
-                    f"触发回撤止盈: 从最高点{peak_pnl:.1f}%回撤{-drawdown_pct:.1f}% > {-max_drawdown}%"
-                )
-                return True
-            
-            self.logger.info(
-                f"当前趋势: 价格={trend['price_trend']}, 分时={trend['time_trend']}, "
-                f"止盈目标: {take_profit_pct:.1f}%"
-            )
-            
-            if pnl_pct >= take_profit_pct:
-                self.logger.warning(
-                    f"触发止盈: 当前收益 {pnl_pct:.1f}% >= {take_profit_pct:.1f}% "
-                    f"(趋势: {trend['time_trend']}, 最高收益: {peak_pnl:.1f}%)"
-                )
-                return True
-            
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"检查止盈条件时出错: {str(e)}")
-            return False
-
-    def _is_option(self, symbol: str) -> bool:
-        """检查是否为期权"""
-        return any(x in symbol for x in ['C', 'P'])
-
-    async def check_position_risk(self, position: Dict[str, Any]) -> bool:
-        """检查持仓风险，包括止盈止损"""
-        try:
-            # 只处理期权持仓
-            if not self._is_option(position['symbol']):
-                self.logger.warning(f"跳过非期权持仓: {position['symbol']}")
+            # 计算收益率
+            if cost_price == 0:
                 return False
+            pnl_pct = (current_price - cost_price) / cost_price * 100
             
-            # 测试模式下记录更多信息
-            if self.test_mode:
-                self.logger.info(f"\n当前检查持仓: {position['symbol']}")
-                self.logger.info(f"止损设置: 固定{self.risk_limits['option']['stop_loss']['initial']}%, "
-                               f"移动{self.risk_limits['option']['stop_loss']['trailing']}%")
-                self.logger.info(f"止盈设置: {self.risk_limits['option']['take_profit']}%")
-                
+            # 区分期权和股票
+            is_option = self._is_option(position['symbol'])
+            limits = self.risk_limits['option'] if is_option else self.risk_limits['stock']
+            
             # 检查止损条件
-            if await self.check_stop_loss(position):
+            if limits['stop_loss'] is not None and pnl_pct <= limits['stop_loss']:
+                self.logger.warning(f"触发固定止损: 当前亏损 {pnl_pct:.1f}% <= {limits['stop_loss']}%")
+                await self._execute_stop_loss(position)
                 return True
             
-            # 检查止盈条件
-            if await self.check_take_profit(position):
+            # 检查止盈条件（仅股票）
+            if not is_option and limits['take_profit'] is not None and pnl_pct >= limits['take_profit']:
+                self.logger.warning(f"触发固定止盈: 当前收益 {pnl_pct:.1f}% >= {limits['take_profit']}%")
+                await self._execute_take_profit(position)
                 return True
             
             return False
@@ -1101,439 +164,9 @@ class DoomsdayPositionManager:
             self.logger.error(f"检查持仓风险时出错: {str(e)}")
             return False
 
-    async def test_risk_management(self, position: Dict[str, Any], current_price: float) -> bool:
-        """
-        测试风险管理逻辑
-        
-        Args:
-            position: 持仓信息
-            current_price: 当前价格
-            
-        Returns:
-            bool: 是否需要平仓
-        """
-        try:
-            # 更新当前价格
-            position['current_price'] = current_price
-            
-            # 获取趋势数据
-            trend = await self.check_trend(position['symbol'], current_price, position['cost_price'])
-            
-            # 检查持仓风险
-            if await self.risk_checker.check_position_risk(position, trend):
-                return True
-            
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"测试风险管理时出错: {str(e)}")
-            return False
-
-    async def check_trend(self, symbol: str, current_price: float, cost_price: float) -> Dict[str, str]:
-        """
-        检查分时趋势和价格趋势
-        返回: {
-            'price_trend': 'super_strong'|'strong'|'normal'|'weak',  # 基于涨幅的趋势
-            'time_trend': 'strong_up'|'up'|'strong_down'|'down'|'neutral'  # 基于分时的趋势
-        }
-        """
-        try:
-            # 计算涨幅趋势
-            pnl_pct = (current_price - cost_price) / cost_price * 100 if cost_price else 0
-            
-            # 基于涨幅判断价格趋势
-            if pnl_pct >= 200:
-                price_trend = 'super_strong'
-            elif pnl_pct >= 100:
-                price_trend = 'strong'
-            elif pnl_pct >= 30:
-                price_trend = 'normal'
-            else:
-                price_trend = 'weak'
-            
-            # 获取分时趋势数据
-            if symbol not in self.price_history:
-                self.price_history[symbol] = []
-            
-            # 更新历史数据
-            self.price_history[symbol].append(current_price)
-            if len(self.price_history[symbol]) > 100:
-                self.price_history[symbol].pop(0)
-            
-            prices = self.price_history[symbol]
-            if len(prices) < self.trend_config['trend_period']:
-                return {'price_trend': price_trend, 'time_trend': 'neutral'}
-            
-            # 计算分时指标
-            fast_ma = sum(prices[-self.trend_config['fast_length']:]) / self.trend_config['fast_length']
-            slow_ma = sum(prices[-self.trend_config['slow_length']:]) / self.trend_config['slow_length']
-            
-            # 计算VWAP和通道
-            vwap = sum(prices) / len(prices)
-            std_dev = (sum((p - vwap) ** 2 for p in prices) / len(prices)) ** 0.5
-            upper_band = vwap + std_dev * self.trend_config['vwap_dev']
-            lower_band = vwap - std_dev * self.trend_config['vwap_dev']
-            
-            # 判断分时趋势
-            is_up_trend = fast_ma > slow_ma and current_price > vwap
-            is_strong_up = is_up_trend and current_price > upper_band
-            is_down_trend = fast_ma < slow_ma and current_price < vwap
-            is_strong_down = is_down_trend and current_price < lower_band
-            
-            # 确定分时趋势
-            if is_strong_up:
-                time_trend = 'strong_up'
-            elif is_up_trend:
-                time_trend = 'up'
-            elif is_strong_down:
-                time_trend = 'strong_down'
-            elif is_down_trend:
-                time_trend = 'down'
-            else:
-                time_trend = 'neutral'
-            
-            return {
-                'price_trend': price_trend,
-                'time_trend': time_trend
-            }
-            
-        except Exception as e:
-            self.logger.error(f"检查趋势时出错: {str(e)}")
-            return {'price_trend': 'weak', 'time_trend': 'neutral'}
-
-    async def close_all_positions_before_market_close(self):
-        """收盘前强制平仓所有持仓"""
-        try:
-            positions = await self.get_real_positions()
-            if not positions or not positions.get("active"):
-                self.logger.info("收盘前检查: 没有需要平仓的持仓")
-                return
-            
-            self.logger.warning("=== 收盘前强制平仓 ===")
-            
-            for pos in positions["active"]:
-                try:
-                    # 只处理期权持仓
-                    if not self._is_option(pos["symbol"]):
-                        continue
-                        
-                    # 提交市价单平仓
-                    self.trade_ctx.submit_order(
-                        symbol=pos["symbol"],
-                        order_type=OrderType.MO,  # 使用 MO 代替 Market
-                        side=OrderSide.Sell,
-                        submitted_quantity=pos["volume"],
-                        time_in_force=TimeInForceType.Day,
-                        remark="Market close position"
-                    )
-                    self.logger.warning(f"收盘前平仓: {pos['symbol']}, 数量: {pos['volume']}张, 使用市价单")
-                    
-                except Exception as e:
-                    self.logger.error(f"收盘前平仓失败 {pos['symbol']}: {str(e)}")
-                    continue
-                
-            self.logger.info("收盘前平仓执行完成")
-            
-        except Exception as e:
-            self.logger.error(f"收盘前平仓操作失败: {str(e)}")
-
-    def update_scenario(self, scenario_data: dict):
-        """更新当前场景信息"""
-        self.current_scenario = scenario_data
-
-    def update_trading_decision(self, decision_data: dict):
-        """更新交易决策信息"""
-        self.trading_decision = decision_data
-
-    async def check_position_risks(self):
-        """检查持仓风险"""
-        try:
-            # 使用 get_real_positions 获取持仓
-            positions_data = await self.get_real_positions()
-            if not positions_data or not positions_data.get("active"):
-                self.logger.info("无持仓，跳过风险检查")
-                return
-            
-            positions = positions_data["active"]
-            self.logger.info(f"获取到 {len(positions)} 个持仓")
-            self.logger.info(f"开始检查持仓风险... 持仓数量: {len(positions)}")
-            
-            for pos in positions:
-                try:
-                    # 同步调用quote方法
-                    quotes = self.quote_ctx.quote([pos["symbol"]])
-                    
-                    # 处理行情数据
-                    if quotes and len(quotes) > 0:
-                        quote = quotes[0]
-                        current_price = float(quote.last_done)
-                        
-                        # 更新持仓的当前价格
-                        pos["current_price"] = current_price
-                        
-                        # 检查风险条件
-                        if await self.check_position_risk(pos):
-                            await self.close_position(
-                                symbol=pos["symbol"],
-                                volume=int(pos["volume"]),
-                                reason="Risk management"
-                            )
-                    else:
-                        self.logger.warning(f"未能获取到 {pos['symbol']} 的行情数据")
-                        
-                except Exception as e:
-                    self.logger.error(f"检查单个持仓风险时出错 {pos['symbol']}: {str(e)}")
-                    self.logger.error("详细错误信息:", exc_info=True)
-                    continue
-                
-        except Exception as e:
-            self.logger.error(f"检查持仓风险时发生错误: {str(e)}")
-            self.logger.error("详细错误信息:", exc_info=True)
-
-    async def close_position(self, symbol: str, volume: int, reason: str):
-        """执行平仓操作"""
-        try:
-            self.logger.warning(f"准备平仓: {symbol}, 数量: {volume}, 原因: {reason}")
-            
-            # 确保交易上下文存在
-            if not self.trade_ctx:
-                self.logger.error("交易上下文未初始化")
-                return
-            
-            try:
-                # 确保提交正数数量
-                submitted_quantity = abs(volume)
-                
-                # 提交市价单平仓
-                order_resp = self.trade_ctx.submit_order(
-                    symbol=symbol,
-                    order_type=OrderType.MO,  # 使用 MO 代替 Market
-                    side=OrderSide.Buy if volume < 0 else OrderSide.Sell,  # 根据持仓方向确定平仓方向
-                    submitted_quantity=submitted_quantity,  # 使用正数数量
-                    time_in_force=TimeInForceType.Day,
-                    remark=f"Risk management: {reason}"
-                )
-                
-                self.logger.info(f"平仓订单已提交: {symbol}, 订单ID: {order_resp.order_id}")
-                
-                # 等待并检查订单状态
-                max_retries = 5
-                for i in range(max_retries):
-                    await asyncio.sleep(1)
-                    order_status = self.trade_ctx.order_detail(order_resp.order_id)
-                    self.logger.info(f"平仓订单状态 ({i+1}/{max_retries}): {order_status.status}")
-                    
-                    if order_status.status in ["filled", "partially_filled"]:
-                        self.logger.info(f"平仓订单执行成功: {symbol}")
-                        break
-                    elif order_status.status in ["rejected", "failed"]:
-                        self.logger.error(f"平仓订单被拒绝: {symbol}, 原因: {order_status.reject_reason}")
-                        break
-                    
-            except Exception as e:
-                self.logger.error(f"提交平仓订单失败: {str(e)}")
-                raise
-            
-        except Exception as e:
-            self.logger.error(f"执行平仓操作失败 {symbol}: {str(e)}")
-            self.logger.error("详细错误信息:", exc_info=True)
-
-    async def get_price_trend(self, symbol: str) -> str:
-        """获取价格趋势"""
-        try:
-            # 获取K线数据
-            klines = await self.quote_ctx.get_candlesticks(
-                symbol=symbol,
-                period="1d",  # 日K
-                count=10      # 最近10天
-            )
-            
-            if not klines:
-                return "normal"
-            
-            # 计算趋势
-            prices = [k.close for k in klines]
-            change = (prices[-1] - prices[0]) / prices[0] * 100
-            
-            if change >= 20:
-                return "super_strong"
-            elif change >= 10:
-                return "strong"
-            elif change <= -20:
-                return "super_weak"
-            elif change <= -10:
-                return "weak"
-            else:
-                return "normal"
-            
-        except Exception as e:
-            self.logger.error(f"获取价格趋势时出错: {str(e)}")
-            return "normal"
-
-    async def get_time_trend(self, symbol: str) -> str:
-        """获取分时趋势"""
-        try:
-            # 获取分时数据
-            quotes = await self.quote_ctx.get_quote(symbol)
-            if not quotes:
-                return "neutral"
-            
-            quote = quotes[0]
-            change = (quote.last_done - quote.open) / quote.open * 100
-            
-            if change >= 5:
-                return "strong_up"
-            elif change >= 2:
-                return "up"
-            elif change <= -5:
-                return "strong_down"
-            elif change <= -2:
-                return "down"
-            else:
-                return "neutral"
-            
-        except Exception as e:
-            self.logger.error(f"获取分时趋势时出错: {str(e)}")
-            return "neutral"
-
-    async def start_risk_monitoring(self):
-        """启动风险监控"""
-        self.logger.info("风险监控任务启动...")
-        
-        while True:
-            try:
-                # 检查市场状态
-                ny_time = datetime.now(self.tz)
-                if not self.is_market_open(ny_time):
-                    self.logger.info("市场休市中，暂停风险监控")
-                    await asyncio.sleep(60)  # 休市时降低检查频率
-                    continue
-                    
-                # 检查交易上下文
-                if not self.trade_ctx or not self.quote_ctx:
-                    self.logger.error("交易或行情上下文未初始化，重试中...")
-                    await asyncio.sleep(5)
-                    continue
-                    
-                # 执行风险检查
-                await self.check_position_risks()
-                
-            except Exception as e:
-                self.logger.error(f"风险监控出错: {str(e)}")
-                self.logger.exception("详细错误信息:")
-            finally:
-                await asyncio.sleep(5)  # 每5秒检查一次
-
-    async def __aenter__(self):
-        """异步上下文管理器入口"""
-        try:
-            # 初始化交易和行情上下文
-            self._trade_ctx = TradeContext(self.longport_config)
-            self._quote_ctx = QuoteContext(self.longport_config)
-            
-            # 验证交易上下文
-            await self.init_contexts()
-            
-            # 启动风险监控任务并保存引用
-            self.risk_monitor_task = asyncio.create_task(self.start_risk_monitoring())
-            self.logger.info("风险监控任务已启动")
-            
-            return self
-            
-        except Exception as e:
-            self.logger.error(f"初始化失败: {str(e)}")
-            self.logger.exception("详细错误信息:")
-            raise
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """异步上下文管理器退出"""
-        try:
-            # 取消风险监控任务
-            if hasattr(self, 'risk_monitor_task'):
-                self.risk_monitor_task.cancel()
-                try:
-                    await self.risk_monitor_task
-                except asyncio.CancelledError:
-                    pass
-            
-            # 关闭上下文
-            await self.close_contexts()
-            
-        except Exception as e:
-            self.logger.error(f"退出时出错: {str(e)}")
-            self.logger.exception("详细错误信息:")
-
-    async def check_stop_conditions(self, positions_data: Dict[str, List[dict]]) -> None:
-        """检查并显示止盈止损状态"""
-        try:
-            if not positions_data or not positions_data.get("active"):
-                return
-            
-            # 获取风险限制参数
-            risk_limits = self.risk_limits['option']
-            initial_stop = risk_limits['stop_loss']['initial']
-            trailing_stop = risk_limits['stop_loss']['trailing']
-            take_profit = risk_limits['take_profit']
-            
-            # 构建表格格式
-            fmt = "{:<25} {:>8} {:>15} {:>15} {:>15} {:>15}"
-            
-            # 打印表头
-            header = fmt.format(
-                "Symbol",
-                "Status",
-                "Current P/L",
-                "Stop Loss",
-                "Trail Stop",
-                "Take Profit"
-            )
-            separator = "-" * len(header)
-            
-            self.logger.info("\n止盈止损状态:")
-            self.logger.info(separator)
-            self.logger.info(header)
-            self.logger.info(separator)
-            
-            for pos in positions_data["active"]:
-                try:
-                    # 获取当前价格和成本
-                    current_price = float(pos["current_price"])
-                    cost_price = float(pos["cost_price"])
-                    pnl_pct = ((current_price - cost_price) / cost_price * 100) if cost_price else 0
-                    
-                    # 计算各个价位
-                    stop_loss_price = cost_price * (1 - initial_stop/100)
-                    trailing_stop_price = current_price * (1 - trailing_stop/100)
-                    take_profit_price = cost_price * (1 + take_profit/100)
-                    
-                    # 确定状态
-                    status = "HOLDING"
-                    if current_price <= stop_loss_price:
-                        status = "STOP"
-                    elif current_price >= take_profit_price:
-                        status = "PROFIT"
-                    elif pnl_pct > trailing_stop and current_price <= trailing_stop_price:
-                        status = "TRAIL"
-                    
-                    # 构建行数据
-                    line = fmt.format(
-                        pos["symbol"],
-                        status,
-                        f"{pnl_pct:+.2f}%",
-                        f"${stop_loss_price:.2f}",
-                        f"${trailing_stop_price:.2f}",
-                        f"${take_profit_price:.2f}"
-                    )
-                    self.logger.info(line)
-                    
-                except Exception as e:
-                    self.logger.error(f"处理止盈止损状态时出错: {str(e)}")
-            
-            self.logger.info(separator)
-            self.logger.info("")  # 添加空行
-            
-        except Exception as e:
-            self.logger.error(f"检查止盈止损状态时出错: {str(e)}")
+    def _is_option(self, symbol: str) -> bool:
+        """检查是否为期权"""
+        return any(x in symbol for x in ['C', 'P'])
 
     async def _execute_stop_loss(self, position: dict):
         """执行止损"""
@@ -1541,42 +174,68 @@ class DoomsdayPositionManager:
             symbol = position["symbol"]
             volume = abs(position["volume"])
             
-            # 再次确认止损条件
-            current_price = float(position["current_price"])
-            cost_price = float(position["cost_price"])
-            pnl_pct = ((current_price - cost_price) / cost_price * 100)
-            stop_loss_price = cost_price * (1 - self.risk_limits['option']['stop_loss']['initial']/100)
+            self.logger.warning(
+                f"执行止损:\n"
+                f"  标的: {symbol}\n"
+                f"  数量: {volume}\n"
+                f"  成本价: ${position['cost_price']:.2f}\n"
+                f"  现价: ${position['current_price']:.2f}\n"
+                f"  止损类型: 固定止损"
+            )
             
-            if current_price <= stop_loss_price:
-                self.logger.warning(
-                    f"确认执行止损:\n"
-                    f"  标的: {symbol}\n"
-                    f"  数量: {volume}\n"
-                    f"  成本价: ${cost_price:.2f}\n"
-                    f"  现价: ${current_price:.2f}\n"
-                    f"  止损价: ${stop_loss_price:.2f}\n"
-                    f"  亏损比例: {pnl_pct:.2f}%"
-                )
-                
-                # 执行平仓
-                order = await self.trade_ctx.submit_order(
-                    symbol=symbol,
-                    order_type=OrderType.MARKET,
-                    side=OrderSide.SELL if position["volume"] > 0 else OrderSide.BUY,
-                    quantity=volume,
-                    time_in_force=TimeInForceType.DAY
-                )
-                
-                self.logger.info(f"止损订单已提交 - 订单号: {order.order_id}")
-                
-                # 等待订单状态更新
-                await asyncio.sleep(1)
-                order_status = await self.trade_ctx.get_order(order.order_id)
-                self.logger.info(f"订单状态: {order_status.status}")
-                
-            else:
-                self.logger.warning(f"止损条件已不满足，取消执行")
-                
+            # 执行市价单平仓
+            order = await self.trade_ctx.submit_order(
+                symbol=symbol,
+                order_type=OrderType.MO,  # 使用市价单
+                side=OrderSide.SELL if position["volume"] > 0 else OrderSide.BUY,
+                quantity=volume,
+                time_in_force=TimeInForceType.DAY,
+                remark="Fixed Stop Loss"
+            )
+            
+            self.logger.info(f"止损订单已提交 - 订单号: {order.order_id}")
+            
+            # 等待订单状态更新
+            await asyncio.sleep(1)
+            order_status = await self.trade_ctx.get_order(order.order_id)
+            self.logger.info(f"止损订单状态: {order_status.status}")
+            
         except Exception as e:
             self.logger.error(f"执行止损时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
+
+    async def _execute_take_profit(self, position: dict):
+        """执行止盈"""
+        try:
+            symbol = position["symbol"]
+            volume = abs(position["volume"])
+            
+            self.logger.warning(
+                f"执行止盈:\n"
+                f"  标的: {symbol}\n"
+                f"  数量: {volume}\n"
+                f"  成本价: ${position['cost_price']:.2f}\n"
+                f"  现价: ${position['current_price']:.2f}\n"
+                f"  止盈类型: 固定止盈"
+            )
+            
+            # 执行市价单平仓
+            order = await self.trade_ctx.submit_order(
+                symbol=symbol,
+                order_type=OrderType.MO,  # 使用市价单
+                side=OrderSide.SELL if position["volume"] > 0 else OrderSide.BUY,
+                quantity=volume,
+                time_in_force=TimeInForceType.DAY,
+                remark="Fixed Take Profit"
+            )
+            
+            self.logger.info(f"止盈订单已提交 - 订单号: {order.order_id}")
+            
+            # 等待订单状态更新
+            await asyncio.sleep(1)
+            order_status = await self.trade_ctx.get_order(order.order_id)
+            self.logger.info(f"止盈订单状态: {order_status.status}")
+            
+        except Exception as e:
+            self.logger.error(f"执行止盈时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
