@@ -115,7 +115,7 @@ class DoomsdayPositionManager:
                 raise RuntimeError("交易上下文未初始化")
                 
             # 使用正确的API调用获取持仓
-            positions = await self.trade_ctx.account_balance()
+            balance = await self.trade_ctx.account_balance()
             stock_positions = await self.trade_ctx.stock_positions()
             option_positions = await self.trade_ctx.option_positions()
             
@@ -146,11 +146,12 @@ class DoomsdayPositionManager:
                 
             return {
                 "active": all_positions,
-                "balance": positions
+                "balance": balance[0] if balance else None  # 获取第一个账户的余额信息
             }
             
         except Exception as e:
             self.logger.error(f"获取持仓信息时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
             return {"active": [], "balance": None}
 
     async def check_market_close(self, position: Dict[str, Any]) -> bool:
