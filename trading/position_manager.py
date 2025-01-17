@@ -383,31 +383,87 @@ class DoomsdayPositionManager:
             
             # 打印基本信息
             self.logger.info("\n=== 交易状态报告 ===")
-            self.logger.info(f"当前时间: {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            self.logger.info(f"当前时间: {current_time.strftime('%Y-%m-%d %H:%M:%S EST')}")
             self.logger.info(f"交易模式: {'测试模式' if self.test_mode else '实盘模式'}")
             
             # 打印持仓信息
             if positions["active"]:
-                position_data = []
-                for pos in positions["active"]:
-                    position_data.append({
-                        "标的": pos["symbol"],
-                        "数量": pos["volume"],
-                        "成本价": f"${pos['cost_price']:.2f}",
-                        "现价": f"${pos['current_price']:.2f}",
-                        "市值": f"${pos['market_value']:.2f}",
-                        "盈亏": f"${pos['total_pnl']:+.2f}",
-                        "盈亏率": f"{pos['total_pnl_pct']:+.2f}%"
-                    })
+                # 计算最大字段长度以实现表格自适应
+                max_symbol_len = max(len(pos["symbol"]) for pos in positions["active"])
+                symbol_width = max(25, max_symbol_len + 2)  # 至少25个字符宽
                 
-                table = tabulate(
-                    position_data,
-                    headers="keys",
-                    tablefmt="grid",
-                    numalign="right"
+                # 构建表格格式
+                fmt = (
+                    f"{{:<{symbol_width}}} {{:>8}} {{:>12}} {{:>30}} {{:>25}}"
                 )
-                self.logger.info("\n当前持仓:")
-                self.logger.info(f"\n{table}")
+                
+                # 表头
+                header = fmt.format(
+                    "Symbol",          # 1. 期权代码
+                    "Volume",         # 2. 数量
+                    "市值",           # 3. 市值
+                    "last",          # 4. 价格变动
+                    "当日盈亏/盈亏率"   # 5. 盈亏信息
+                )
+                
+                # 分隔线
+                separator = "-" * len(header)
+                
+                # 打印表头和分隔线
+                self.logger.info("\n当前持仓状态:")
+                self.logger.info(separator)
+                self.logger.info(header)
+                self.logger.info(separator)
+                
+                # 按代码排序显示所有持仓
+                total_value = 0
+                for pos in sorted(positions["active"], key=lambda x: x["symbol"]):
+                    try:
+                        # 获取行情数据
+                        quotes = self.quote_ctx.quote([pos["symbol"]])
+                        if quotes and len(quotes) > 0:
+                            quote = quotes[0]
+                            current_price = float(quote.last_done)
+                            prev_close = float(quote.prev_close)
+                            cost_price = float(pos["cost_price"])
+                            
+                            # 计算涨跌幅
+                            price_change_pct = ((current_price - cost_price) / cost_price * 100) if cost_price else 0
+                            day_change_pct = ((current_price - prev_close) / prev_close * 100) if prev_close else 0
+                            
+                            # 计算当日盈亏
+                            day_pnl = (current_price - prev_close) * pos["volume"]
+                            
+                            # 构建价格变动字符串
+                            last_str = f"{cost_price:.2f} -> {current_price:.2f} ({price_change_pct:+.2f}%)"
+                            
+                            # 构建行数据
+                            line = fmt.format(
+                                pos["symbol"],
+                                f"{abs(pos['volume']):d}",
+                                f"${pos['market_value']:.2f}",
+                                last_str,
+                                f"${day_pnl:+.2f}/{day_change_pct:+.2f}%"
+                            )
+                            self.logger.info(line)
+                            total_value += pos['market_value']
+                    
+                    except Exception as e:
+                        self.logger.error(f"处理持仓显示时出错: {str(e)}")
+                
+                # 显示总计
+                self.logger.info(separator)
+                summary = fmt.format(
+                    "总计",
+                    f"{len(positions['active'])}",
+                    f"${total_value:.2f}",
+                    "",
+                    ""
+                )
+                self.logger.info(summary)
+                self.logger.info(separator)
+                self.logger.info("")  # 添加空行
+                
             else:
                 self.logger.info("\n当前无持仓")
             
@@ -417,7 +473,7 @@ class DoomsdayPositionManager:
                 {
                     "类型": "期权",
                     "止损线": f"{self.risk_limits['option']['stop_loss']}%",
-                    "止盈线": "不设置" if self.risk_limits['option']['take_profit'] is None else f"{self.risk_limits['option']['take_profit']}%"
+                    "止盈线": "不设置"
                 },
                 {
                     "类型": "股票",
