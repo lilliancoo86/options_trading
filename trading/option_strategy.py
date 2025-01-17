@@ -95,13 +95,39 @@ class DoomsdayOptionStrategy:
             SubType.Greeks,      # 希腊字母
         ]
         
-        # 添加PortAI配置
-        self.portai_config = {
-            'api_key': config.get('portai', {}).get('api_key', ''),  # 从开发者中心获取: https://open.longportapp.com/
-            'base_url': config.get('portai', {}).get('base_url', 'https://portai.longport.com'),
-            'sentiment_threshold': 0.6,
-            'cache_duration': 300,  # 缓存时间5分钟
+        # 初始化Longport配置
+        self.longport_config = {
+            'app_key': config['longport']['app_key'],            # OpenAPI密钥
+            'app_secret': config['longport']['app_secret'],      # OpenAPI密钥
+            'access_token': config['longport']['access_token'],  # OpenAPI访问令牌
         }
+        
+        # 使用关键词分析替代PortAI
+        self.sentiment_config = {
+            'cache_duration': 300,  # 缓存时间5分钟
+            'keywords': {
+                'positive': [
+                    'surge', 'jump', 'beat', 'upgrade', 'positive', 
+                    'bullish', 'outperform', 'buy', 'strong',
+                    'growth', 'innovation', 'partnership', 'launch',
+                    'exceed', 'record', 'success', 'expand'
+                ],
+                'negative': [
+                    'drop', 'fall', 'miss', 'downgrade', 'negative',
+                    'bearish', 'underperform', 'sell', 'weak',
+                    'decline', 'risk', 'concern', 'investigation',
+                    'lawsuit', 'delay', 'suspend', 'warning'
+                ]
+            },
+            'title_weight': 2.0,      # 标题权重
+            'content_weight': 1.0,    # 内容权重
+            'time_decay': 0.8,        # 时间衰减因子
+            'threshold': 0.6          # 情绪判断阈值
+        }
+        
+        # 如果没有配置PortAI，使用备选方案
+        if not self.portai_config['api_key']:
+            self.logger.warning("未配置PortAI API密钥，将使用关键词匹配进行情绪分析")
         
         # 添加缓存
         self.cache = {
@@ -1124,3 +1150,58 @@ class DoomsdayOptionStrategy:
         # 按综合得分排序
         opportunities.sort(key=lambda x: x['trend_score'] + x['market_score'], reverse=True)
         return opportunities
+
+    async def _analyze_news_sentiment(self, news: List[Dict]) -> str:
+        """使用关键词分析新闻情绪"""
+        try:
+            pos_score = 0
+            neg_score = 0
+            total_weight = 0
+            
+            for item in news:
+                # 计算时间权重
+                if 'time' in item:
+                    news_time = datetime.fromisoformat(item['time'].replace('Z', '+00:00'))
+                    hours_ago = (datetime.now(timezone.utc) - news_time).total_seconds() / 3600
+                    time_weight = max(0.2, self.sentiment_config['time_decay'] ** (hours_ago / 24))
+                else:
+                    time_weight = 1.0
+                
+                # 分析标题
+                title = item['title'].lower()
+                for word in self.sentiment_config['keywords']['positive']:
+                    if word in title:
+                        pos_score += self.sentiment_config['title_weight'] * time_weight
+                for word in self.sentiment_config['keywords']['negative']:
+                    if word in title:
+                        neg_score += self.sentiment_config['title_weight'] * time_weight
+                
+                # 分析内容
+                content = item['content'].lower()
+                for word in self.sentiment_config['keywords']['positive']:
+                    if word in content:
+                        pos_score += self.sentiment_config['content_weight'] * time_weight
+                for word in self.sentiment_config['keywords']['negative']:
+                    if word in content:
+                        neg_score += self.sentiment_config['content_weight'] * time_weight
+                
+                total_weight += (self.sentiment_config['title_weight'] + 
+                               self.sentiment_config['content_weight']) * time_weight
+            
+            if total_weight == 0:
+                return 'neutral'
+            
+            # 计算归一化得分
+            sentiment_score = (pos_score - neg_score) / total_weight
+            
+            # 判断情绪
+            if sentiment_score > self.sentiment_config['threshold']:
+                return 'positive'
+            elif sentiment_score < -self.sentiment_config['threshold']:
+                return 'negative'
+            else:
+                return 'neutral'
+            
+        except Exception as e:
+            self.logger.error(f"分析新闻情绪失败: {str(e)}")
+            return 'neutral'
