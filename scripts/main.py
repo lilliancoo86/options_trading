@@ -209,10 +209,11 @@ async def main():
         setup_logging()
         logger = logging.getLogger(__name__)
         
-        # 初始化风险检查器
-        risk_checker = RiskChecker()
+        # 解析命令行参数
+        args = parse_args()
         
-        async with DoomsdayPositionManager(risk_checker) as position_manager:
+        # 初始化持仓管理器
+        async with DoomsdayPositionManager(config=TRADING_CONFIG, test_mode=args.test) as position_manager:
             while True:
                 try:
                     # 打印交易状态
