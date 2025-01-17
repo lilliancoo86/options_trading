@@ -3,8 +3,8 @@
 ```bash
 ## 相关文档
 
-- 长桥证券开发文档：(https://open.longportapp.com/docs)
-- SDK文档：(https://github.com/longportapp/openapi-sdk/tree/main-v2)
+- 长桥证券开发文档：https://open.longportapp.com/docs
+- SDK文档：https://github.com/longportapp/openapi-sdk/tree/release-v2
 
 ## 系统架构
 ```bash
