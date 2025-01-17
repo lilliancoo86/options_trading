@@ -146,13 +146,15 @@ class DoomsdayPositionManager:
                 'take_profit': 50.0,  # 基础止盈比例（会根据趋势动态调整）
             }
             
-            # 趋势判断参数（可以根据需要调整）
+            # 趋势判断参数
             self.trend_config = {
                 'fast_length': 1,      # 快线周期
                 'slow_length': 5,      # 慢线周期
                 'curve_length': 10,    # 曲线周期
                 'trend_period': 5,     # 趋势判断周期
-                'vwap_dev': 2.0       # VWAP通道宽度
+                'vwap_dev': 2.0,      # VWAP通道宽度
+                'price': 'neutral',    # 价格趋势
+                'time': 'neutral'      # 时间趋势
             }
         
         # 缓存历史数据
@@ -1346,12 +1348,15 @@ class DoomsdayPositionManager:
                 return
             
             try:
+                # 确保提交正数数量
+                submitted_quantity = abs(volume)
+                
                 # 提交市价单平仓
                 order_resp = self.trade_ctx.submit_order(
                     symbol=symbol,
                     order_type=OrderType.MO,  # 使用 MO 代替 Market
-                    side=OrderSide.Sell,
-                    submitted_quantity=volume,
+                    side=OrderSide.Buy if volume < 0 else OrderSide.Sell,  # 根据持仓方向确定平仓方向
+                    submitted_quantity=submitted_quantity,  # 使用正数数量
                     time_in_force=TimeInForceType.Day,
                     remark=f"Risk management: {reason}"
                 )
