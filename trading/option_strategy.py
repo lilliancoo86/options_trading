@@ -36,59 +36,50 @@ class DoomsdayOptionStrategy:
         
         # 交易参数
         self.params = {
-            'min_iv_percentile': 30,    # 最小IV百分位
-            'max_iv_percentile': 85,    # 最大IV百分位
-            'min_volume': 100,          # 最小成交量
-            'min_open_interest': 50,    # 最小持仓量
-            'max_spread_pct': 15,       # 最大买卖价差百分比
-            'max_position_size': 5,     # 每个标的最大持仓数量
-            'max_loss_pct': 25,         # 最大止损比例
-            'profit_target_pct': 50,    # 目标止盈比例
-            'time_stop': '15:45',       # 最晚平仓时间
-            'min_delta': 0.3,           # 最小Delta值
-            'max_delta': 0.7,           # 最大Delta值
-            'min_theta': -0.1,          # 最小Theta值
-            'max_days_to_expiry': 14,   # 最大到期天数
-            'min_days_to_expiry': 3,    # 最小到期天数
-            'trend_confirm_periods': 3,  # 趋势确认周期数
-            'entry_rsi_threshold': 55,   # RSI入场阈值
-            'momentum_threshold': 0.02,  # 动量阈值(2%)
-            'premarket_threshold': 2.0,    # 盘前涨跌幅阈值(%)
-            'news_impact_hours': 24,       # 新闻影响时间(小时)
-            'news_score_threshold': 0.6,   # 新闻情绪分数阈值
-            'volume_surge_ratio': 2.0,     # 成交量放大倍数阈值
-            'gap_threshold': 1.5,          # 跳空缺口阈值(%)
-            'premarket_weight': 2.0,     # 盘前因素权重
-            'news_weight': 1.5,          # 新闻因素权重
-            'volume_weight': 1.0,        # 成交量因素权重
-            'trend_weight': 2.0,         # 趋势因素权重
-            'min_total_score': 8.0,      # 最小开仓总分
-            'max_positions_per_symbol': 2,# 每个标的最大持仓数
-            'position_sizing_atr': 2.0,  # 基于ATR的仓位大小
+            'min_days_to_expiry': 3,     # 最小到期天数
+            'max_days_to_expiry': 14,    # 最大到期天数
+            'min_delta': 0.3,            # 最小Delta
+            'max_delta': 0.7,            # 最大Delta
+            'min_theta': -0.1,           # 最小Theta
+            'min_volume': 100,           # 最小成交量
+            'min_open_interest': 500,    # 最小持仓量
+            'max_spread_pct': 10,        # 最大价差百分比
+            'momentum_threshold': 0.02,   # 动量阈值
+            'entry_rsi_threshold': 60,    # 入场RSI阈值
+            'gap_threshold': 2.0,        # 跳空阈值
+            'premarket_weight': 1.5,     # 盘前权重
+            'news_weight': 1.0,          # 新闻权重
+            'volume_weight': 1.0,        # 成交量权重
+            'max_position_size': 10,     # 最大持仓数量
+            'time_stop': '15:45'         # 强制平仓时间
         }
         
         # 趋势判断参数
         self.trend_params = {
-            'rsi_period': 14,           # RSI周期
-            'rsi_overbought': 70,       # RSI超买
-            'rsi_oversold': 30,         # RSI超卖
-            'ma_fast': 5,               # 快速均线
-            'ma_slow': 20,              # 慢速均线
-            'volume_ma': 20,            # 成交量均线
-            'vwap_dev_up': 1.5,         # VWAP上轨偏差
-            'vwap_dev_down': 1.5,       # VWAP下轨偏差
-            'vwap_period': 30,          # VWAP计算周期(分钟)
-            'ema_fast': 5,              # 5分钟EMA
-            'ema_mid': 13,              # 13分钟EMA
-            'ema_slow': 21,             # 21分钟EMA
-            'momentum_period': 10,       # 动量周期
-            'macd_fast': 12,            # MACD快线
-            'macd_slow': 26,            # MACD慢线
-            'macd_signal': 9,           # MACD信号线
+            'ma_fast': 5,          # 快速均线周期
+            'ma_slow': 20,         # 慢速均线周期
+            'volume_ma': 10,       # 成交量均线周期
+            'rsi_period': 14,      # RSI周期
+            'rsi_overbought': 70,  # RSI超买线
+            'rsi_oversold': 30,    # RSI超卖线
+            'ema_fast': 5,         # EMA快线
+            'ema_mid': 13,         # EMA中线
+            'ema_slow': 21,        # EMA慢线
+            'vwap_period': 20,     # VWAP周期
+            'vwap_dev_up': 2,      # VWAP上轨标准差倍数
+            'vwap_dev_down': 2,    # VWAP下轨标准差倍数
+            'momentum_period': 10   # 动量计算周期
         }
         
         # 缓存数据
-        self.price_cache = {}           # 价格缓存
+        self.price_cache = {
+            symbol: {
+                'close': [],
+                'volume': [],
+                'high': [],
+                'low': []
+            } for symbol in self.symbols
+        }
         self.iv_cache = {}              # 隐波缓存
         self.signals = {}               # 交易信号缓存
         
