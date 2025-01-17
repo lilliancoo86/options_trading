@@ -562,3 +562,138 @@ class DoomsdayOptionStrategy:
                 'lower_band': closes[-1] * 0.98,
                 'std_dev': 0
             }
+    
+    async def _check_positions(self):
+        """检查持仓风险"""
+        try:
+            # 首先检查是否在交易时段
+            if not self._is_trading_time():
+                # 盘前盘后只更新数据，不执行交易
+                for symbol in self.positions:
+                    await self._update_position_data(symbol)
+                return
+            
+            for symbol, position in list(self.positions.items()):
+                # 更新持仓数据
+                current_data = await self._update_position_data(symbol)
+                if not current_data:
+                    continue
+                
+                # 检查是否需要强制平仓（临近收盘）
+                if self._should_force_close():
+                    await self._close_position(position, "临近收盘强制平仓")
+                    continue
+                
+                # 检查止损条件
+                if await self._check_stop_loss(position):
+                    await self._close_position(position, "触发止损")
+                    continue
+                
+                # 检查止盈条件
+                if await self._check_take_profit(position):
+                    await self._close_position(position, "触发止盈")
+                    continue
+                
+        except Exception as e:
+            self.logger.error(f"检查持仓风险失败: {str(e)}")
+    
+    def _should_force_close(self) -> bool:
+        """检查是否需要强制平仓"""
+        try:
+            now = datetime.now(self.tz)
+            current_time = now.strftime('%H:%M')
+            
+            # 检查是否接近收盘时间
+            if current_time >= self.params['time_stop']:
+                return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"检查强制平仓时间失败: {str(e)}")
+            return False
+    
+    async def _update_position_data(self, symbol: str) -> Optional[Dict]:
+        """更新持仓数据"""
+        try:
+            # 获取最新行情
+            quotes = await self.quote_ctx.quote([symbol])
+            if not quotes:
+                self.logger.error(f"获取{symbol}行情数据失败")
+                return None
+            
+            quote = quotes[0]
+            
+            # 更新价格历史
+            if symbol not in self.price_cache:
+                self.price_cache[symbol] = {
+                    'close': [],
+                    'volume': [],
+                    'high': [],
+                    'low': []
+                }
+            
+            # 只在交易时段更新价格历史
+            if self._is_trading_time():
+                self.price_cache[symbol]['close'].append(quote.last_done)
+                self.price_cache[symbol]['volume'].append(quote.volume)
+                self.price_cache[symbol]['high'].append(quote.high)
+                self.price_cache[symbol]['low'].append(quote.low)
+                
+                # 保持固定长度
+                max_length = max(
+                    self.trend_params['ma_slow'],
+                    self.trend_params['volume_ma'],
+                    self.trend_params['vwap_period']
+                )
+                for key in self.price_cache[symbol]:
+                    self.price_cache[symbol][key] = self.price_cache[symbol][key][-max_length:]
+            
+            return {
+                'current_price': quote.last_done,
+                'volume': quote.volume,
+                'bid': quote.bid[0],
+                'ask': quote.ask[0]
+            }
+            
+        except Exception as e:
+            self.logger.error(f"更新{symbol}持仓数据失败: {str(e)}")
+            return None
+    
+    async def _close_position(self, position: Dict, reason: str):
+        """平仓操作"""
+        try:
+            # 再次检查是否在交易时段
+            if not self._is_trading_time():
+                self.logger.warning(f"非交易时段，暂不执行平仓: {position['symbol']}")
+                return False
+            
+            # 检查是否有足够的流动性
+            quote = await self.quote_ctx.quote([position['symbol']])
+            if not quote or not quote[0].bid or not quote[0].ask:
+                self.logger.warning(f"流动性不足，暂不平仓: {position['symbol']}")
+                return False
+            
+            # 计算滑点
+            spread = (quote[0].ask[0] - quote[0].bid[0]) / quote[0].bid[0]
+            if spread > self.params['max_spread_pct'] / 100:
+                self.logger.warning(f"价差过大 ({spread:.2%})，暂不平仓: {position['symbol']}")
+                return False
+            
+            # 执行平仓
+            side = OrderSide.Sell if position['side'] == OrderSide.Buy else OrderSide.Buy
+            success = await self.execute_trade({
+                'symbol': position['symbol'],
+                'price': quote[0].last_done
+            }, side)
+            
+            if success:
+                self.logger.info(f"平仓成功: {position['symbol']}, 原因: {reason}")
+                del self.positions[position['symbol']]
+                return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"执行平仓失败: {str(e)}")
+            return False
