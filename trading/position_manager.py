@@ -114,9 +114,9 @@ class DoomsdayPositionManager:
             if not self.trade_ctx:
                 raise RuntimeError("交易上下文未初始化")
                 
-            # 获取持仓信息（同步方法）
-            stock_positions = self.trade_ctx.stock_positions()
-            option_positions = self.trade_ctx.option_positions()
+            # 获取持仓信息（异步方法）
+            stock_positions = await self.trade_ctx.stock_positions()
+            option_positions = await self.trade_ctx.option_positions()
             all_positions = []
             
             # 处理股票持仓
@@ -203,7 +203,7 @@ class DoomsdayPositionManager:
             
             # 获取账户余额信息
             try:
-                balance = self.trade_ctx.account_balance()
+                balance = await self.trade_ctx.account_balance()
                 balance_info = balance[0] if balance else None
             except Exception as e:
                 self.logger.warning(f"获取账户余额信息失败: {str(e)}")
