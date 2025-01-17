@@ -272,6 +272,62 @@ class DoomsdayOptionStrategy:
                 'risk': ['position_size', 'account_risk', 'market_risk']
             }
         }
+        
+        # 添加分时段止盈止损配置
+        self.time_based_exit = {
+            'periods': {
+                'open': {  # 开盘前30分钟(9:30-10:00)
+                    'start': '09:30',
+                    'end': '10:00',
+                    'take_profit': 0.3,    # 30%止盈
+                    'stop_loss': -0.15,    # 15%止损
+                    'trailing_stop': 0.1    # 10%追踪止损
+                },
+                'morning': {  # 上午时段(10:00-12:00)
+                    'start': '10:00',
+                    'end': '12:00',
+                    'take_profit': 0.5,     # 50%止盈
+                    'stop_loss': -0.2,      # 20%止损
+                    'trailing_stop': 0.15    # 15%追踪止损
+                },
+                'lunch': {  # 午间时段(12:00-13:00)
+                    'start': '12:00',
+                    'end': '13:00',
+                    'take_profit': 0.4,     # 40%止盈
+                    'stop_loss': -0.25,     # 25%止损
+                    'trailing_stop': 0.2     # 20%追踪止损
+                },
+                'afternoon': {  # 下午时段(13:00-15:30)
+                    'start': '13:00',
+                    'end': '15:30',
+                    'take_profit': 0.6,     # 60%止盈
+                    'stop_loss': -0.25,     # 25%止损
+                    'trailing_stop': 0.2     # 20%追踪止损
+                },
+                'close': {  # 收盘前30分钟(15:30-16:00)
+                    'start': '15:30',
+                    'end': '16:00',
+                    'take_profit': 0.2,     # 20%止盈
+                    'stop_loss': -0.1,      # 10%止损
+                    'trailing_stop': 0.05    # 5%追踪止损
+                }
+            },
+            'volatility_adjust': {
+                'high': 1.2,    # 高波动率时提高阈值
+                'low': 0.8      # 低波动率时降低阈值
+            },
+            'trend_adjust': {
+                'strong': 1.2,  # 强趋势时提高止盈
+                'weak': 0.8     # 弱趋势时降低止盈
+            }
+        }
+        
+        # 添加强制止损配置
+        self.force_stop_loss = {
+            'threshold': -0.10,  # 强制10%止损
+            'enable': True,      # 启用强制止损
+            'priority': 'high'   # 优先级高于其他止损条件
+        }
     
     async def init_data(self):
         """初始化历史数据"""
@@ -2156,3 +2212,185 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"分析评级失败: {str(e)}")
             return {'score': 0, 'ratings': []}
+
+    async def _check_exit_signals(self, position: Dict) -> Optional[str]:
+        """检查平仓信号"""
+        try:
+            # 获取当前价格和计算收益率
+            quote = await self.quote_ctx.quote([position['symbol']])
+            if not quote:
+                return None
+                
+            current_price = float(quote[0].last_done)
+            
+            # 计算收益率
+            if position['side'] == OrderSide.Buy:
+                return_rate = (current_price - position['entry_price']) / position['entry_price']
+            else:
+                return_rate = (position['entry_price'] - current_price) / position['entry_price']
+            
+            # 强制止损检查（优先级最高）
+            if self.force_stop_loss['enable'] and return_rate <= self.force_stop_loss['threshold']:
+                self.logger.warning(f"触发强制止损: {position['symbol']}, 收益率: {return_rate:.2%}")
+                return 'force_stop_loss'
+            
+            # 获取当前时段的止盈止损设置
+            period_settings = None
+            for period, settings in self.time_based_exit['periods'].items():
+                if settings['start'] <= datetime.now(self.tz).strftime('%H:%M') < settings['end']:
+                    period_settings = settings
+                    break
+            
+            if not period_settings:
+                return None
+                
+            # 获取市场状态调整因子
+            volatility_factor = await self._get_volatility_factor(position['symbol'])
+            trend_factor = await self._get_trend_factor(position['symbol'])
+            
+            # 调整止盈止损阈值（但不调整强制止损阈值）
+            take_profit = period_settings['take_profit'] * volatility_factor * trend_factor
+            stop_loss = max(period_settings['stop_loss'] * volatility_factor, 
+                           self.force_stop_loss['threshold'])  # 不允许止损设置低于强制止损
+            trailing_stop = period_settings['trailing_stop'] * volatility_factor
+            
+            # 更新最高收益率
+            if 'max_return' not in position:
+                position['max_return'] = return_rate
+            else:
+                position['max_return'] = max(position['max_return'], return_rate)
+            
+            # 检查止盈信号
+            if return_rate >= take_profit:
+                return 'take_profit'
+            
+            # 检查常规止损信号
+            if return_rate <= stop_loss:
+                return 'stop_loss'
+            
+            # 检查追踪止损
+            if position['max_return'] - return_rate >= trailing_stop:
+                return 'trailing_stop'
+            
+            # 检查收盘平仓
+            if datetime.now(self.tz).strftime('%H:%M') >= '15:45':  # 收盘前15分钟强制平仓
+                return 'market_close'
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"检查平仓信号失败: {str(e)}")
+            return None
+
+    async def _get_volatility_factor(self, symbol: str) -> float:
+        """获取波动率调整因子"""
+        try:
+            # 计算当前波动率
+            volatility = await self._calculate_volatility(symbol)
+            
+            if volatility > self.volatility_threshold['high']:
+                return self.time_based_exit['volatility_adjust']['high']
+            elif volatility < self.volatility_threshold['low']:
+                return self.time_based_exit['volatility_adjust']['low']
+            
+            return 1.0
+            
+        except Exception as e:
+            self.logger.error(f"获取波动率调整因子失败: {str(e)}")
+            return 1.0
+
+    async def _get_trend_factor(self, symbol: str) -> float:
+        """获取趋势调整因子"""
+        try:
+            # 获取趋势强度
+            trend = await self._analyze_stock_trend(symbol)
+            
+            if abs(trend['trend_score']) >= 8:
+                return self.time_based_exit['trend_adjust']['strong']
+            elif abs(trend['trend_score']) <= 4:
+                return self.time_based_exit['trend_adjust']['weak']
+            
+            return 1.0
+            
+        except Exception as e:
+            self.logger.error(f"获取趋势调整因子失败: {str(e)}")
+            return 1.0
+
+    async def _execute_exit(self, position: Dict, reason: str):
+        """执行平仓"""
+        try:
+            # 准备平仓日志
+            exit_log = {
+                'symbol': position['symbol'],
+                'entry_price': position['entry_price'],
+                'exit_price': None,
+                'hold_time': (datetime.now(self.tz) - position['entry_time']).total_seconds() / 60,
+                'return_rate': None,
+                'reason': reason,
+                'market_context': await self.analyze_market_context(position['symbol'])
+            }
+            
+            # 如果是强制止损，添加警告信息
+            if reason == 'force_stop_loss':
+                self.logger.warning(f"执行强制止损: {position['symbol']}")
+                exit_log['warning'] = "触发强制止损保护"
+            
+            # 执行平仓
+            close_side = OrderSide.Sell if position['side'] == OrderSide.Buy else OrderSide.Buy
+            success = await self.execute_trade(
+                {'symbol': position['symbol']},
+                close_side,
+                {'exit_reason': reason}
+            )
+            
+            if success:
+                # 更新平仓日志
+                quote = await self.quote_ctx.quote([position['symbol']])
+                if quote:
+                    exit_price = float(quote[0].last_done)
+                    exit_log['exit_price'] = exit_price
+                    exit_log['return_rate'] = (
+                        (exit_price - position['entry_price']) / position['entry_price']
+                        if position['side'] == OrderSide.Buy
+                        else (position['entry_price'] - exit_price) / position['entry_price']
+                    )
+                
+                # 记录平仓日志
+                self.logger.info(f"平仓成功: {self._format_exit_log(exit_log)}")
+                
+                # 如果是强制止损，可能需要暂停交易一段时间
+                if reason == 'force_stop_loss':
+                    await self._handle_force_stop_loss(position['symbol'])
+                
+                return True
+                
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"执行平仓失败: {str(e)}")
+            return False
+
+    async def _handle_force_stop_loss(self, symbol: str):
+        """处理强制止损后的操作"""
+        try:
+            self.logger.warning(f"{symbol} 触发强制止损，进行风险评估...")
+            
+            # 这里可以添加一些风险控制逻辑
+            # 例如：暂停该标的的交易、调整仓位大小、发送通知等
+            
+        except Exception as e:
+            self.logger.error(f"处理强制止损失败: {str(e)}")
+
+    def _format_exit_log(self, exit_log: Dict) -> str:
+        """格式化平仓日志"""
+        return (
+            f"\n{'='*30} 平仓记录 {'='*30}\n"
+            f"标的: {exit_log['symbol']}\n"
+            f"持仓时间: {exit_log['hold_time']:.1f}分钟\n"
+            f"入场价格: ${exit_log['entry_price']:.2f}\n"
+            f"出场价格: ${exit_log['exit_price']:.2f}\n"
+            f"收益率: {exit_log['return_rate']*100:.1f}%\n"
+            f"平仓原因: {exit_log['reason']}\n"
+            f"市场环境: {exit_log['market_context']['description']}\n"
+            f"{'='*70}"
+        )
