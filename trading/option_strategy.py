@@ -83,6 +83,19 @@ class DoomsdayOptionStrategy:
         
         # 持仓管理
         self.positions = {}             # 当前持仓
+        
+        # 添加趋势判断参数
+        self.trend_params = {
+            'fast_length': 1,      # 快线周期
+            'slow_length': 5,      # 慢线周期
+            'curve_length': 10,    # 曲线周期
+            'trend_period': 5,     # 趋势判断周期
+            'vwap_dev': 2.0       # VWAP通道宽度
+        }
+        
+        # 缓存历史数据
+        self.price_history = {}
+        self.vwap_history = {}
 
     async def check_market_close(self, position: Dict[str, Any]) -> bool:
         """检查是否需要收盘平仓"""
@@ -153,16 +166,28 @@ class DoomsdayOptionStrategy:
             if await self.check_market_close(position):
                 return True
             
-            # 获取当前价格和成本价
+            # 分析趋势
+            trend_analysis = await self.analyze_trend(position['symbol'])
+            
+            # 根据趋势信号处理
+            if trend_analysis['signal'] == 'close':
+                self.logger.warning(f"趋势信号触发平仓: {position['symbol']}")
+                await self._execute_market_close(position)
+                return True
+            elif trend_analysis['signal'] == 'reduce':
+                # 可以添加减仓逻辑
+                pass
+            elif trend_analysis['signal'] == 'add':
+                # 可以添加加仓逻辑
+                pass
+            
+            # 继续检查止损条件
             current_price = float(position.get('current_price', 0))
             cost_price = float(position.get('cost_price', 0))
-            
-            # 计算收益率
             if cost_price == 0:
                 return False
+                
             pnl_pct = (current_price - cost_price) / cost_price * 100
-            
-            # 区分期权和股票
             is_option = self._is_option(position['symbol'])
             limits = self.risk_limits['option'] if is_option else self.risk_limits['stock']
             
@@ -170,12 +195,6 @@ class DoomsdayOptionStrategy:
             if limits['stop_loss'] is not None and pnl_pct <= limits['stop_loss']:
                 self.logger.warning(f"触发固定止损: 当前亏损 {pnl_pct:.1f}% <= {limits['stop_loss']}%")
                 await self._execute_stop_loss(position)
-                return True
-            
-            # 检查止盈条件（仅股票）
-            if not is_option and limits['take_profit'] is not None and pnl_pct >= limits['take_profit']:
-                self.logger.warning(f"触发固定止盈: 当前收益 {pnl_pct:.1f}% >= {limits['take_profit']}%")
-                await self._execute_take_profit(position)
                 return True
             
             return False
@@ -259,3 +278,71 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"执行止盈时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
+
+    async def analyze_trend(self, symbol: str) -> Dict[str, Any]:
+        """分析趋势"""
+        try:
+            # 获取历史数据
+            prices = self.price_history.get(symbol, [])
+            if not prices:
+                return {'trend': 'neutral', 'signal': None}
+            
+            # 计算指标
+            fast_ma = self._calculate_sma(prices, self.trend_params['fast_length'])
+            slow_ma = self._calculate_sma(prices, self.trend_params['slow_length'])
+            curve = self._calculate_sma(
+                [f + s for f, s in zip(fast_ma, slow_ma)],
+                self.trend_params['curve_length']
+            )
+            
+            # 计算VWAP和通道
+            vwap = self.vwap_history.get(symbol, [])
+            if vwap:
+                std_dev = self._calculate_stdev(vwap, self.trend_params['trend_period'])
+                upper_band = vwap[-1] + std_dev * self.trend_params['vwap_dev']
+                lower_band = vwap[-1] - std_dev * self.trend_params['vwap_dev']
+                
+                current_price = prices[-1]
+                long_term_trend = self._calculate_sma(curve, self.trend_params['trend_period'])
+                
+                # 趋势判断
+                is_up_trend = (long_term_trend[-1] > long_term_trend[-2] and 
+                             current_price > vwap[-1])
+                is_strong_up = is_up_trend and current_price > upper_band
+                is_down_trend = (long_term_trend[-1] < long_term_trend[-2] and 
+                               current_price < vwap[-1])
+                is_strong_down = is_down_trend and current_price < lower_band
+                was_down_trend = long_term_trend[-2] < long_term_trend[-3]
+                
+                # 生成信号
+                if is_strong_up:
+                    return {'trend': 'strong_up', 'signal': 'reduce'}
+                elif is_up_trend and was_down_trend:
+                    return {'trend': 'up', 'signal': 'add'}
+                elif is_strong_down:
+                    return {'trend': 'strong_down', 'signal': 'close'}
+                elif is_down_trend and not was_down_trend:
+                    return {'trend': 'down', 'signal': 'reduce'}
+                else:
+                    return {'trend': 'up' if is_up_trend else 'down', 'signal': None}
+            
+            return {'trend': 'neutral', 'signal': None}
+            
+        except Exception as e:
+            self.logger.error(f"分析趋势时出错: {str(e)}")
+            return {'trend': 'neutral', 'signal': None}
+
+    def _calculate_sma(self, data: List[float], length: int) -> List[float]:
+        """计算简单移动平均"""
+        if len(data) < length:
+            return data
+        return [sum(data[i:i+length])/length for i in range(len(data)-length+1)]
+
+    def _calculate_stdev(self, data: List[float], length: int) -> float:
+        """计算标准差"""
+        if len(data) < length:
+            return 0
+        subset = data[-length:]
+        mean = sum(subset) / length
+        squared_diff = [(x - mean) ** 2 for x in subset]
+        return (sum(squared_diff) / length) ** 0.5
