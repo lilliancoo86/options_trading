@@ -13,6 +13,7 @@ import aiohttp
 from datetime import timezone
 import os
 import json
+from longport.openapi.config import Config
 
 class DoomsdayOptionStrategy:
     def __init__(self, config: Dict[str, Any]):
@@ -58,10 +59,10 @@ class DoomsdayOptionStrategy:
         
         # 添加订阅类型
         self.sub_types = [
-            SubType.QUOTE,              # 报价
-            SubType.TRADE,              # 成交
-            SubType.DEPTH,              # 深度
-            SubType.OPTION_GREEKS       # 期权希腊字母
+            SubType.Quote,              # 报价
+            SubType.Trade,              # 成交
+            SubType.Depth,              # 深度
+            SubType.Greeks,            # 期权希腊字母
         ]
         
         # 添加缓存
@@ -109,9 +110,16 @@ class DoomsdayOptionStrategy:
         # 持仓管理
         self.positions = {}             # 当前持仓
         
-        # 添加交易和行情上下文
-        self.quote_ctx = QuoteContext(config)
-        self.trade_ctx = TradeContext(config)
+        # 初始化Longport配置
+        self.longport_config = Config(
+            app_key=config['longport']['app_key'],
+            app_secret=config['longport']['app_secret'],
+            access_token=config['longport']['access_token']
+        )
+        
+        # 初始化交易和行情上下文
+        self.quote_ctx = QuoteContext(self.longport_config)
+        self.trade_ctx = TradeContext(self.longport_config)
         
         # 添加关键词自动更新配置
         self.keyword_update = {
@@ -2281,3 +2289,22 @@ class DoomsdayOptionStrategy:
             f"市场环境: {exit_log['market_context']['description']}\n"
             f"{'='*70}"
         )
+
+    async def init_contexts(self):
+        """初始化交易和行情上下文"""
+        try:
+            # 验证交易上下文
+            await self.trade_ctx.account_balance()
+            self.logger.info("交易上下文初始化成功")
+            
+            # 验证行情上下文
+            await self.quote_ctx.subscribe(
+                symbols=["AAPL.US"],  # 测试订阅
+                sub_types=self.sub_types,
+                is_first_push=False
+            )
+            self.logger.info("行情上下文初始化成功")
+            
+        except Exception as e:
+            self.logger.error(f"上下文初始化失败: {str(e)}")
+            raise
