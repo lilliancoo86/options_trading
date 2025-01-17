@@ -17,9 +17,19 @@ import json
 class DoomsdayOptionStrategy:
     def __init__(self, config: Dict[str, Any]):
         """初始化策略"""
+        # 设置时区
+        self.tz = pytz.timezone('America/New_York')  # 使用美东时间
+        
+        # 设置日志
         self.logger = logging.getLogger(__name__)
+        
+        # 添加波动率阈值配置
+        self.volatility_threshold = {
+            'high': 0.4,  # 高波动率阈值
+            'low': 0.2    # 低波动率阈值
+        }
+        
         self.config = config
-        self.tz = pytz.timezone('America/New_York')
         
         # 监控的标的
         self.symbols = ["TSLL.US", "NVDA.US", "AAPL.US"]
@@ -155,10 +165,6 @@ class DoomsdayOptionStrategy:
                 'normal': 0.5      # 普通信号阈值
             }
         }
-        
-        # 如果没有配置PortAI，使用备选方案
-        if not self.portai_config['api_key']:
-            self.logger.warning("未配置PortAI API密钥，将使用关键词匹配进行情绪分析")
         
         # 添加缓存
         self.cache = {
