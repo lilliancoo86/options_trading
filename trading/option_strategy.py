@@ -41,6 +41,9 @@ class DoomsdayOptionStrategy:
             'ma_fast': 5,               # 快速均线
             'ma_slow': 20,              # 慢速均线
             'volume_ma': 20,            # 成交量均线
+            'vwap_dev_up': 1.5,         # VWAP上轨偏差
+            'vwap_dev_down': 1.5,       # VWAP下轨偏差
+            'vwap_period': 30,          # VWAP计算周期(分钟)
         }
         
         # 缓存数据
@@ -165,6 +168,20 @@ class DoomsdayOptionStrategy:
             data = self.price_cache[symbol]
             closes = data['close']
             volumes = data['volume']
+            highs = data['high']
+            lows = data['low']
+            
+            # 计算VWAP
+            vwap_data = self._calculate_vwap(
+                highs[-self.trend_params['vwap_period']:],
+                lows[-self.trend_params['vwap_period']:],
+                closes[-self.trend_params['vwap_period']:],
+                volumes[-self.trend_params['vwap_period']:]
+            )
+            
+            vwap = vwap_data['vwap']
+            upper_band = vwap_data['upper_band']
+            lower_band = vwap_data['lower_band']
             
             # 计算RSI
             rsi = self._calculate_rsi(closes)
@@ -180,41 +197,92 @@ class DoomsdayOptionStrategy:
             trend = {
                 'price_trend': 'neutral',
                 'volume_trend': 'neutral',
+                'vwap_trend': 'neutral',
                 'signal': 'neutral',
                 'strength': 0
             }
             
-            # 价格趋势
-            if ma_fast > ma_slow:
+            current_price = closes[-1]
+            
+            # VWAP趋势判断
+            if current_price > upper_band:
+                trend['vwap_trend'] = 'strong_up'
+                trend['strength'] += 2
+            elif current_price > vwap:
+                trend['vwap_trend'] = 'up'
+                trend['strength'] += 1
+            elif current_price < lower_band:
+                trend['vwap_trend'] = 'strong_down'
+                trend['strength'] -= 2
+            elif current_price < vwap:
+                trend['vwap_trend'] = 'down'
+                trend['strength'] -= 1
+            
+            # 价格趋势判断
+            if ma_fast > ma_slow * 1.02:  # 快线在慢线上方2%以上
+                trend['price_trend'] = 'strong_up'
+                trend['strength'] += 2
+            elif ma_fast > ma_slow:
                 trend['price_trend'] = 'up'
                 trend['strength'] += 1
+            elif ma_fast < ma_slow * 0.98:  # 快线在慢线下方2%以上
+                trend['price_trend'] = 'strong_down'
+                trend['strength'] -= 2
             elif ma_fast < ma_slow:
                 trend['price_trend'] = 'down'
                 trend['strength'] -= 1
             
-            # RSI超买超卖
-            if rsi > self.trend_params['rsi_overbought']:
-                trend['strength'] += 1
-            elif rsi < self.trend_params['rsi_oversold']:
-                trend['strength'] -= 1
+            # RSI趋势判断
+            if rsi >= self.trend_params['rsi_overbought']:
+                if trend['strength'] > 0:  # 已经是上升趋势
+                    trend['strength'] += 1  # 加强上升信号
+                else:
+                    trend['strength'] -= 1  # 可能超买
+            elif rsi <= self.trend_params['rsi_oversold']:
+                if trend['strength'] < 0:  # 已经是下降趋势
+                    trend['strength'] -= 1  # 加强下降信号
+                else:
+                    trend['strength'] += 1  # 可能超卖
             
-            # 成交量趋势
-            if volumes[-1] > vol_ma:
-                trend['volume_trend'] = 'up'
-                trend['strength'] += 1
-            elif volumes[-1] < vol_ma:
-                trend['volume_trend'] = 'down'
-                trend['strength'] -= 1
+            # 成交量趋势判断
+            current_volume = volumes[-1]
+            if current_volume > vol_ma * 1.5:  # 成交量显著放大
+                if trend['strength'] > 0:
+                    trend['volume_trend'] = 'strong_up'
+                    trend['strength'] += 2
+                elif trend['strength'] < 0:
+                    trend['volume_trend'] = 'strong_down'
+                    trend['strength'] -= 2
+            elif current_volume > vol_ma:
+                if trend['strength'] > 0:
+                    trend['volume_trend'] = 'up'
+                    trend['strength'] += 1
+                elif trend['strength'] < 0:
+                    trend['volume_trend'] = 'down'
+                    trend['strength'] -= 1
             
-            # 综合信号
-            if trend['strength'] >= 2:
+            # 综合信号判断
+            if trend['strength'] >= 4:
                 trend['signal'] = 'strong_buy'
-            elif trend['strength'] == 1:
+            elif trend['strength'] >= 2:
                 trend['signal'] = 'buy'
-            elif trend['strength'] == -1:
-                trend['signal'] = 'sell'
-            elif trend['strength'] <= -2:
+            elif trend['strength'] <= -4:
                 trend['signal'] = 'strong_sell'
+            elif trend['strength'] <= -2:
+                trend['signal'] = 'sell'
+            
+            # 添加详细信息
+            trend['details'] = {
+                'current_price': current_price,
+                'vwap': vwap,
+                'upper_band': upper_band,
+                'lower_band': lower_band,
+                'rsi': rsi,
+                'ma_fast': ma_fast,
+                'ma_slow': ma_slow,
+                'volume': current_volume,
+                'volume_ma': vol_ma
+            }
             
             return trend
             
@@ -456,3 +524,41 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"检查交易时段失败: {str(e)}")
             return False
+    
+    def _calculate_vwap(self, highs: List[float], lows: List[float], 
+                       closes: List[float], volumes: List[float]) -> Dict:
+        """计算VWAP和波动带"""
+        try:
+            # 计算典型价格
+            typical_prices = [(h + l + c) / 3 for h, l, c in zip(highs, lows, closes)]
+            
+            # 计算累计值
+            cum_tp_vol = sum(tp * vol for tp, vol in zip(typical_prices, volumes))
+            cum_vol = sum(volumes)
+            
+            # 计算VWAP
+            vwap = cum_tp_vol / cum_vol if cum_vol > 0 else typical_prices[-1]
+            
+            # 计算标准差
+            variance = sum((tp - vwap) ** 2 * vol for tp, vol in zip(typical_prices, volumes)) / cum_vol
+            std_dev = np.sqrt(variance)
+            
+            # 计算波动带
+            upper_band = vwap + (std_dev * self.trend_params['vwap_dev_up'])
+            lower_band = vwap - (std_dev * self.trend_params['vwap_dev_down'])
+            
+            return {
+                'vwap': vwap,
+                'upper_band': upper_band,
+                'lower_band': lower_band,
+                'std_dev': std_dev
+            }
+            
+        except Exception as e:
+            self.logger.error(f"计算VWAP失败: {str(e)}")
+            return {
+                'vwap': closes[-1],
+                'upper_band': closes[-1] * 1.02,
+                'lower_band': closes[-1] * 0.98,
+                'std_dev': 0
+            }
