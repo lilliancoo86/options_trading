@@ -76,8 +76,9 @@ class TimeChecker:
     def is_trading_time(self) -> bool:
         """检查是否在交易时间内"""
         try:
-            # 测试模式下忽略时间限制
+            # 测试模式下直接返回 True
             if self.test_mode:
+                self.logger.info("测试模式: 忽略交易时间限制")
                 return True
                 
             current = datetime.now(self.tz)

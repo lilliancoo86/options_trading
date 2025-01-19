@@ -261,9 +261,15 @@ async def main():
 
             'logging': LOGGING_CONFIG,
 
-            'test_mode': args.test  # 添加测试模式标志
+            'test_mode': args.test  # 确保这里设置了测试模式
 
         }
+
+        
+
+        if args.test:
+
+            logger.info("=== 运行在测试模式 ===")
 
         
 
@@ -275,13 +281,7 @@ async def main():
 
         risk_checker = RiskChecker(config)
 
-        time_checker = TimeChecker(config, args.test)  # 传入测试模式标志
-
-        
-
-        if args.test:
-
-            logger.info("=== 运行在测试模式 ===")
+        time_checker = TimeChecker(config, args.test)  # 确保这里传入了测试模式
 
         
 

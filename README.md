@@ -6,13 +6,6 @@
 - 长桥开发文档：https://open.longportapp.com/docs
 - SDK文档：https://github.com/longportapp/openapi-sdk/tree/release-v2
 
-
-
-TimeChecker - 负责时间相关的检查
-PositionManager - 负责执行平仓操作
-RiskChecker - 负责风险检查
-main.py - 负责整体流程控制
-
 # main.py - 主程序模块
 程序入口和初始化
 组件协调和流程控制
@@ -99,8 +92,8 @@ source venv/bin/activate
 # 正常模式：
 python -m scripts.main
 
-# 测试模式：
-python -m scripts.main --test
+# 测试模式：# 添加 debug 参数查看更多日志
+python -m scripts.main --test --debug  
 
 # 风控测试
 python -m scripts.test_risk_management
