@@ -14,9 +14,7 @@ from longport.openapi import (
     SubType,
     OrderType,
     OrderSide,
-    TimeInForceType,
-    PeriodType,  # 添加 PeriodType
-    AdjustType   # 添加 AdjustType
+    TimeInForceType
 )
 import os
 import json
