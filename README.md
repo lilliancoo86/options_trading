@@ -6,31 +6,6 @@
 - 长桥开发文档：https://open.longportapp.com/docs
 - SDK文档：https://github.com/longportapp/openapi-sdk/tree/release-v2
 
-## 系统架构
-```bash
-option_trading/
-├── config/
-│   └── config.example.py    # 配置示例
-├── database/
-│   └── option_trading.sql   # 数据库结构
-│   └── reset_database.sql   # 数据库重置
-├── scripts/
-│   └── doomsday_option.service   # 系统服务
-│   └── doomsday_option_logrotate # 日志轮转配置
-│   ├── install.sh          # 安装脚本
-│   └── monitor.sh          # 监控脚本
-│   └── main.py             # 主程序入口
-├── trading/
-│   ├── option_strategy.py    # 期权策略实现
-│   ├── position_manager.py   # 持仓管理
-│   ├── risk_checker.py       # 风险检查
-│   └── time_checker.py       # 时间检查
-├── .env.example              # 环境变量示例
-├── .gitignore                # Git忽略文件
-└── requirements.txt          # 依赖管理
-└── README.md                 # 说明文档
-```
-
 ## 安装部署
 ```bash
 
@@ -47,9 +22,17 @@ wget https://raw.githubusercontent.com/lilliancoo86/options_trading/main/scripts
 
 # 添加执行权限
 chmod +x install.sh
-
-# 执行安装
 sudo ./install.sh
+
+# 更新
+chmod +x gitpull.sh
+sudo ./gitpull.sh
+sudo systemctl daemon-reload
+sudo systemctl restart doomsday_option
+sudo systemctl status doomsday_option
+sudo systemctl list-timers --all
+sudo journalctl -u doomsday_option -f
+
 ```
 ### 1. 系统环境配置
 ```bash
