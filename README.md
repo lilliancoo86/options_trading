@@ -33,6 +33,22 @@ sudo systemctl status doomsday_option
 sudo systemctl list-timers --all
 sudo journalctl -u doomsday_option -f
 
+# 测试模式
+cd /home/options_trading
+source venv/bin/activate
+
+正常模式：
+python -m scripts.main
+
+测试模式：
+python -m scripts.main --test
+
+测试模式（指定模拟时间）：
+python -m scripts.main --test --fake-time "2025-01-15 10:30:00"
+
+退出虚拟环境
+deactivate
+
 ```
 ### 1. 系统环境配置
 ```bash
@@ -605,15 +621,6 @@ sudo systemctl daemon-reload
 sudo systemctl restart doomsday_option
 sudo systemctl enable doomsday_option
 sudo journalctl -u doomsday_option -f
-
-正常模式：
-python -m scripts.main
-
-测试模式：
-python -m scripts.main --test
-
-测试模式（指定模拟时间）：
-python -m scripts.main --test --fake-time "2025-01-15 10:30:00"
 
 # 编辑 crontab
 创建系统级的 cron 任务：
