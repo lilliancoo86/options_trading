@@ -1,9 +1,9 @@
-# doomsday_option量化系统，使用长桥OpenAPI接口。
+# doomsday_option，使用长桥OpenAPI接口。
 
 ```bash
 ## 相关文档
 
-- 长桥证券开发文档：https://open.longportapp.com/docs
+- 长桥开发文档：https://open.longportapp.com/docs
 - SDK文档：https://github.com/longportapp/openapi-sdk/tree/release-v2
 
 ## 系统架构
@@ -76,6 +76,16 @@ sudo yum makecache
 sudo yum update -y
 ```
 > 🔔 **提示**: 如果遇到无法访问镜像源问题
+如果无法访问镜像源，可以手动配置DNS：
+```bash
+# 编辑网络配置
+sudo vi /etc/resolv.conf
+
+# 添加公共DNS
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+```
+
 
 2. 安装Python环境
 ```bash
@@ -98,108 +108,39 @@ sudo ln -sf /usr/local/bin/pip3.7 /usr/bin/pip3
 -----------------------------------------------------------------------------
 ```bash
 在 CentOS 7 上，我们需要手动编译安装 TA-Lib：
-TA-Lib 是一个 C 语言库，需要系统级安装
-Python 的 ta-lib 包是对这个 C 语言库的封装
-系统级安装可以让所有项目共享同一个 TA-Lib 库
-
-TA-Lib 的系统依赖不需要安装在项目目录下，它是一个系统级的库，应该安装在系统目录中。
-让我详细解释安装步骤和目录：
-TA-Lib 源码可以在任意临时目录下载和编译，比如 /tmp 目录
-
-cd /tmp
-wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
-tar -xvf ta-lib-0.4.0-src.tar.gz
-cd ta-lib/
-
-配置和安装：
-
-./configure /tmp  
-make
-sudo make install
-
-./configure --prefix=/usr  
-make
-sudo make install
-
-# 这里的 --prefix=/usr 表示安装到系统目录
-
-安装后的文件分布：
-库文件会安装到 /usr/lib/
-头文件会安装到 /usr/include/
-可执行文件会安装到 /usr/bin/
-
-配置动态链接库：
-
-sudo sh -c "echo '/usr/local/lib' >> /etc/ld.so.conf"
-sudo ldconfig
-
-完成系统级安装后，再回到项目目录安装 Python 包：
-
-cd /home/options_trading
-source venv/bin/activate
-pip install -r requirements.txt
-
-这样做的原因是：
-TA-Lib 是一个 C 语言库，需要系统级安装
-Python 的 ta-lib 包是对这个 C 语言库的封装
-系统级安装可以让所有项目共享同一个 TA-Lib 库
------------------------------------------------------------------------------
-```bash
-首先安装 TA-Lib 的系统依赖：
-
-sudo yum install -y wget
-wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
-tar -xvf ta-lib-0.4.0-src.tar.gz
-
-cd ta-lib/
-./configure --prefix=/usr
-make
-sudo make install
-
-建议按以下步骤进行安装：
-首先确保系统环境干净：
-
-pip uninstall ta-lib -y
-
-安装系统依赖（如上述命令所示）
-安装 Python 依赖：
-
-pip install -r requirements.txt
-
 # 1. 首先安装编译工具（如果还没安装的话）
-sudo yum groupinstall "Development Tools" -y
+sudo yum install -y wget
 
 # 2. 下载并安装 TA-Lib
 cd /tmp
 wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
-tar -xzf ta-lib-0.4.0-src.tar.gz
+tar -xvf ta-lib-0.4.0-src.tar.gz
 cd ta-lib/
 ./configure --prefix=/usr
 make
 sudo make install
 
-# 3. 配置动态链接库
+# 这里的 --prefix=/usr 表示安装到系统目录
+# 配置动态链接库
 sudo sh -c "echo '/usr/local/lib' >> /etc/ld.so.conf"
 sudo ldconfig
 
-# 4. 回到项目目录
+# 回到项目目录
 cd /home/options_trading
 
-# 5. 确保虚拟环境已激活
+# 确保虚拟环境已激活
 source venv/bin/activate
 
-# 6. 升级 pip（建议的操作）
+# 升级 pip（建议的操作）
 python -m pip install --upgrade pip
 
-# 7. 现在重新安装依赖
+# 确保系统环境干净：
+pip uninstall ta-lib -y
+
+# 现在重新安装依赖
+pip install -r requirements.txt
+# 更新依赖
 pip install -r requirements.txt --no-cache-dir
-
------------------------------------------------------------------------------
-
-
-将 ujson 的版本从 5.8.0 更新为 5.7.0，这是一个与 Python 3.7 完全兼容的稳定版本。这个版本：
-提供了所有必要的 JSON 处理功能
-与 Python 3.7 完全兼容
 
 说明：
 虚拟环境 venv 是独立于代码的，不需要重新创建
@@ -211,7 +152,6 @@ Python 版本需要更改
 git pull 不会影响 venv 目录，因为它在 .gitignore 中
 这样可以保持环境的连续性，避免不必要的重复工作。
 
-```bash
 虚拟环境与项目代码在同一目录下，便于管理
 .gitignore 已经配置了忽略 venv/ 目录
 服务配置文件 doomsday_option.service 中的路径配置也是基于这个结构
@@ -221,33 +161,6 @@ git pull 不会影响 venv 目录，因为它在 .gitignore 中
 不要把虚拟环境提交到 git 仓库
 每次重新打开终端都需要重新激活虚拟环境
 如果要退出虚拟环境，使用 deactivate 命令
-
-更新了 requirements.txt 文件，主要变更包括：
-API 依赖：
-固定 aiohttp 版本为 3.8.5
-固定 typing-extensions 版本为 4.7.1
-新增依赖：
-ta-lib==0.4.28：用于技术分析指标计算
-cryptography==41.0.3：用于安全连接
-psutil==5.9.5：用于系统监控
-PyYAML==6.0.1：用于配置文件处理
-ujson==5.8.0：用于高性能 JSON 处理
-调整版本号都固定为特定版本，避免兼容性问题
-确保所有包都与 Python 3.7 兼容
-4. 优化分组：
-按功能模块清晰分组
-添加必要的注释说明
-这些更新确保了：
-1. 与 Longport API V2 完全兼容
-所有包都与 Python 3.7 兼容
-包含了所有必要的功能模块
-版本固定，避免依赖冲突
-
-pip install -r requirements.txt --no-cache-dir
-如果在安装过程中遇到问题，特别是 ta-lib，可能需要先安装系统依赖：
-
-sudo yum install -y ta-lib-devel
-
 
 ### 3. 数据库配置
 
@@ -732,16 +645,10 @@ deactivate
 
 -------------------------------------------------------
 
-
-
 ### 1. 环境变量配置
 
 > ⚠️ **特别注意**: 
-> - 必须手动填写Longport API配置
-> - 配置文件包含敏感信息，注意权限设置
-
-1. 复制配置文件
-```bash
+#  必须手动填写Longport API配置
 cd /home/options_trading
 
 创建 trader 用户和组：
@@ -753,10 +660,12 @@ sudo groupadd -f trader
 sudo chown -R trader:trader /home/options_trading
 sudo chmod -R 755 /home/options_trading
 
+# 复制配置文件
 cp .env.example .env
 cp config/config.example.py config/config.py
 
 sudo chown trader:trader config/config.py
+
 sudo chmod 600 .env
 sudo chmod 600 config/config.py
 
@@ -800,14 +709,6 @@ python -m scripts.main --test
 测试模式（指定模拟时间）：
 python -m scripts.main --test --fake-time "2025-01-15 10:30:00"
 
-
-这样的修改可以：
-1. 在非交易时间测试策略
-使用模拟时间测试特定时间点的策略行为
-在测试模式下忽略交易时间限制
-方便调试和优化策略
----------------------------------------------
-
 # 编辑 crontab
 创建系统级的 cron 任务：
 # 创建新的 cron 文件
@@ -843,15 +744,12 @@ ls -la /home/options_trading/logs/
 ls -la /home/options_trading/config/
 ls -la /home/options_trading/venv/bin/
 
-
 # 查看服务状态
 sudo systemctl status doomsday_option
 
 # 查看日志
 sudo tail -f /home/options_trading/logs/doomsday.log
 sudo tail -f /home/options_trading/logs/doomsday.error.log
-
-
 
 查看完整的系统#systemd日志：
 
@@ -865,32 +763,6 @@ sudo tail -f /home/options_trading/logs/doomsday.log
 sudo cat /etc/systemd/system/doomsday_option.service
 
 
-看起来是 API_CONFIG 配置问题。让我们检查配置文件：
-确保配置文件存在：
-
-cd /home/options_trading
-
-# 复制配置文件
-sudo cp config/config.example.py config/config.py
-
-# 设置权限
-sudo chown trader:trader config/config.py
-sudo chmod 600 config/config.py
-#检查 config/config.py 中的 API_CONFIG 配置：
-
-#检查环境变量是否正确加载：
-# 激活虚拟环境
-source venv/bin/activate
-
-# 测试环境变量加载
-python3 -c "
-from dotenv import load_dotenv
-import os
-load_dotenv()
-print('LONGPORT_APP_KEY:', os.getenv('LONGPORT_APP_KEY'))
-print('LONGPORT_APP_SECRET:', os.getenv('LONGPORT_APP_SECRET'))
-print('LONGPORT_ACCESS_TOKEN:', os.getenv('LONGPORT_ACCESS_TOKEN'))
-"
 
 #手动运行主程序测试：
 # 确保在虚拟环境中
@@ -929,23 +801,7 @@ config.py：600（只有 trader 可读写）
 config.example.py：644（trader 可读写，其他用户可读）
 init_.py：644（trader 可读写，其他用户可读）
 
-
 -------------------------------------------------------
-系统级 Python 环境中缺少必要的依赖包。我们需要为系统 Python 安装依赖，有两种解决方案：
-安装系统级依赖（推荐）：
-# 安装系统级依赖
-sudo pip3 install -r /home/options_trading/requirements.txt
-
-或者修改服务配置使用虚拟环境（替代方案）：
-
-doomsday_option.service
-
-我建议使用第一种方案，因为：
-更简单直接
-避免虚拟环境路径问题
-系统服务通常使用系统级 Python
-
-
 WARNING: You are using pip version 20.1.1; however, version 24.0 is available.
 You should consider upgrading via the '/usr/local/bin/python3.7 -m pip install --upgrade pip' command.
 
@@ -1052,28 +908,6 @@ sudo journalctl -u doomsday_option -f
 
 运行测试：
 python -m scripts.test_risk_management
-
-2024-01-15 10:00:00 - __main__ - INFO - 
-开始测试场景: 小幅上涨 5%
-=== 风控测试 [TSLA250117C250000.US] ===
-+----------+------------+
-| 测试价格  | $10.50    |
-| 成本价格  | $10.00    |
-| 最高价格  | $10.50    |
-| 持仓数量  | 1         |
-| 持仓时间  | 30分钟    |
-+----------+------------+
-当前检查持仓: TSLA250117C250000.US
-止损设置: 固定20%, 移动10%
-止盈设置: 50%
-持仓时间: 30.0分钟 / 120分钟
-测试结果: 未触发平仓条件
-
-2024-01-15 10:00:01 - __main__ - INFO - 
-开始测试场景: 触发固定止损 -25%
-
-风控参数（在 DoomsdayPositionManager 的 test_mode 中设置）
-...
 
 ---------------------------------
 
@@ -1187,16 +1021,6 @@ tail -f logs/trading.log
 
 ## 故障排除
 
-### 1. 镜像源问题解决
-如果无法访问镜像源，可以手动配置DNS：
-```bash
-# 编辑网络配置
-sudo vi /etc/resolv.conf
-
-# 添加公共DNS
-nameserver 8.8.8.8
-nameserver 8.8.4.4
-```
 
 ### 2. 常见问题处理
 
