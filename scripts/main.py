@@ -239,7 +239,7 @@ async def main():
 
             **TRADING_CONFIG,
 
-            'longport': {  # 添加 longport 配置
+            'longport': {
 
                 'app_key': os.getenv('LONGPORT_APP_KEY'),
 
@@ -259,7 +259,9 @@ async def main():
 
             },
 
-            'logging': LOGGING_CONFIG
+            'logging': LOGGING_CONFIG,
+
+            'test_mode': args.test  # 添加测试模式标志
 
         }
 
@@ -273,7 +275,13 @@ async def main():
 
         risk_checker = RiskChecker(config)
 
-        time_checker = TimeChecker(config)
+        time_checker = TimeChecker(config, args.test)  # 传入测试模式标志
+
+        
+
+        if args.test:
+
+            logger.info("=== 运行在测试模式 ===")
 
         
 

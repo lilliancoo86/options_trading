@@ -8,8 +8,9 @@ import logging
 import pytz
 
 class TimeChecker:
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], test_mode: bool = False):
         self.config = config
+        self.test_mode = test_mode  # 添加测试模式标志
         self.logger = logging.getLogger(__name__)
         self.tz = pytz.timezone('America/New_York')
         
@@ -75,17 +76,24 @@ class TimeChecker:
     def is_trading_time(self) -> bool:
         """检查是否在交易时间内"""
         try:
-            if not self.is_trading_day():
-                return False
+            # 测试模式下忽略时间限制
+            if self.test_mode:
+                return True
                 
-            current_time = datetime.now(self.tz).strftime('%H:%M')
+            current = datetime.now(self.tz)
+            current_time = current.strftime('%H:%M')
             
-            # 检查各个交易时段
-            for session in self.trading_sessions:
-                session_times = self.market_times.get(session)
-                if session_times and session_times['open'] <= current_time <= session_times['close']:
-                    return True
+            # 检查是否为交易日
+            if not self.is_trading_day():
+                self.logger.info("当前不是交易日")
+                return False
             
+            # 检查是否在交易时间内
+            if (self.market_times['regular']['open'] <= current_time <= 
+                self.market_times['regular']['close']):
+                return True
+                
+            self.logger.info(f"当前不在交易时间 ({current_time})")
             return False
             
         except Exception as e:
