@@ -730,3 +730,77 @@ class DoomsdayPositionManager:
             self.logger.error(f"执行平仓操作失败 {symbol}: {str(e)}")
             self.logger.exception("详细错误信息:")
             return False
+
+    async def _get_available_options(self, stock_symbol: str) -> List[Dict[str, Any]]:
+        """
+        获取可用的期权合约
+        
+        Args:
+            stock_symbol: 正股代码
+        
+        Returns:
+            List[Dict]: 期权合约列表，每个合约包含 symbol, price, delta 等信息
+        """
+        try:
+            # 获取期权到期日列表
+            expiry_dates = self.quote_ctx.option_chain_expiry_date_list(stock_symbol)
+            if not expiry_dates:
+                self.logger.warning(f"未找到 {stock_symbol} 的期权到期日")
+                return []
+            
+            available_options = []
+            current_date = datetime.now(self.tz).date()
+            
+            # 遍历到期日(排除当日到期)
+            for expiry_date in expiry_dates:
+                if expiry_date.date() <= current_date:
+                    continue
+                    
+                # 获取该到期日的期权链
+                chain_info = self.quote_ctx.option_chain_info(
+                    symbol=stock_symbol,
+                    expiry_date=expiry_date
+                )
+                
+                if not chain_info:
+                    continue
+                
+                # 获取期权实时行情
+                for option in chain_info:
+                    # 只处理价外期权
+                    if option.type == "CALL" and float(option.strike_price) > float(option.spot_price):
+                        option_symbol = option.symbol
+                    elif option.type == "PUT" and float(option.strike_price) < float(option.spot_price):
+                        option_symbol = option.symbol
+                    else:
+                        continue
+                    
+                    # 获取期权报价
+                    quotes = self.quote_ctx.option_quote([option_symbol])
+                    if not quotes:
+                        continue
+                        
+                    quote = quotes[0]
+                    
+                    # 构建期权信息
+                    option_info = {
+                        "symbol": option_symbol,
+                        "price": float(quote.last_done),
+                        "delta": float(quote.delta),
+                        "expiry_date": expiry_date,
+                        "strike_price": float(option.strike_price),
+                        "type": option.type
+                    }
+                    
+                    available_options.append(option_info)
+            
+            # 按到期日排序
+            available_options.sort(key=lambda x: x["expiry_date"])
+            
+            self.logger.info(f"获取到 {len(available_options)} 个可用期权合约")
+            return available_options
+            
+        except Exception as e:
+            self.logger.error(f"获取可用期权合约时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
+            return []
