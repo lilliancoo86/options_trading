@@ -239,6 +239,18 @@ async def main():
 
             **TRADING_CONFIG,
 
+            'longport': {  # 添加 longport 配置
+
+                'app_key': os.getenv('LONGPORT_APP_KEY'),
+
+                'app_secret': os.getenv('LONGPORT_APP_SECRET'),
+
+                'access_token': os.getenv('LONGPORT_ACCESS_TOKEN'),
+
+                'region': os.getenv('LONGPORT_REGION', 'cn')
+
+            },
+
             'api': {
 
                 'quote_context': QuoteContext(longport_config),
