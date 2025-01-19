@@ -8,13 +8,13 @@ import pytz
 from decimal import Decimal
 import asyncio
 from longport.openapi import (
-    TradeContext, 
+    Config, 
     QuoteContext, 
-    SubType, 
-    OrderType, 
+    TradeContext,
+    SubType,  # 正确导入 SubType
+    OrderType,
     OrderSide,
-    TimeInForceType,
-    Config
+    TimeInForceType
 )
 import os
 import json
@@ -75,10 +75,11 @@ class DoomsdayOptionStrategy:
         
         # 添加订阅类型
         self.sub_types = [
-            SubType.Quote,              # 报价
-            SubType.Trade,              # 成交
-            SubType.Depth,              # 深度
-            SubType.Greeks,             # 期权希腊字母
+            SubType.Quote,     # 基础报价
+            SubType.Depth,     # 盘口
+            SubType.Brokers,   # 经纪队列
+            SubType.Trade,     # 逐笔成交
+            # SubType.Greeks 已被移除，使用其他方式获取期权希腊字母
         ]
         
         # 缓存数据
@@ -700,3 +701,12 @@ class DoomsdayOptionStrategy:
             self.logger.error(f"获取可用期权合约时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
             return []
+
+    async def _on_quote(self, symbol: str, quote: Dict[str, Any]):
+        """行情回调"""
+        try:
+            self.logger.debug(f"收到行情: {symbol} {quote}")
+            # 处理行情数据...
+            
+        except Exception as e:
+            self.logger.error(f"处理行情数据出错: {str(e)}")
