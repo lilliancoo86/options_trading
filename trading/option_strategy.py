@@ -11,7 +11,7 @@ from longport.openapi import (
     Config, 
     QuoteContext, 
     TradeContext,
-    SubType,  # 正确导入 SubType
+    SubType,
     OrderType,
     OrderSide,
     TimeInForceType,
@@ -377,9 +377,9 @@ class DoomsdayOptionStrategy:
             
             candlesticks = await self.quote_ctx.get_candlestick(
                 symbol=symbol,
-                period=PeriodType.Day,
+                period="day",  # 使用字符串常量
                 count=30,
-                adjust_type=AdjustType.NoAdjust
+                adjust_type="no_adjust"  # 使用字符串常量
             )
             
             if not candlesticks:
