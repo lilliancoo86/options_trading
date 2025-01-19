@@ -18,6 +18,7 @@ from longport.openapi import (
 )
 import os
 import json
+import re
 
 class DoomsdayOptionStrategy:
     def __init__(self, config: Dict[str, Any], test_mode: bool = False):
@@ -208,8 +209,13 @@ class DoomsdayOptionStrategy:
             return False
 
     def _is_option(self, symbol: str) -> bool:
-        """检查是否为期权"""
-        return any(x in symbol for x in ['C', 'P'])
+        """检查是否为期权合约"""
+        try:
+            # 期权代码格式: XXXYYMMDD[C/P]NNN.US
+            return bool(re.search(r'\d{6}[CP]\d+\.US$', symbol))
+        except Exception as e:
+            self.logger.error(f"检查期权代码时出错: {str(e)}")
+            return False
 
     async def _execute_stop_loss(self, position: dict):
         """执行止损"""
@@ -579,3 +585,81 @@ class DoomsdayOptionStrategy:
                 "score": 0,
                 "details": {}
             }
+
+    async def _get_available_options(self, stock_symbol: str) -> List[Dict[str, Any]]:
+        """获取可用的期权合约"""
+        try:
+            # 获取期权到期日列表
+            expiry_dates = await self.quote_ctx.option_chain_expiry_date_list(stock_symbol)
+            if not expiry_dates:
+                self.logger.warning(f"未找到 {stock_symbol} 的期权到期日")
+                return []
+            
+            available_options = []
+            current_date = datetime.now(self.tz).date()
+            
+            # 遍历到期日(排除当日到期)
+            for expiry_date in expiry_dates:
+                expiry_date_obj = datetime.strptime(expiry_date, "%Y%m%d").date()
+                if expiry_date_obj <= current_date:
+                    continue
+                    
+                # 获取该到期日的期权链
+                chain_info = await self.quote_ctx.option_chain_info_by_date(
+                    symbol=stock_symbol,
+                    expiry_date=expiry_date
+                )
+                
+                if not chain_info:
+                    continue
+                
+                # 获取期权实时行情
+                for option in chain_info:
+                    # 只处理价外期权
+                    if option.call_put == "CALL" and float(option.strike_price) > float(option.spot_price):
+                        option_symbol = option.symbol
+                    elif option.call_put == "PUT" and float(option.strike_price) < float(option.spot_price):
+                        option_symbol = option.symbol
+                    else:
+                        continue
+                    
+                    # 获取期权报价
+                    quotes = await self.quote_ctx.option_quote([option_symbol])
+                    if not quotes:
+                        continue
+                        
+                    quote = quotes[0]
+                    
+                    # 构建期权信息
+                    option_info = {
+                        "symbol": option_symbol,
+                        "price": float(quote.last_done),
+                        "delta": float(quote.delta),
+                        "volume": float(quote.volume),
+                        "open_interest": float(quote.open_interest),
+                        "expiry_date": expiry_date_obj,
+                        "strike_price": float(option.strike_price),
+                        "type": option.call_put,
+                        "spot_price": float(option.spot_price),
+                        "implied_volatility": float(quote.implied_volatility)
+                    }
+                    
+                    available_options.append(option_info)
+            
+            # 按到期日排序
+            available_options.sort(key=lambda x: x["expiry_date"])
+            
+            self.logger.info(
+                f"获取到 {len(available_options)} 个可用期权合约\n"
+                f"首个合约信息:\n"
+                f"  标的: {available_options[0]['symbol'] if available_options else 'N/A'}\n"
+                f"  类型: {available_options[0]['type'] if available_options else 'N/A'}\n"
+                f"  到期日: {available_options[0]['expiry_date'] if available_options else 'N/A'}"
+            )
+            
+            return available_options
+            
+        except Exception as e:
+            self.logger.error(f"获取可用期权合约时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
+            return []
