@@ -836,14 +836,14 @@ class DoomsdayPositionManager:
         获取可用的期权合约
         
         Args:
-            stock_symbol: 正股代码
+            stock_symbol: 正股代码 (例如: AAPL.US)
         
         Returns:
             List[Dict]: 期权合约列表，每个合约包含 symbol, price, delta 等信息
         """
         try:
             # 获取期权到期日列表
-            expiry_dates = self.quote_ctx.option_chain_expiry_date_list(stock_symbol)
+            expiry_dates = await self.quote_ctx.option_chain_expiry_date_list(stock_symbol)
             if not expiry_dates:
                 self.logger.warning(f"未找到 {stock_symbol} 的期权到期日")
                 return []
@@ -853,11 +853,12 @@ class DoomsdayPositionManager:
             
             # 遍历到期日(排除当日到期)
             for expiry_date in expiry_dates:
-                if expiry_date.date() <= current_date:
+                expiry_date_obj = datetime.strptime(expiry_date, "%Y%m%d").date()
+                if expiry_date_obj <= current_date:
                     continue
                     
                 # 获取该到期日的期权链
-                chain_info = self.quote_ctx.option_chain_info(
+                chain_info = await self.quote_ctx.option_chain_info_by_date(
                     symbol=stock_symbol,
                     expiry_date=expiry_date
                 )
@@ -868,15 +869,15 @@ class DoomsdayPositionManager:
                 # 获取期权实时行情
                 for option in chain_info:
                     # 只处理价外期权
-                    if option.type == "CALL" and float(option.strike_price) > float(option.spot_price):
+                    if option.call_put == "CALL" and float(option.strike_price) > float(option.spot_price):
                         option_symbol = option.symbol
-                    elif option.type == "PUT" and float(option.strike_price) < float(option.spot_price):
+                    elif option.call_put == "PUT" and float(option.strike_price) < float(option.spot_price):
                         option_symbol = option.symbol
                     else:
                         continue
                     
                     # 获取期权报价
-                    quotes = self.quote_ctx.option_quote([option_symbol])
+                    quotes = await self.quote_ctx.option_quote([option_symbol])
                     if not quotes:
                         continue
                         
@@ -887,9 +888,13 @@ class DoomsdayPositionManager:
                         "symbol": option_symbol,
                         "price": float(quote.last_done),
                         "delta": float(quote.delta),
-                        "expiry_date": expiry_date,
+                        "volume": float(quote.volume),
+                        "open_interest": float(quote.open_interest),
+                        "expiry_date": expiry_date_obj,
                         "strike_price": float(option.strike_price),
-                        "type": option.type
+                        "type": option.call_put,
+                        "spot_price": float(option.spot_price),
+                        "implied_volatility": float(quote.implied_volatility)
                     }
                     
                     available_options.append(option_info)
@@ -897,10 +902,276 @@ class DoomsdayPositionManager:
             # 按到期日排序
             available_options.sort(key=lambda x: x["expiry_date"])
             
-            self.logger.info(f"获取到 {len(available_options)} 个可用期权合约")
+            self.logger.info(
+                f"获取到 {len(available_options)} 个可用期权合约\n"
+                f"首个合约信息:\n"
+                f"  标的: {available_options[0]['symbol'] if available_options else 'N/A'}\n"
+                f"  类型: {available_options[0]['type'] if available_options else 'N/A'}\n"
+                f"  到期日: {available_options[0]['expiry_date'] if available_options else 'N/A'}"
+            )
+            
             return available_options
             
         except Exception as e:
             self.logger.error(f"获取可用期权合约时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
             return []
+
+    async def analyze_stock_trend(self, stock_symbol: str) -> Dict[str, Any]:
+        """
+        分析股票趋势，使用多个技术指标综合判断
+        
+        Args:
+            stock_symbol: 股票代码
+        
+        Returns:
+            Dict: 包含趋势信息的字典
+        """
+        try:
+            # 获取K线数据
+            klines = await self.quote_ctx.history_candlesticks(
+                symbol=stock_symbol,
+                period="5m",  # 5分钟K线
+                count=100     # 获取100根K线
+            )
+            
+            if not klines:
+                return {"trend": "neutral", "signal": None}
+            
+            # 提取价格数据
+            prices = {
+                'close': [float(k.close) for k in klines],
+                'open': [float(k.open) for k in klines],
+                'high': [float(k.high) for k in klines],
+                'low': [float(k.low) for k in klines],
+                'volume': [float(k.volume) for k in klines]
+            }
+            
+            # 1. 计算技术指标
+            indicators = {
+                'ma5': self._calculate_ma(prices['close'], 5),
+                'ma10': self._calculate_ma(prices['close'], 10),
+                'ma20': self._calculate_ma(prices['close'], 20),
+                'rsi': self._calculate_rsi(prices['close'], 14),
+                'macd': self._calculate_macd(prices['close']),
+                'volume_ma': self._calculate_ma(prices['volume'], 20)
+            }
+            
+            # 2. 获取开盘涨跌幅
+            current_quote = await self.quote_ctx.quote([stock_symbol])
+            if not current_quote:
+                return {"trend": "neutral", "signal": None}
+            
+            quote = current_quote[0]
+            open_change_pct = (float(quote.open) - float(quote.prev_close)) / float(quote.prev_close) * 100
+            current_change_pct = (float(quote.last_done) - float(quote.prev_close)) / float(quote.prev_close) * 100
+            
+            # 3. 趋势判断
+            trend_signals = {
+                'ma_trend': self._check_ma_trend(indicators),
+                'rsi_signal': self._check_rsi_signal(indicators['rsi'][-1]),
+                'macd_signal': self._check_macd_signal(indicators['macd']),
+                'volume_signal': self._check_volume_signal(prices['volume'][-1], indicators['volume_ma'][-1]),
+                'gap_signal': self._check_gap_signal(open_change_pct, current_change_pct)
+            }
+            
+            # 4. 综合判断
+            trend_score = self._calculate_trend_score(trend_signals)
+            
+            # 5. 生成交易信号
+            if trend_score >= 0.7:
+                trend = "strong_up"
+                signal = "buy_call"
+            elif trend_score <= -0.7:
+                trend = "strong_down"
+                signal = "buy_put"
+            elif trend_score >= 0.3:
+                trend = "up"
+                signal = "buy_call"
+            elif trend_score <= -0.3:
+                trend = "down"
+                signal = "buy_put"
+            else:
+                trend = "neutral"
+                signal = None
+            
+            result = {
+                "trend": trend,
+                "signal": signal,
+                "score": trend_score,
+                "details": {
+                    "open_change": f"{open_change_pct:.2f}%",
+                    "current_change": f"{current_change_pct:.2f}%",
+                    "ma_trend": trend_signals['ma_trend'],
+                    "rsi": indicators['rsi'][-1],
+                    "macd": indicators['macd']['histogram'][-1],
+                    "volume_ratio": prices['volume'][-1] / indicators['volume_ma'][-1]
+                }
+            }
+            
+            self.logger.info(
+                f"趋势分析结果 - {stock_symbol}:\n"
+                f"  趋势: {result['trend']}\n"
+                f"  信号: {result['signal']}\n"
+                f"  得分: {result['score']:.2f}\n"
+                f"  开盘涨跌: {result['details']['open_change']}\n"
+                f"  当前涨跌: {result['details']['current_change']}\n"
+                f"  RSI: {result['details']['rsi']:.2f}\n"
+                f"  成交量比: {result['details']['volume_ratio']:.2f}"
+            )
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"分析股票趋势时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
+            return {"trend": "neutral", "signal": None}
+
+    def _calculate_ma(self, data: List[float], period: int) -> List[float]:
+        """计算移动平均线"""
+        ma = []
+        for i in range(len(data)):
+            if i < period - 1:
+                ma.append(None)
+            else:
+                ma.append(sum(data[i-period+1:i+1]) / period)
+        return ma
+
+    def _calculate_rsi(self, prices: List[float], period: int = 14) -> List[float]:
+        """计算RSI"""
+        deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+        gains = [d if d > 0 else 0 for d in deltas]
+        losses = [-d if d < 0 else 0 for d in deltas]
+        
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
+        
+        rsi = []
+        for i in range(len(prices)):
+            if i < period:
+                rsi.append(None)
+                continue
+            
+            if avg_loss == 0:
+                rsi.append(100)
+            else:
+                rs = avg_gain / avg_loss
+                rsi.append(100 - (100 / (1 + rs)))
+            
+            if i < len(prices) - 1:
+                avg_gain = (avg_gain * (period-1) + gains[i]) / period
+                avg_loss = (avg_loss * (period-1) + losses[i]) / period
+            
+        return rsi
+
+    def _calculate_macd(self, prices: List[float]) -> Dict[str, List[float]]:
+        """计算MACD"""
+        ema12 = self._calculate_ema(prices, 12)
+        ema26 = self._calculate_ema(prices, 26)
+        
+        macd_line = [ema12[i] - ema26[i] if ema12[i] and ema26[i] else None 
+                     for i in range(len(prices))]
+        signal_line = self._calculate_ema(macd_line, 9)
+        
+        histogram = [macd_line[i] - signal_line[i] if macd_line[i] and signal_line[i] else None
+                    for i in range(len(prices))]
+        
+        return {
+            'macd': macd_line,
+            'signal': signal_line,
+            'histogram': histogram
+        }
+
+    def _check_ma_trend(self, indicators: Dict[str, List[float]]) -> str:
+        """检查均线趋势"""
+        ma5, ma10, ma20 = indicators['ma5'][-1], indicators['ma10'][-1], indicators['ma20'][-1]
+        
+        if ma5 > ma10 > ma20:
+            return "strong_up"
+        elif ma5 > ma10:
+            return "up"
+        elif ma5 < ma10 < ma20:
+            return "strong_down"
+        elif ma5 < ma10:
+            return "down"
+        else:
+            return "neutral"
+
+    def _check_rsi_signal(self, rsi: float) -> str:
+        """检查RSI信号"""
+        if rsi > 70:
+            return "overbought"
+        elif rsi < 30:
+            return "oversold"
+        elif rsi > 60:
+            return "strong"
+        elif rsi < 40:
+            return "weak"
+        else:
+            return "neutral"
+
+    def _check_macd_signal(self, macd: Dict[str, List[float]]) -> str:
+        """检查MACD信号"""
+        hist = macd['histogram'][-3:]  # 最近3个柱
+        
+        if all(h > 0 for h in hist) and hist[-1] > hist[-2]:
+            return "strong_up"
+        elif all(h < 0 for h in hist) and hist[-1] < hist[-2]:
+            return "strong_down"
+        elif hist[-1] > 0:
+            return "up"
+        elif hist[-1] < 0:
+            return "down"
+        else:
+            return "neutral"
+
+    def _calculate_trend_score(self, signals: Dict[str, str]) -> float:
+        """计算趋势综合得分"""
+        scores = {
+            'ma_trend': {
+                'strong_up': 1.0,
+                'up': 0.5,
+                'neutral': 0,
+                'down': -0.5,
+                'strong_down': -1.0
+            },
+            'rsi_signal': {
+                'overbought': 0.5,
+                'strong': 0.3,
+                'neutral': 0,
+                'weak': -0.3,
+                'oversold': -0.5
+            },
+            'macd_signal': {
+                'strong_up': 1.0,
+                'up': 0.5,
+                'neutral': 0,
+                'down': -0.5,
+                'strong_down': -1.0
+            },
+            'volume_signal': {
+                'high': 0.3,
+                'normal': 0,
+                'low': -0.3
+            },
+            'gap_signal': {
+                'up_gap': 0.5,
+                'down_gap': -0.5,
+                'no_gap': 0
+            }
+        }
+        
+        weights = {
+            'ma_trend': 0.3,
+            'rsi_signal': 0.2,
+            'macd_signal': 0.25,
+            'volume_signal': 0.15,
+            'gap_signal': 0.1
+        }
+        
+        total_score = 0
+        for signal_type, signal in signals.items():
+            score = scores[signal_type].get(signal, 0)
+            total_score += score * weights[signal_type]
+        
+        return round(total_score, 2)
