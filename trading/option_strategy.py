@@ -20,10 +20,11 @@ import os
 import json
 
 class DoomsdayOptionStrategy:
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], test_mode: bool = False):
         """初始化策略"""
-        self.logger = logging.getLogger(__name__)
         self.config = config
+        self.test_mode = test_mode
+        self.logger = logging.getLogger(__name__)
         self.tz = pytz.timezone('America/New_York')
         
         # 初始化交易标的
@@ -85,12 +86,15 @@ class DoomsdayOptionStrategy:
         self.positions = {}             # 当前持仓
         
         # 添加趋势判断参数
-        self.trend_params = {
-            'fast_length': 1,      # 快线周期
-            'slow_length': 5,      # 慢线周期
-            'curve_length': 10,    # 曲线周期
-            'trend_period': 5,     # 趋势判断周期
-            'vwap_dev': 2.0       # VWAP通道宽度
+        self.trend_config = {
+            'ma_periods': [5, 10, 20],
+            'rsi_period': 14,
+            'macd_params': {
+                'fast': 12,
+                'slow': 26,
+                'signal': 9
+            },
+            'volume_ma': 20
         }
         
         # 缓存历史数据
@@ -288,22 +292,22 @@ class DoomsdayOptionStrategy:
                 return {'trend': 'neutral', 'signal': None}
             
             # 计算指标
-            fast_ma = self._calculate_sma(prices, self.trend_params['fast_length'])
-            slow_ma = self._calculate_sma(prices, self.trend_params['slow_length'])
+            fast_ma = self._calculate_sma(prices, self.trend_config['ma_periods'][0])
+            slow_ma = self._calculate_sma(prices, self.trend_config['ma_periods'][1])
             curve = self._calculate_sma(
                 [f + s for f, s in zip(fast_ma, slow_ma)],
-                self.trend_params['curve_length']
+                self.trend_config['ma_periods'][2]
             )
             
             # 计算VWAP和通道
             vwap = self.vwap_history.get(symbol, [])
             if vwap:
-                std_dev = self._calculate_stdev(vwap, self.trend_params['trend_period'])
-                upper_band = vwap[-1] + std_dev * self.trend_params['vwap_dev']
-                lower_band = vwap[-1] - std_dev * self.trend_params['vwap_dev']
+                std_dev = self._calculate_stdev(vwap, self.trend_config['volume_ma'])
+                upper_band = vwap[-1] + std_dev * self.trend_config['rsi_period']
+                lower_band = vwap[-1] - std_dev * self.trend_config['rsi_period']
                 
                 current_price = prices[-1]
-                long_term_trend = self._calculate_sma(curve, self.trend_params['trend_period'])
+                long_term_trend = self._calculate_sma(curve, self.trend_config['ma_periods'][2])
                 
                 # 趋势判断
                 is_up_trend = (long_term_trend[-1] > long_term_trend[-2] and 
@@ -346,3 +350,232 @@ class DoomsdayOptionStrategy:
         mean = sum(subset) / length
         squared_diff = [(x - mean) ** 2 for x in subset]
         return (sum(squared_diff) / length) ** 0.5
+
+    async def analyze_stock_trend(self, stock_symbol: str) -> Dict[str, Any]:
+        """分析股票趋势"""
+        try:
+            # 获取K线数据
+            klines = await self.quote_ctx.history_candlesticks(
+                symbol=stock_symbol,
+                period="5m",
+                count=100
+            )
+            
+            if not klines:
+                return {"trend": "neutral", "signal": None}
+            
+            # 计算技术指标
+            indicators = await self._calculate_indicators(klines)
+            
+            # 获取开盘涨跌幅
+            quote = await self.quote_ctx.quote([stock_symbol])
+            if not quote:
+                return {"trend": "neutral", "signal": None}
+            
+            open_change_pct = self._calculate_open_change(quote[0])
+            
+            # 综合分析趋势
+            trend_analysis = self._analyze_trend(indicators, open_change_pct)
+            
+            self.logger.info(
+                f"趋势分析结果 - {stock_symbol}:\n"
+                f"  趋势: {trend_analysis['trend']}\n"
+                f"  信号: {trend_analysis['signal']}\n"
+                f"  得分: {trend_analysis['score']:.2f}"
+            )
+            
+            return trend_analysis
+            
+        except Exception as e:
+            self.logger.error(f"分析股票趋势时出错: {str(e)}")
+            return {"trend": "neutral", "signal": None}
+
+    async def select_option_contract(self, stock_symbol: str, trend: str) -> Optional[str]:
+        """根据趋势选择合适的期权合约"""
+        try:
+            # 获取可用期权列表
+            options = await self._get_available_options(stock_symbol)
+            if not options:
+                return None
+            
+            # 根据趋势选择看涨或看跌期权
+            option_type = "CALL" if trend in ["strong_up", "up"] else "PUT"
+            
+            # 筛选符合条件的期权
+            filtered_options = []
+            for option in options:
+                if (option['type'] == option_type and 
+                    1.0 <= option['price'] <= 15.0 and  # 价格范围
+                    20 <= option['leverage'] <= 30 and  # 杠杆率
+                    7 <= option['days_to_expiry'] <= 30):  # 到期时间
+                    
+                    option['score'] = self._calculate_option_score(option)
+                    filtered_options.append(option)
+            
+            if not filtered_options:
+                return None
+            
+            # 选择得分最高的期权
+            best_option = max(filtered_options, key=lambda x: x['score'])
+            
+            self.logger.info(
+                f"选择期权合约:\n"
+                f"  代码: {best_option['symbol']}\n"
+                f"  类型: {best_option['type']}\n"
+                f"  价格: ${best_option['price']:.2f}\n"
+                f"  杠杆率: {best_option['leverage']:.1f}x"
+            )
+            
+            return best_option['symbol']
+            
+        except Exception as e:
+            self.logger.error(f"选择期权合约时出错: {str(e)}")
+            return None
+
+    async def generate_trading_signal(self, stock_symbol: str) -> Optional[Dict[str, Any]]:
+        """生成交易信号"""
+        try:
+            # 1. 分析趋势
+            trend_analysis = await self.analyze_stock_trend(stock_symbol)
+            if not trend_analysis['signal']:
+                return None
+            
+            # 2. 选择期权合约
+            option_symbol = await self.select_option_contract(
+                stock_symbol, 
+                trend_analysis['trend']
+            )
+            if not option_symbol:
+                return None
+            
+            # 3. 生成交易信号
+            signal = {
+                'symbol': option_symbol,
+                'direction': 'buy',
+                'type': 'CALL' if trend_analysis['trend'] in ['strong_up', 'up'] else 'PUT',
+                'reason': f"趋势信号: {trend_analysis['trend']}",
+                'score': trend_analysis['score']
+            }
+            
+            self.logger.info(
+                f"生成交易信号:\n"
+                f"  标的: {signal['symbol']}\n"
+                f"  方向: {signal['direction']}\n"
+                f"  类型: {signal['type']}\n"
+                f"  原因: {signal['reason']}"
+            )
+            
+            return signal
+            
+        except Exception as e:
+            self.logger.error(f"生成交易信号时出错: {str(e)}")
+            return None
+
+    async def _calculate_indicators(self, klines: List[Any]) -> Dict[str, Any]:
+        """计算所有技术指标"""
+        try:
+            prices = {
+                'close': [float(k.close) for k in klines],
+                'open': [float(k.open) for k in klines],
+                'high': [float(k.high) for k in klines],
+                'low': [float(k.low) for k in klines],
+                'volume': [float(k.volume) for k in klines]
+            }
+            
+            # 计算各种技术指标
+            indicators = {
+                'ma': {
+                    f'ma{period}': self._calculate_ma(prices['close'], period)
+                    for period in self.trend_config['ma_periods']
+                },
+                'rsi': self._calculate_rsi(
+                    prices['close'], 
+                    self.trend_config['rsi_period']
+                ),
+                'macd': self._calculate_macd(
+                    prices['close'], 
+                    self.trend_config['macd_params']
+                ),
+                'volume': {
+                    'current': prices['volume'][-1],
+                    'ma': self._calculate_ma(
+                        prices['volume'], 
+                        self.trend_config['volume_ma']
+                    )[-1]
+                }
+            }
+            
+            return indicators
+            
+        except Exception as e:
+            self.logger.error(f"计算技术指标时出错: {str(e)}")
+            return {}
+
+    def _analyze_trend(self, indicators: Dict[str, Any], open_change_pct: float) -> Dict[str, Any]:
+        """综合分析趋势"""
+        try:
+            # 1. 均线趋势
+            ma_trend = self._check_ma_trend(indicators['ma'])
+            
+            # 2. RSI信号
+            rsi_signal = self._check_rsi_signal(indicators['rsi'][-1])
+            
+            # 3. MACD信号
+            macd_signal = self._check_macd_signal(indicators['macd'])
+            
+            # 4. 成交量信号
+            volume_signal = self._check_volume_signal(
+                indicators['volume']['current'],
+                indicators['volume']['ma']
+            )
+            
+            # 5. 缺口信号
+            gap_signal = self._check_gap_signal(open_change_pct)
+            
+            # 综合评分
+            trend_score = self._calculate_trend_score({
+                'ma_trend': ma_trend,
+                'rsi_signal': rsi_signal,
+                'macd_signal': macd_signal,
+                'volume_signal': volume_signal,
+                'gap_signal': gap_signal
+            })
+            
+            # 生成交易信号
+            if trend_score >= 0.7:
+                trend = "strong_up"
+                signal = "buy_call"
+            elif trend_score <= -0.7:
+                trend = "strong_down"
+                signal = "buy_put"
+            elif trend_score >= 0.3:
+                trend = "up"
+                signal = "buy_call"
+            elif trend_score <= -0.3:
+                trend = "down"
+                signal = "buy_put"
+            else:
+                trend = "neutral"
+                signal = None
+                
+            return {
+                "trend": trend,
+                "signal": signal,
+                "score": trend_score,
+                "details": {
+                    "ma_trend": ma_trend,
+                    "rsi": indicators['rsi'][-1],
+                    "macd": indicators['macd']['histogram'][-1],
+                    "volume_signal": volume_signal,
+                    "gap_signal": gap_signal
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"分析趋势时出错: {str(e)}")
+            return {
+                "trend": "neutral",
+                "signal": None,
+                "score": 0,
+                "details": {}
+            }
