@@ -121,7 +121,7 @@ class DoomsdayOptionStrategy:
             }
             
             # 获取VIX
-            vix_quotes = await self.quote_ctx.get_realtime_quote([self.vix_symbol])
+            vix_quotes = await self.quote_ctx.quote([self.vix_symbol])
             if vix_quotes:
                 market_data['vix'] = float(vix_quotes[0].last_done)
             
@@ -130,7 +130,7 @@ class DoomsdayOptionStrategy:
                 if symbol == self.vix_symbol:
                     continue
                     
-                quotes = await self.quote_ctx.get_realtime_quote([symbol])
+                quotes = await self.quote_ctx.quote([symbol])
                 if quotes:
                     quote = quotes[0]
                     # 计算日内波动率
@@ -373,7 +373,7 @@ class DoomsdayOptionStrategy:
             end_time = datetime.now(self.tz)
             start_time = end_time - timedelta(days=30)
             
-            candlesticks = await self.quote_ctx.get_candlestick_list(
+            candlesticks = await self.quote_ctx.get_candlesticks(
                 symbol=symbol,
                 period="day",  # 使用字符串常量
                 count=30,
@@ -387,7 +387,7 @@ class DoomsdayOptionStrategy:
             indicators = await self._calculate_indicators(candlesticks)
             
             # 获取开盘涨跌幅
-            quotes = await self.quote_ctx.get_realtime_quote([symbol])
+            quotes = await self.quote_ctx.quote([symbol])
             if not quotes:
                 return {"trend": "neutral", "signal": None}
             
