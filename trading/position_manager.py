@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import pytz
 from decimal import Decimal
 from dotenv import load_dotenv
-from longport.openapi import TradeContext, QuoteContext, Config, SubType, OrderType, OrderSide, TimeInForceType
+from longport.openapi import TradeContext, QuoteContext, Config, SubType, OrderType, OrderSide, TimeInForceType, OrderStatus
 from tabulate import tabulate
 import asyncio
 from trading.risk_checker import RiskChecker  # 添加导入
@@ -57,6 +57,9 @@ class DoomsdayPositionManager:
             'max_positions': 5,  # 最大持仓数量
             'max_position_value': 10000  # 单个持仓最大金额
         }
+
+        # 初始化风险检查器
+        self.risk_checker = RiskChecker(config)
 
     async def __aenter__(self):
         """异步上下文管理器的进入方法"""
@@ -163,7 +166,7 @@ class DoomsdayPositionManager:
                 await asyncio.sleep(1)
                 order_status = await self.trade_ctx.get_order_detail(order.order_id)
                 
-                if order_status.status == "Filled":
+                if order_status.status == OrderStatus.Filled:
                     self.logger.info(
                         f"平仓成功:\n"
                         f"  标的: {symbol}\n"
@@ -172,7 +175,7 @@ class DoomsdayPositionManager:
                     )
                     return True
                     
-                elif order_status.status in ["Failed", "Rejected", "Cancelled"]:
+                elif order_status.status in [OrderStatus.Failed, OrderStatus.Rejected, OrderStatus.Cancelled]:
                     self.logger.error(f"平仓订单失败: {order_status.status}")
                     return False
             
@@ -277,12 +280,15 @@ class DoomsdayPositionManager:
             if not await self.can_open_position(symbol):
                 return False
             
+            # 转换为 Decimal
+            volume = Decimal(str(volume))
+            
             # 提交市价单开仓
             order = await self.trade_ctx.submit_order(
                 symbol=symbol,
                 order_type=OrderType.Market,
                 side=OrderSide.Buy,
-                submitted_quantity=volume,
+                submitted_quantity=volume,  # 使用 Decimal
                 time_in_force=TimeInForceType.Day,
                 remark=f"Open position: {reason}"
             )
@@ -296,7 +302,7 @@ class DoomsdayPositionManager:
                 await asyncio.sleep(1)
                 order_status = await self.trade_ctx.get_order_detail(order.order_id)
                 
-                if order_status.status == "Filled":
+                if order_status.status == OrderStatus.Filled:
                     self.logger.info(
                         f"开仓成功:\n"
                         f"  标的: {symbol}\n"
@@ -306,7 +312,7 @@ class DoomsdayPositionManager:
                     )
                     return True
                     
-                elif order_status.status in ["Failed", "Rejected", "Cancelled"]:
+                elif order_status.status in [OrderStatus.Failed, OrderStatus.Rejected, OrderStatus.Cancelled]:
                     self.logger.error(f"开仓订单失败: {order_status.status}")
                     return False
             
@@ -315,5 +321,12 @@ class DoomsdayPositionManager:
             return False
             
         except Exception as e:
-            self.logger.error(f"执行开仓操作失败: {str(e)}")
+            if "301600" in str(e):  # 无效请求
+                self.logger.error(f"请求参数有误: {str(e)}")
+            elif "301606" in str(e):  # 限流
+                self.logger.error(f"请求频率过高: {str(e)}")
+            elif "301602" in str(e):  # 服务端错误
+                self.logger.error(f"服务端内部错误: {str(e)}")
+            else:
+                self.logger.error(f"未知错误: {str(e)}")
             return False
