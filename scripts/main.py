@@ -71,25 +71,20 @@ def setup_logging():
     """设置日志"""
 
     global logger
-
+    
+    # 确保日志目录存在
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    
     logging.basicConfig(
-
         level=LOGGING_CONFIG['level'],
-
         format=LOGGING_CONFIG['format'],
-
         handlers=[
-
-            logging.FileHandler(LOG_DIR / 'trading.log'),
-
+            logging.FileHandler(LOG_DIR / 'trading.log'),  # 保持原有路径
             logging.StreamHandler()
-
         ]
-
     )
-
+    
     logger = logging.getLogger(__name__)
-
     return logger
 
 
@@ -230,9 +225,17 @@ async def main():
 
         
 
-        # 加载配置
+        # 合并配置
 
-        config = load_config()
+        config = {
+
+            **TRADING_CONFIG,
+
+            'api': API_CONFIG,
+
+            'logging': LOGGING_CONFIG
+
+        }
 
         
 
