@@ -1,23 +1,46 @@
 """交易时间检查模块"""
 from datetime import datetime, time, timedelta
 import pytz
+from typing import Dict, Any, Tuple
+import logging
 
 class TimeChecker:
-    def __init__(self, market_open: str, market_close: str, force_close_time: str, test_mode: bool = False):
-        """
-        初始化时间检查器
-        
-        Args:
-            market_open: 市场开盘时间 (HH:MM:SS)
-            market_close: 市场收盘时间 (HH:MM:SS)
-            force_close_time: 强制平仓时间 (HH:MM:SS)
-            test_mode: 是否为测试模式
-        """
-        self.market_open = self._parse_time(market_open)
-        self.market_close = self._parse_time(market_close)
-        self.force_close_time = self._parse_time(force_close_time)
-        self.test_mode = test_mode
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.logger = logging.getLogger(__name__)
         self.tz = pytz.timezone('America/New_York')
+        
+        # 市场时间设置
+        self.market_times = {
+            'open': '09:30',
+            'close': '16:00',
+            'force_close': '15:45',  # 收盘前15分钟强制平仓
+            'warning': '15:40'       # 收盘前20分钟发出警告
+        }
+
+    def check_force_close(self) -> Tuple[bool, str]:
+        """
+        检查是否需要强制平仓
+        Returns:
+            Tuple[bool, str]: (是否需要平仓, 原因)
+        """
+        try:
+            current_time = datetime.now(self.tz).strftime('%H:%M')
+            
+            # 收盘前警告
+            if current_time >= self.market_times['warning']:
+                self.logger.warning(f"接近收盘时间 ({current_time})")
+            
+            # 强制平仓检查
+            if current_time >= self.market_times['force_close']:
+                self.logger.warning(f"触发收盘平仓时间: {current_time}")
+                return True, "收盘平仓"
+            
+            return False, ""
+            
+        except Exception as e:
+            self.logger.error(f"检查收盘平仓时间出错: {str(e)}")
+            return False, ""
 
     def _parse_time(self, time_str: str) -> time:
         """解析时间字符串为time对象"""
@@ -40,12 +63,12 @@ class TimeChecker:
         # 创建今天的开盘时间
         today_open = datetime.combine(
             current_date,
-            self.market_open
+            self._parse_time(self.market_times['open'])
         )
         today_open = self.tz.localize(today_open)
         
         # 如果当前时间已过今天开盘时间，返回明天的开盘时间
-        if current.time() >= self.market_open:
+        if current.time() >= self._parse_time(self.market_times['open']):
             next_open = today_open + timedelta(days=1)
         else:
             next_open = today_open
@@ -54,12 +77,5 @@ class TimeChecker:
 
     def is_trading_time(self) -> bool:
         """检查是否在交易时间内"""
-        if self.test_mode:
-            return True
         current_time = self.current_time().time()
-        return self.market_open <= current_time <= self.market_close
-
-    def should_force_close(self) -> bool:
-        """检查是否需要强制平仓"""
-        current_time = self.current_time().time()
-        return current_time >= self.force_close_time 
+        return self._parse_time(self.market_times['open']) <= current_time <= self._parse_time(self.market_times['close']) 

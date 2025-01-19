@@ -100,6 +100,18 @@ async def run_strategy(strategy, position_manager, risk_checker, time_checker, l
 
     try:
 
+        # 检查是否需要强制平仓（最高优先级）
+
+        need_close, reason = time_checker.check_force_close()
+
+        if need_close:
+
+            await position_manager.check_force_close(datetime.now())
+
+            return
+
+            
+
         # 初始化策略
 
         await strategy.initialize()

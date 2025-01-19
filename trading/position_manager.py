@@ -15,6 +15,7 @@ import asyncio
 from trading.risk_checker import RiskChecker  # 添加导入
 import re
 import traceback
+from trading.time_checker import TimeChecker  # 添加导入
 
 class MarketInfoFilter(logging.Filter):
     """过滤掉市场权限信息的日志过滤器"""
@@ -73,6 +74,8 @@ class DoomsdayPositionManager:
             'force_close_time': '15:45',  # 收盘前15分钟强制平仓
             'warning_time': '15:40'       # 收盘前20分钟发出警告
         }
+
+        self.time_checker = TimeChecker(config)  # 添加 TimeChecker 实例
 
     async def __aenter__(self):
         """异步上下文管理器的进入方法"""
@@ -517,31 +520,26 @@ class DoomsdayPositionManager:
     async def check_force_close(self, current_time: datetime) -> bool:
         """检查是否需要强制平仓"""
         try:
-            # 转换为美东时间字符串
-            current_time_str = current_time.strftime('%H:%M')
-            force_close_time = self.market_close['force_close_time']
-            warning_time = self.market_close['warning_time']
+            # 使用 TimeChecker 检查时间
+            need_close, reason = self.time_checker.check_force_close()
             
-            # 检查是否到达预警时间
-            if current_time_str >= warning_time and current_time_str < force_close_time:
-                self.logger.warning("接近收盘时间，准备强制平仓")
-                
-            # 检查是否需要强制平仓
-            if current_time_str >= force_close_time:
+            if need_close:
+                # 获取所有持仓
                 positions = await self.get_real_positions()
                 if positions and positions.get("active"):
-                    self.logger.warning(
-                        f"触发强制平仓:\n"
-                        f"  当前时间: {current_time_str}\n"
-                        f"  强制平仓时间: {force_close_time}"
-                    )
+                    # 执行平仓
+                    for position in positions["active"]:
+                        await self.close_position(
+                            symbol=position["symbol"],
+                            volume=position["volume"],
+                            reason=reason
+                        )
                     return True
-                    
+            
             return False
             
         except Exception as e:
             self.logger.error(f"检查强制平仓时出错: {str(e)}")
-            self.logger.exception("详细错误信息:")
             return False
 
     async def get_all_positions(self) -> Dict[str, Any]:
