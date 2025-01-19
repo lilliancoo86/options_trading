@@ -268,45 +268,145 @@ class DoomsdayPositionManager:
 
     async def select_option_strike(self, stock_symbol: str, target_leverage: float = 25) -> Optional[str]:
         """
-        选择合适的期权合约
+        选择最合适的单个期权合约
         
         Args:
             stock_symbol: 正股代码
             target_leverage: 目标杠杆率 (默认25)
         """
         try:
-            # 获取正股价格
+            # 获取正股价格和成交量
             stock_quotes = self.quote_ctx.quote([stock_symbol])
             if not stock_quotes:
                 return None
-            stock_price = float(stock_quotes[0].last_done)
+            
+            stock_quote = stock_quotes[0]
+            stock_price = float(stock_quote.last_done)
+            stock_volume = float(stock_quote.volume)
             
             # 获取可用的期权合约
             options = await self._get_available_options(stock_symbol)
+            if not options:
+                return None
             
-            best_option = None
-            min_leverage_diff = float('inf')
-            
+            # 筛选条件
+            filtered_options = []
             for option in options:
-                # 计算杠杆率
-                leverage = self._calculate_leverage(
-                    option_price=float(option['price']),
-                    stock_price=stock_price,
-                    delta=float(option['delta'])
-                )
-                
-                # 检查杠杆率是否在目标范围内 (20-30)
-                if 20 <= leverage <= 30:
-                    leverage_diff = abs(leverage - target_leverage)
-                    if leverage_diff < min_leverage_diff:
-                        min_leverage_diff = leverage_diff
-                        best_option = option
+                try:
+                    price = float(option['price'])
+                    volume = float(option.get('volume', 0))
+                    open_interest = float(option.get('open_interest', 0))
+                    
+                    # 1. 价格筛选 (避免太贵或太便宜的期权)
+                    if not (1.0 <= price <= 15.0):
+                        continue
+                    
+                    # 2. 流动性筛选
+                    if volume < 100 or open_interest < 500:
+                        continue
+                    
+                    # 3. 计算杠杆率
+                    leverage = self._calculate_leverage(
+                        option_price=price,
+                        stock_price=stock_price,
+                        delta=float(option['delta'])
+                    )
+                    
+                    # 4. 杠杆率筛选 (20-30)
+                    if not (20 <= leverage <= 30):
+                        continue
+                    
+                    # 5. 到期日筛选 (7-30天)
+                    days_to_expiry = (option['expiry_date'].date() - datetime.now(self.tz).date()).days
+                    if not (7 <= days_to_expiry <= 30):
+                        continue
+                    
+                    # 记录筛选后的期权
+                    filtered_options.append({
+                        **option,
+                        'leverage': leverage,
+                        'days_to_expiry': days_to_expiry,
+                        'score': self._calculate_option_score(
+                            price=price,
+                            leverage=leverage,
+                            volume=volume,
+                            open_interest=open_interest,
+                            days_to_expiry=days_to_expiry,
+                            target_leverage=target_leverage
+                        )
+                    })
+                    
+                except Exception as e:
+                    self.logger.warning(f"处理期权时出错: {str(e)}")
+                    continue
             
-            return best_option['symbol'] if best_option else None
+            if not filtered_options:
+                self.logger.info("没有找到符合条件的期权")
+                return None
+            
+            # 按综合得分排序，选择最佳期权
+            best_option = max(filtered_options, key=lambda x: x['score'])
+            
+            self.logger.info(
+                f"选择期权:\n"
+                f"  代码: {best_option['symbol']}\n"
+                f"  类型: {best_option['type']}\n"
+                f"  行权价: ${best_option['strike_price']:.2f}\n"
+                f"  当前价: ${best_option['price']:.2f}\n"
+                f"  杠杆率: {best_option['leverage']:.1f}x\n"
+                f"  到期天数: {best_option['days_to_expiry']}天\n"
+                f"  得分: {best_option['score']:.2f}"
+            )
+            
+            return best_option['symbol']
             
         except Exception as e:
             self.logger.error(f"选择期权合约时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
             return None
+
+    def _calculate_option_score(self, price: float, leverage: float, volume: float,
+                              open_interest: float, days_to_expiry: int,
+                              target_leverage: float) -> float:
+        """计算期权的综合得分"""
+        try:
+            # 1. 价格得分 (优先选择价格适中的期权)
+            price_score = 1.0 - abs(price - 5.0) / 10.0  # 以5美元为最佳价格
+            
+            # 2. 杠杆率得分 (越接近目标杠杆率越好)
+            leverage_score = 1.0 - abs(leverage - target_leverage) / target_leverage
+            
+            # 3. 流动性得分
+            volume_score = min(volume / 1000, 1.0)  # 成交量得分
+            oi_score = min(open_interest / 5000, 1.0)  # 持仓量得分
+            liquidity_score = (volume_score + oi_score) / 2
+            
+            # 4. 到期日得分 (优先选择14-21天到期)
+            if 14 <= days_to_expiry <= 21:
+                expiry_score = 1.0
+            else:
+                expiry_score = 1.0 - abs(days_to_expiry - 17.5) / 30.0
+            
+            # 计算加权总分
+            weights = {
+                'price': 0.25,
+                'leverage': 0.30,
+                'liquidity': 0.25,
+                'expiry': 0.20
+            }
+            
+            total_score = (
+                weights['price'] * price_score +
+                weights['leverage'] * leverage_score +
+                weights['liquidity'] * liquidity_score +
+                weights['expiry'] * expiry_score
+            )
+            
+            return total_score
+            
+        except Exception as e:
+            self.logger.error(f"计算期权得分时出错: {str(e)}")
+            return 0.0
 
     async def _execute_market_close(self, position: dict):
         """执行收盘平仓"""
