@@ -270,21 +270,21 @@ class DoomsdayPositionManager:
                 f"  平仓原因: 收盘前强制平仓"
             )
             
-            # 执行市价单平仓
+            # 使用 LongPort SDK 的订单提交方法
             order = await self.trade_ctx.submit_order(
                 symbol=symbol,
-                order_type=OrderType.MO,  # 使用市价单
-                side=OrderSide.Sell if position["volume"] > 0 else OrderSide.Buy,  # 使用 Sell/Buy
-                quantity=volume,
-                time_in_force=TimeInForceType.DAY,
+                order_type=OrderType.Market,  # 使用市价单
+                side=OrderSide.Sell if position["volume"] > 0 else OrderSide.Buy,
+                submitted_quantity=volume,  # 使用 submitted_quantity 而不是 quantity
+                time_in_force=TimeInForceType.Day,  # 使用 Day 而不是 DAY
                 remark="Market Close"
             )
             
             self.logger.info(f"收盘平仓订单已提交 - 订单号: {order.order_id}")
             
-            # 等待订单状态更新
+            # 等待并检查订单状态
             await asyncio.sleep(1)
-            order_status = await self.trade_ctx.get_order(order.order_id)
+            order_status = await self.trade_ctx.get_order_detail(order.order_id)  # 使用 get_order_detail
             self.logger.info(f"收盘平仓订单状态: {order_status.status}")
             
         except Exception as e:
@@ -616,19 +616,18 @@ class DoomsdayPositionManager:
         try:
             self.logger.warning(f"准备平仓: {symbol}, 数量: {volume}, 原因: {reason}")
             
-            # 确保交易上下文存在
             if not self.trade_ctx:
                 self.logger.error("交易上下文未初始化")
                 return False
             
             try:
                 # 提交市价单平仓
-                order_resp = self.trade_ctx.submit_order(
+                order_resp = await self.trade_ctx.submit_order(
                     symbol=symbol,
-                    order_type=OrderType.MO,  # 使用市价单
-                    side=OrderSide.Sell,      # 使用 Sell 而不是 SELL
-                    submitted_quantity=volume,
-                    time_in_force=TimeInForceType.Day,
+                    order_type=OrderType.Market,  # 使用 Market 而不是 MO
+                    side=OrderSide.Sell,  # 使用 Sell 而不是 SELL
+                    submitted_quantity=volume,  # 使用 submitted_quantity
+                    time_in_force=TimeInForceType.Day,  # 使用 Day
                     remark=f"Close position: {reason}"
                 )
                 
@@ -643,18 +642,15 @@ class DoomsdayPositionManager:
                 max_retries = 5
                 for i in range(max_retries):
                     await asyncio.sleep(1)
-                    order_status = self.trade_ctx.order_detail(order_id)
+                    order_status = await self.trade_ctx.get_order_detail(order_id)  # 使用 get_order_detail
                     self.logger.info(f"平仓订单状态 ({i+1}/{max_retries}): {order_status.status}")
                     
-                    if order_status.status == "Filled":  # 完全成交
-                        executed_price = float(order_status.executed_price)
-                        executed_quantity = int(order_status.executed_quantity)
-                        
+                    if order_status.status == "Filled":  # 检查完全成交
                         self.logger.info(
                             f"平仓成功:\n"
                             f"  标的: {symbol}\n"
-                            f"  数量: {executed_quantity}张\n"
-                            f"  成交价: ${executed_price:.2f}\n"
+                            f"  数量: {order_status.executed_quantity}张\n"
+                            f"  成交价: ${order_status.executed_price:.2f}\n"
                             f"  原因: {reason}"
                         )
                         return True
@@ -665,7 +661,7 @@ class DoomsdayPositionManager:
                 
                 # 超时处理
                 self.logger.warning(f"平仓订单等待超时: {order_id}")
-                self.trade_ctx.cancel_order(order_id)
+                await self.trade_ctx.cancel_order(order_id)  # 使用 cancel_order
                 return False
                 
             except Exception as e:
