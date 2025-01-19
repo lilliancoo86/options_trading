@@ -647,6 +647,15 @@ deactivate
 
 ### 1. 环境变量配置
 
+# 5. 验证权限
+ls -la /home/options_trading/config/
+
+权限说明：
+config 目录：755（trader 可读写执行，其他用户可读执行）
+config.py：600（只有 trader 可读写）
+config.example.py：644（trader 可读写，其他用户可读）
+init_.py：644（trader 可读写，其他用户可读）
+-----------------------------
 > ⚠️ **特别注意**: 
 #  必须手动填写Longport API配置
 cd /home/options_trading
@@ -663,11 +672,10 @@ sudo chmod -R 755 /home/options_trading
 # 复制配置文件
 cp .env.example .env
 cp config/config.example.py config/config.py
-
 sudo chown trader:trader config/config.py
-
 sudo chmod 600 .env
 sudo chmod 600 config/config.py
+sudo chmod 644 config/config.example.py
 
 # 创建日志文件
 sudo mkdir -p /home/options_trading/logs
@@ -767,94 +775,8 @@ sudo cat /etc/systemd/system/doomsday_option.service
 #手动运行主程序测试：
 # 确保在虚拟环境中
 source venv/bin/activate
-
 # 运行主程序
 python -m scripts.main
-
-
-让我们检查和设置 config 目录的权限：
-# 1. 检查当前权限
-ls -la /home/options_trading/config/
-
-# 2. 设置目录权限
-sudo chown -R trader:trader /home/options_trading/config
-sudo chmod 755 /home/options_trading/config
-
-# 3. 设置配置文件权限
-sudo chown trader:trader /home/options_trading/config/config.py
-sudo chown trader:trader /home/options_trading/config/config.example.py
-sudo chmod 600 /home/options_trading/config/config.py
-sudo chmod 644 /home/options_trading/config/config.example.py
-
-# 4. 确保 __init__.py 存在并设置权限
-sudo touch /home/options_trading/config/__init__.py
-sudo chown trader:trader /home/options_trading/config/__init__.py
-sudo chmod 644 /home/options_trading/config/__init__.py
-
-# 5. 验证权限
-ls -la /home/options_trading/config/
-
-
-权限说明：
-config 目录：755（trader 可读写执行，其他用户可读执行）
-config.py：600（只有 trader 可读写）
-config.example.py：644（trader 可读写，其他用户可读）
-init_.py：644（trader 可读写，其他用户可读）
-
--------------------------------------------------------
-WARNING: You are using pip version 20.1.1; however, version 24.0 is available.
-You should consider upgrading via the '/usr/local/bin/python3.7 -m pip install --upgrade pip' command.
-
-是的，让我们先升级 pip，然后再安装依赖：最好使用虚拟环境。让我们按照最佳实践来操作：
-
-# 1. 进入项目目录
-cd /home/options_trading
-
-# 2. 激活虚拟环境
-source venv/bin/activate
-
-# 卸载当前版本
-pip uninstall urllib3 -y
-
-# 安装兼容版本
-pip install 'urllib3<2.0.0'
-
-# 3. 在虚拟环境中升级 pip
-pip install --upgrade pip
-
-# 4. 重新安装依赖
-pip install -r requirements.txt --no-cache-dir
-
-# 5. 确认安装成功
-pip list | grep pytz
-
-# 6. 退出虚拟环境
-deactivate
-
-----------------------------------
-# 确保在虚拟环境中
-source venv/bin/activate
-
-# 运行主程序
-python -m scripts.main
-
----------------------------------
-# 7. 确保目录权限正确
-sudo chown -R trader:trader /home/options_trading
-sudo chmod -R 755 /home/options_trading
-sudo chmod 600 /home/options_trading/.env
-
-
-# 设置权限
-sudo chown trader:trader .env
-sudo chmod 600 .env
-
-# 确保在虚拟环境中
-source venv/bin/activate
-
-# 运行程序
-python -m scripts.main
-
 
 让我们检查并设置日志文件和目录：
 创建并设置日志目录和文件：
