@@ -121,7 +121,7 @@ class DoomsdayOptionStrategy:
             }
             
             # 获取VIX
-            vix_quotes = await self.quote_ctx.get_quote([self.vix_symbol])
+            vix_quotes = await self.quote_ctx.quote([self.vix_symbol])
             if vix_quotes:
                 market_data['vix'] = float(vix_quotes[0].last_done)
             
@@ -130,7 +130,7 @@ class DoomsdayOptionStrategy:
                 if symbol == self.vix_symbol:
                     continue
                     
-                quotes = await self.quote_ctx.get_quote([symbol])
+                quotes = await self.quote_ctx.quote([symbol])
                 if quotes:
                     quote = quotes[0]
                     # 计算日内波动率
@@ -366,7 +366,7 @@ class DoomsdayOptionStrategy:
             self.logger.error(f"执行止盈时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
 
-    async def analyze_trend(self, symbol: str) -> Dict[str, Any]:
+    async def analyze_stock_trend(self, symbol: str) -> Dict[str, Any]:
         """分析股票趋势"""
         try:
             # 获取历史K线数据

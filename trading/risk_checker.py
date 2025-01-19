@@ -15,15 +15,7 @@ class RiskChecker:
         self.tz = pytz.timezone('America/New_York')
         
         # 风险控制参数
-        self.risk_limits = config.get('risk_limits', {
-            'option': {
-                'stop_loss': -10.0,  # 期权固定10%止损
-                'take_profit': None  # 期权不设固定止盈
-            },
-            'stock': {
-                'stop_loss': -3.0,   # 股票固定3%止损
-                'take_profit': 5.0    # 股票固定5%止盈
-            },
+        self.risk_limits = {
             'volatility': {
                 'max_daily': 5.0,  # 最大日内波动率
                 'warning': 3.0     # 波动率警告线
@@ -32,12 +24,20 @@ class RiskChecker:
                 'max_level': 35.0,
                 'warning': 25.0
             },
+            'option': {
+                'stop_loss': -10.0,  # 期权固定10%止损
+                'take_profit': None  # 期权不设固定止盈
+            },
+            'stock': {
+                'stop_loss': -3.0,   # 股票固定3%止损
+                'take_profit': 5.0    # 股票固定5%止盈
+            },
             'market': {
                 'max_position_value': 100000,  # 单个持仓限额
                 'max_total_exposure': 500000,  # 总持仓限额
                 'max_positions': 10  # 最大持仓数量限制
             }
-        })
+        }
         
         # 添加收盘平仓设置
         self.market_close = {
