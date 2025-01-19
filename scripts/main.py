@@ -230,39 +230,26 @@ async def main():
         # 从环境变量加载 Longport 配置
 
         longport_config = Config.from_env()
-
         
-
+        # 创建上下文
+        quote_ctx = await QuoteContext.from_config(longport_config)
+        trade_ctx = await TradeContext.from_config(longport_config)
+        
         # 合并配置
-
         config = {
-
             **TRADING_CONFIG,
-
             'longport': {
-
                 'app_key': os.getenv('LONGPORT_APP_KEY'),
-
                 'app_secret': os.getenv('LONGPORT_APP_SECRET'),
-
                 'access_token': os.getenv('LONGPORT_ACCESS_TOKEN'),
-
                 'region': os.getenv('LONGPORT_REGION', 'cn')
-
             },
-
             'api': {
-
-                'quote_context': QuoteContext(longport_config),
-
-                'trade_context': TradeContext(longport_config)
-
+                'quote_context': quote_ctx,
+                'trade_context': trade_ctx
             },
-
             'logging': LOGGING_CONFIG,
-
-            'test_mode': args.test  # 确保这里设置了测试模式
-
+            'test_mode': args.test
         }
 
         

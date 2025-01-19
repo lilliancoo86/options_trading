@@ -121,18 +121,18 @@ class DoomsdayOptionStrategy:
             }
             
             # 获取VIX
-            vix_quote = await self.quote_ctx.quote([self.vix_symbol])
-            if vix_quote:
-                market_data['vix'] = float(vix_quote[0].last_done)
+            vix_quotes = await self.quote_ctx.get_quote([self.vix_symbol])
+            if vix_quotes:
+                market_data['vix'] = float(vix_quotes[0].last_done)
             
             # 获取标的行情
             for symbol in self.symbols:
                 if symbol == self.vix_symbol:
                     continue
                     
-                quote = await self.quote_ctx.quote([symbol])
-                if quote:
-                    quote = quote[0]
+                quotes = await self.quote_ctx.get_quote([symbol])
+                if quotes:
+                    quote = quotes[0]
                     # 计算日内波动率
                     volatility = (float(quote.high) - float(quote.low)) / float(quote.open) * 100
                     market_data['volatility'] = max(market_data['volatility'], volatility)
@@ -367,101 +367,37 @@ class DoomsdayOptionStrategy:
             self.logger.exception("详细错误信息:")
 
     async def analyze_trend(self, symbol: str) -> Dict[str, Any]:
-        """分析趋势"""
-        try:
-            # 获取历史数据
-            prices = self.price_history.get(symbol, [])
-            if not prices:
-                return {'trend': 'neutral', 'signal': None}
-            
-            # 计算指标
-            fast_ma = self._calculate_sma(prices, self.trend_config['ma_periods'][0])
-            slow_ma = self._calculate_sma(prices, self.trend_config['ma_periods'][1])
-            curve = self._calculate_sma(
-                [f + s for f, s in zip(fast_ma, slow_ma)],
-                self.trend_config['ma_periods'][2]
-            )
-            
-            # 计算VWAP和通道
-            vwap = self.vwap_history.get(symbol, [])
-            if vwap:
-                std_dev = self._calculate_stdev(vwap, self.trend_config['volume_ma'])
-                upper_band = vwap[-1] + std_dev * self.trend_config['rsi_period']
-                lower_band = vwap[-1] - std_dev * self.trend_config['rsi_period']
-                
-                current_price = prices[-1]
-                long_term_trend = self._calculate_sma(curve, self.trend_config['ma_periods'][2])
-                
-                # 趋势判断
-                is_up_trend = (long_term_trend[-1] > long_term_trend[-2] and 
-                             current_price > vwap[-1])
-                is_strong_up = is_up_trend and current_price > upper_band
-                is_down_trend = (long_term_trend[-1] < long_term_trend[-2] and 
-                               current_price < vwap[-1])
-                is_strong_down = is_down_trend and current_price < lower_band
-                was_down_trend = long_term_trend[-2] < long_term_trend[-3]
-                
-                # 生成信号
-                if is_strong_up:
-                    return {'trend': 'strong_up', 'signal': 'reduce'}
-                elif is_up_trend and was_down_trend:
-                    return {'trend': 'up', 'signal': 'add'}
-                elif is_strong_down:
-                    return {'trend': 'strong_down', 'signal': 'close'}
-                elif is_down_trend and not was_down_trend:
-                    return {'trend': 'down', 'signal': 'reduce'}
-                else:
-                    return {'trend': 'up' if is_up_trend else 'down', 'signal': None}
-            
-            return {'trend': 'neutral', 'signal': None}
-            
-        except Exception as e:
-            self.logger.error(f"分析趋势时出错: {str(e)}")
-            return {'trend': 'neutral', 'signal': None}
-
-    def _calculate_sma(self, data: List[float], length: int) -> List[float]:
-        """计算简单移动平均"""
-        if len(data) < length:
-            return data
-        return [sum(data[i:i+length])/length for i in range(len(data)-length+1)]
-
-    def _calculate_stdev(self, data: List[float], length: int) -> float:
-        """计算标准差"""
-        if len(data) < length:
-            return 0
-        subset = data[-length:]
-        mean = sum(subset) / length
-        squared_diff = [(x - mean) ** 2 for x in subset]
-        return (sum(squared_diff) / length) ** 0.5
-
-    async def analyze_stock_trend(self, stock_symbol: str) -> Dict[str, Any]:
         """分析股票趋势"""
         try:
-            # 获取K线数据
-            klines = await self.quote_ctx.history_candlesticks(
-                symbol=stock_symbol,
-                period="5m",
-                count=100
+            # 获取历史K线数据
+            end_time = datetime.now(self.tz)
+            start_time = end_time - timedelta(days=30)
+            
+            candlesticks = await self.quote_ctx.get_candlesticks(
+                symbol=symbol,
+                period="1d",  # 日K
+                count=30,     # 最近30根K线
+                adjust_type="none"
             )
             
-            if not klines:
+            if not candlesticks:
                 return {"trend": "neutral", "signal": None}
             
             # 计算技术指标
-            indicators = await self._calculate_indicators(klines)
+            indicators = await self._calculate_indicators(candlesticks)
             
             # 获取开盘涨跌幅
-            quote = await self.quote_ctx.quote([stock_symbol])
-            if not quote:
+            quotes = await self.quote_ctx.quote([symbol])
+            if not quotes:
                 return {"trend": "neutral", "signal": None}
             
-            open_change_pct = self._calculate_open_change(quote[0])
+            open_change_pct = self._calculate_open_change(quotes[0])
             
             # 综合分析趋势
             trend_analysis = self._analyze_trend(indicators, open_change_pct)
             
             self.logger.info(
-                f"趋势分析结果 - {stock_symbol}:\n"
+                f"趋势分析结果 - {symbol}:\n"
                 f"  趋势: {trend_analysis['trend']}\n"
                 f"  信号: {trend_analysis['signal']}\n"
                 f"  得分: {trend_analysis['score']:.2f}"

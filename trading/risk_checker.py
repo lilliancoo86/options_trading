@@ -25,9 +25,12 @@ class RiskChecker:
                 'take_profit': 5.0    # 股票固定5%止盈
             },
             'volatility': {
-                'min_vix': 15,
-                'max_vix': 40,
-                'max_daily_volatility': 3
+                'max_daily': 5.0,  # 最大日内波动率
+                'warning': 3.0     # 波动率警告线
+            },
+            'vix': {
+                'max_level': 35.0,
+                'warning': 25.0
             },
             'market': {
                 'max_position_value': 100000,  # 单个持仓限额
@@ -101,21 +104,12 @@ class RiskChecker:
         try:
             vol_limits = self.risk_limits['volatility']
             
-            # 检查VIX
-            if not vol_limits['min_vix'] <= vix_level <= vol_limits['max_vix']:
-                self.logger.warning(
-                    f"VIX超出安全范围:\n"
-                    f"  当前VIX: {vix_level:.1f}\n"
-                    f"  安全范围: {vol_limits['min_vix']}-{vol_limits['max_vix']}"
-                )
-                return True, "VIX超出范围"
-            
             # 检查日内波动率
-            if daily_volatility > vol_limits['max_daily_volatility']:
+            if daily_volatility > vol_limits['max_daily']:
                 self.logger.warning(
                     f"日内波动率过高:\n"
                     f"  当前波动率: {daily_volatility:.1f}%\n"
-                    f"  最大限制: {vol_limits['max_daily_volatility']}%"
+                    f"  最大限制: {vol_limits['max_daily']}%"
                 )
                 return True, "波动率过高"
             

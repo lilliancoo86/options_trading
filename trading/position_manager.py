@@ -330,3 +330,13 @@ class DoomsdayPositionManager:
             else:
                 self.logger.error(f"未知错误: {str(e)}")
             return False
+
+    async def init_trade_context(self):
+        """初始化交易上下文"""
+        try:
+            if not self.trade_ctx:
+                self.trade_ctx = self.config['api']['trade_context']
+                await self.trade_ctx.set_on_order_changed(self._on_order_changed)
+                self.logger.info("交易上下文初始化成功")
+        except Exception as e:
+            self.logger.error(f"初始化交易上下文失败: {str(e)}")
