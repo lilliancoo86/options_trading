@@ -28,6 +28,8 @@ import pytz
 
 import argparse
 
+from longport.openapi import Config, QuoteContext, TradeContext
+
 
 
 # 设置基础路径
@@ -225,13 +227,25 @@ async def main():
 
         
 
+        # 从环境变量加载 Longport 配置
+
+        longport_config = Config.from_env()
+
+        
+
         # 合并配置
 
         config = {
 
             **TRADING_CONFIG,
 
-            'api': API_CONFIG,
+            'api': {
+
+                'quote_context': QuoteContext(longport_config),
+
+                'trade_context': TradeContext(longport_config)
+
+            },
 
             'logging': LOGGING_CONFIG
 
