@@ -209,10 +209,23 @@ class DoomsdayPositionManager:
     def can_open_position(self, symbol: str) -> bool:
         """检查是否可以开新仓位"""
         try:
-            # 检查持仓数量限制
-            current_positions = len(self.positions.get("active", []))
-            if current_positions >= self.position_limits['max_positions']:
-                self.logger.warning(f"达到最大持仓数量限制: {current_positions}")
+            # 获取当前价格
+            quote = await self.quote_ctx.quote([symbol])
+            if not quote:
+                self.logger.error(f"获取{symbol}价格失败")
+                return False
+            
+            current_price = float(quote[0].last_done)
+            
+            # 检查风险限制
+            risk_high, reason = self.risk_checker.check_new_position_risk(
+                symbol=symbol,
+                price=current_price,
+                volume=1  # 默认交易1张
+            )
+            
+            if risk_high:
+                self.logger.warning(f"风险检查未通过: {reason}")
                 return False
             
             return True
@@ -250,3 +263,57 @@ class DoomsdayPositionManager:
             
         except Exception as e:
             self.logger.error(f"打印交易状态时出错: {str(e)}")
+
+    async def open_position(self, symbol: str, volume: int, reason: str = "") -> bool:
+        """开仓"""
+        try:
+            self.logger.info(f"准备开仓: {symbol}, 数量: {volume}, 原因: {reason}")
+            
+            if not self.trade_ctx:
+                self.logger.error("交易上下文未初始化")
+                return False
+            
+            # 检查是否可以开仓
+            if not self.can_open_position(symbol):
+                return False
+            
+            # 提交市价单开仓
+            order = await self.trade_ctx.submit_order(
+                symbol=symbol,
+                order_type=OrderType.Market,
+                side=OrderSide.Buy,
+                submitted_quantity=volume,
+                time_in_force=TimeInForceType.Day,
+                remark=f"Open position: {reason}"
+            )
+            
+            if not order or not hasattr(order, 'order_id'):
+                self.logger.error("开仓订单提交失败")
+                return False
+            
+            # 等待订单成交
+            for _ in range(5):
+                await asyncio.sleep(1)
+                order_status = await self.trade_ctx.get_order_detail(order.order_id)
+                
+                if order_status.status == "Filled":
+                    self.logger.info(
+                        f"开仓成功:\n"
+                        f"  标的: {symbol}\n"
+                        f"  数量: {order_status.executed_quantity}张\n"
+                        f"  成交价: ${order_status.executed_price:.2f}\n"
+                        f"  原因: {reason}"
+                    )
+                    return True
+                    
+                elif order_status.status in ["Failed", "Rejected", "Cancelled"]:
+                    self.logger.error(f"开仓订单失败: {order_status.status}")
+                    return False
+            
+            # 超时处理
+            await self.trade_ctx.cancel_order(order.order_id)
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"执行开仓操作失败: {str(e)}")
+            return False

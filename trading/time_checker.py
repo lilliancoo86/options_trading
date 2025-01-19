@@ -98,13 +98,11 @@ class TimeChecker:
             current_date = datetime.now(self.tz).date()
             
             # 检查是否为周末
-            if current_date.weekday() > 4:  # 5是周六，6是周日
-                self.logger.info(f"当前为周末: {current_date}")
+            if current_date.weekday() > 4:  # 5=周六, 6=周日
                 return False
             
             # 检查是否为假期
             if current_date.strftime('%Y-%m-%d') in self.holidays:
-                self.logger.info(f"当前为假期: {current_date}")
                 return False
             
             return True
@@ -119,29 +117,48 @@ class TimeChecker:
             current = datetime.now(self.tz)
             next_date = current.date()
             
-            # 如果当前已过交易时间，获取下一个交易日
-            if current.strftime('%H:%M') >= self.market_times['regular']['close']:
+            # 如果当前已过今日开盘时间，获取下一个交易日
+            if current.strftime('%H:%M') >= self.market_times['regular']['open']:
                 next_date += timedelta(days=1)
             
-            # 查找下一个交易日
+            # 找到下一个交易日
             while True:
-                # 跳过周末和假期
-                if (next_date.weekday() <= 4 and 
-                    next_date.strftime('%Y-%m-%d') not in self.holidays):
+                if (next_date.weekday() <= 4 and  # 非周末
+                    next_date.strftime('%Y-%m-%d') not in self.holidays):  # 非假期
                     break
                 next_date += timedelta(days=1)
             
             # 构建开盘时间
             open_time = datetime.strptime(
-                self.market_times['regular']['open'], 
+                self.market_times['regular']['open'],
                 '%H:%M'
             ).time()
             
-            return datetime.combine(next_date, open_time)
+            next_open = datetime.combine(next_date, open_time)
+            return self.tz.localize(next_open)
             
         except Exception as e:
-            self.logger.error(f"获取下一个交易日开盘时间出错: {str(e)}")
+            self.logger.error(f"获取下一个开市时间出错: {str(e)}")
             return datetime.now(self.tz) + timedelta(days=1)
+
+    def get_session_status(self) -> Dict[str, bool]:
+        """获取各交易时段状态"""
+        try:
+            current_time = datetime.now(self.tz).strftime('%H:%M')
+            
+            status = {}
+            for session in ['pre_market', 'regular', 'post_market']:
+                session_times = self.market_times.get(session)
+                if session_times:
+                    status[session] = (
+                        session_times['open'] <= current_time <= session_times['close']
+                    )
+            
+            return status
+            
+        except Exception as e:
+            self.logger.error(f"获取交易时段状态出错: {str(e)}")
+            return {}
 
     def log_time_status(self):
         """记录时间状态"""
@@ -152,8 +169,7 @@ class TimeChecker:
                 f"\n=== 时间状态 ===\n"
                 f"当前时间: {current.strftime('%Y-%m-%d %H:%M:%S')}\n"
                 f"交易日: {'是' if self.is_trading_day() else '否'}\n"
-                f"交易时段: {'是' if self.is_trading_time() else '否'}\n"
-                f"下次开盘: {self.get_next_market_open().strftime('%Y-%m-%d %H:%M')}\n"
+                f"交易时段: {self.get_session_status()}\n"
                 f"{'='*20}"
             )
             

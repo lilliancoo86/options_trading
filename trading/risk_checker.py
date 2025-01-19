@@ -28,6 +28,11 @@ class RiskChecker:
                 'min_vix': 15,
                 'max_vix': 40,
                 'max_daily_volatility': 3
+            },
+            'market': {
+                'max_position_value': 100000,  # 单个持仓限额
+                'max_total_exposure': 500000,  # 总持仓限额
+                'max_positions': 10  # 最大持仓数量限制
             }
         })
         
@@ -170,3 +175,41 @@ class RiskChecker:
     def _is_option(self, symbol: str) -> bool:
         """检查是否为期权"""
         return any(x in symbol for x in ['C', 'P'])
+
+    def check_new_position_risk(self, symbol: str, price: float, volume: int) -> Tuple[bool, str]:
+        """检查新开仓位的风险"""
+        try:
+            # 计算持仓价值
+            position_value = price * volume
+            
+            # 检查单个持仓限额
+            if position_value > self.risk_limits['market']['max_position_value']:
+                self.logger.warning(
+                    f"超过单个持仓限额:\n"
+                    f"  标的: {symbol}\n"
+                    f"  持仓价值: ${position_value:.2f}\n"
+                    f"  限额: ${self.risk_limits['market']['max_position_value']}"
+                )
+                return True, "超过持仓限额"
+            
+            # 检查总持仓限额
+            total_value = self.risk_stats['total_exposure'] + position_value
+            if total_value > self.risk_limits['market']['max_total_exposure']:
+                self.logger.warning(
+                    f"超过总持仓限额:\n"
+                    f"  当前总持仓: ${self.risk_stats['total_exposure']:.2f}\n"
+                    f"  新增持仓: ${position_value:.2f}\n"
+                    f"  限额: ${self.risk_limits['market']['max_total_exposure']}"
+                )
+                return True, "超过总持仓限额"
+            
+            # 检查持仓数量限制
+            if self.risk_stats['total_positions'] >= self.risk_limits['market']['max_positions']:
+                self.logger.warning(f"超过最大持仓数量限制: {self.risk_stats['total_positions']}")
+                return True, "超过持仓数量限制"
+            
+            return False, ""
+            
+        except Exception as e:
+            self.logger.error(f"检查新开仓位风险时出错: {str(e)}")
+            return False, ""
