@@ -231,9 +231,13 @@ async def main():
 
         longport_config = Config.from_env()
         
-        # 创建上下文
-        quote_ctx = await QuoteContext.from_config(longport_config)
-        trade_ctx = await TradeContext.from_config(longport_config)
+        # 创建上下文 - 直接使用构造函数
+        quote_ctx = QuoteContext(longport_config)
+        trade_ctx = TradeContext(longport_config)
+        
+        # 等待连接建立
+        await quote_ctx.connect()
+        await trade_ctx.connect()
         
         # 合并配置
         config = {
