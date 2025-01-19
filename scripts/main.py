@@ -100,291 +100,87 @@ async def run_strategy(strategy, position_manager, risk_checker, time_checker, l
 
     try:
 
+        # 初始化策略
+
         await strategy.initialize()
+
+        
+
+        # 获取市场数据
 
         market_data = await strategy.get_market_data()
 
         
 
-        # 获取 VIX 值和风险限制
+        # 检查交易条件
 
-        vix_level = market_data['vix']
+        if not await strategy.check_trading_conditions(market_data):
 
-        risk_limits = TRADING_CONFIG.get('risk_limits', {})
+            logger.info("当前不满足交易条件")
 
-        volatility_limits = risk_limits.get('volatility', {})
+            return
 
-        min_vix = volatility_limits.get('min_vix', 15)
+            
 
-        max_vix = volatility_limits.get('max_vix', 40)
+        # 获取交易信号
 
-        
+        signals = await strategy.generate_trading_signals()
 
-        # 检查每个标的的交易条件
+        if not signals:
 
-        trading_conditions = []
+            return
 
-        for quote in market_data['quotes']:
+            
 
-            if quote.symbol == "VIX.US":
+        # 执行交易信号
+
+        for signal in signals:
+
+            # 检查持仓限制
+
+            if not position_manager.can_open_position(signal['symbol']):
 
                 continue
 
                 
 
-            # 计算日内波动率
+            # 执行开仓
 
-            daily_volatility = (quote.high - quote.low) / quote.open * 100
+            await position_manager.open_position(
 
-            # 判断是否满足所有条件
+                symbol=signal['symbol'],
 
-            all_conditions_met = (
+                volume=signal['volume'],
 
-                min_vix <= vix_level <= max_vix and
-
-                time_checker.is_trading_time() and
-
-                daily_volatility <= volatility_limits.get('max_daily_volatility', 3) * 100
+                reason=signal['reason']
 
             )
 
-            
+        
 
-            conditions = {
+        # 检查现有持仓
 
-                "标的": quote.symbol,
+        positions = await position_manager.get_real_positions()
 
-                "VIX条件": "满足" if min_vix <= vix_level <= max_vix else "不满足",
+        if positions and positions.get("active"):
 
-                "交易时间": "是" if time_checker.is_trading_time() else "否",
+            for position in positions["active"]:
 
-                "波动率": f"{daily_volatility:.2f}%",
+                # 检查风险状态
 
-                "状态": "可交易" if all_conditions_met else "禁止交易"
+                await position_manager.check_position_risk(position)
 
-            }
+                
 
-            trading_conditions.append(conditions)
+                # 检查是否需要收盘平仓
+
+                await position_manager.check_market_close(position)
 
         
 
-        # 获取当前持仓状况
+        # 添加休眠时间
 
-        positions = position_manager.get_all_positions()
-
-        position_status = []
-
-        for symbol, pos in positions.items():
-
-            status = {
-
-                "标的": symbol,
-
-                "持仓量": pos['quantity'],
-
-                "持仓价": f"{pos['entry_price']:.2f}",
-
-                "现价": f"{pos['current_price']:.2f}",
-
-                "盈亏": f"{pos['pnl']:.2f}",
-
-                "持仓时间": f"{pos['holding_time'].total_seconds()/3600:.1f}小时"
-
-            }
-
-            position_status.append(status)
-
-        
-
-        # 每5分钟打印一次完整状态
-
-        current_time = datetime.now()
-
-        if (not hasattr(run_strategy, '_last_status_log') or 
-                (current_time - run_strategy._last_status_log).seconds >= 300):
-
-            
-
-            logger.info("\n=== 交易系统状态 ===")
-
-            logger.info(f"VIX指数: {vix_level:.2f} (限制范围: {min_vix}-{max_vix})")
-
-            
-
-            logger.info("\n交易条件状态:")
-
-            if trading_conditions:
-
-                table = tabulate(
-
-                    trading_conditions,
-
-                    headers="keys",
-
-                    tablefmt="grid",
-
-                    numalign="right"
-
-                )
-
-                logger.info(f"\n{table}")
-
-            
-
-            logger.info("\n当前持仓状态:")
-
-            if position_status:
-
-                table = tabulate(
-
-                    position_status,
-
-                    headers="keys",
-
-                    tablefmt="grid",
-
-                    numalign="right"
-
-                )
-
-                logger.info(f"\n{table}")
-
-            else:
-
-                logger.info("当前无持仓")
-
-            
-
-            run_strategy._last_status_log = current_time
-
-        
-
-        # 检查市场条件
-
-        market_condition = risk_checker.check_market_condition(
-
-            vix_level,
-
-            time_checker.current_time_str()
-
-        )
-
-        
-
-        # 只在状态变化时记录日志
-
-        if (not hasattr(run_strategy, '_last_market_condition') or 
-                run_strategy._last_market_condition != market_condition):
-
-            if not market_condition:
-
-                logger.warning("市场条件不满足交易要求")
-
-            else:
-
-                logger.info("市场条件满足交易要求")
-
-            run_strategy._last_market_condition = market_condition
-
-            
-
-        if not market_condition:
-
-            await asyncio.sleep(60)
-
-            return
-
-        
-
-        # 生成交易信号
-
-        signals = await strategy.generate_signals(market_data)
-
-        
-
-        # 执行交易信号
-
-        if signals:
-
-            await strategy.execute_signals(signals)
-
-        
-
-        # 处理交易信号
-
-        for signal in signals:
-
-            # 检查是否可以开仓
-
-            if not position_manager.can_open_position(
-
-                signal['symbol'],
-
-                vix_level  # 使用提取的 VIX 值
-
-            ):
-
-                continue
-
-            
-
-            # 计算仓位大小
-
-            position_size = strategy.calculate_position_size(signal)
-
-            
-
-            # 生成订单
-
-            order = {
-
-                'symbol': signal['symbol'],
-
-                'quantity': position_size,
-
-                'price': signal['price'],
-
-                'volatility': signal.get('volatility', 0.2),
-
-                'delta': signal.get('delta', 0),
-
-                'theta': signal.get('theta', 0)
-
-            }
-
-            
-
-            # 开仓
-
-            if position_manager.open_position(order):
-
-                logger.info(f"开仓成功: {signal['symbol']}, 数量: {position_size}")
-
-        
-
-        # 更新现有持仓
-
-        active_positions = position_manager.get_all_positions()
-
-        for symbol in active_positions:
-
-            current_price = await strategy.get_current_price(symbol)
-
-            
-
-            # 检查是否需要平仓
-
-            if position_manager.should_close_position(symbol, current_price):
-
-                close_info = position_manager.close_position(symbol, current_price)
-
-                logger.info(f"平仓触发: {symbol}, 盈亏: {close_info['pnl']}")
-
-        
-
-        # 添加强制休眠时间
-
-        await asyncio.sleep(1)  # 至少间隔1秒
+        await asyncio.sleep(1)
 
         
 
@@ -392,17 +188,9 @@ async def run_strategy(strategy, position_manager, risk_checker, time_checker, l
 
         logger.error(f"策略执行错误: {str(e)}")
 
+        logger.exception("详细错误信息:")
+
         await asyncio.sleep(5)
-
-        # 如果发生错误，检查是否需要平仓
-
-        if position_manager and position_manager.get_all_positions():
-
-            logger.warning("发生错误，尝试平仓所有持仓")
-
-            await strategy.close()  # 添加关闭连接的调用
-
-            position_manager.force_close_all()
 
 
 
