@@ -95,7 +95,7 @@ LOGGING_CONFIG = {
     'level': logging.INFO,
     'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     'date_format': '%Y-%m-%d %H:%M:%S',
-    'file_path': str(Path(__file__).parent.parent / 'logs' / 'trading.log'),
+    'file_path': 'logs/trading.log',  # 保持相对路径
     'max_bytes': 10 * 1024 * 1024,  # 10MB
     'backup_count': 5,
 }
