@@ -235,10 +235,6 @@ async def main():
         quote_ctx = QuoteContext(longport_config)
         trade_ctx = TradeContext(longport_config)
         
-        # 等待连接建立
-        await quote_ctx.connect()
-        await trade_ctx.connect()
-        
         # 合并配置
         config = {
             **TRADING_CONFIG,
