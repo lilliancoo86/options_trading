@@ -14,7 +14,9 @@ from longport.openapi import (
     SubType,  # 正确导入 SubType
     OrderType,
     OrderSide,
-    TimeInForceType
+    TimeInForceType,
+    PeriodType,  # 添加 PeriodType
+    AdjustType   # 添加 AdjustType
 )
 import os
 import json
@@ -121,7 +123,7 @@ class DoomsdayOptionStrategy:
             }
             
             # 获取VIX
-            vix_quotes = await self.quote_ctx.quote([self.vix_symbol])
+            vix_quotes = await self.quote_ctx.get_basic_quote([self.vix_symbol])
             if vix_quotes:
                 market_data['vix'] = float(vix_quotes[0].last_done)
             
@@ -130,7 +132,7 @@ class DoomsdayOptionStrategy:
                 if symbol == self.vix_symbol:
                     continue
                     
-                quotes = await self.quote_ctx.quote([symbol])
+                quotes = await self.quote_ctx.get_basic_quote([symbol])
                 if quotes:
                     quote = quotes[0]
                     # 计算日内波动率
@@ -373,11 +375,11 @@ class DoomsdayOptionStrategy:
             end_time = datetime.now(self.tz)
             start_time = end_time - timedelta(days=30)
             
-            candlesticks = await self.quote_ctx.get_candlesticks(
+            candlesticks = await self.quote_ctx.get_candlestick(
                 symbol=symbol,
-                period="1d",  # 日K
-                count=30,     # 最近30根K线
-                adjust_type="none"
+                period=PeriodType.Day,
+                count=30,
+                adjust_type=AdjustType.NoAdjust
             )
             
             if not candlesticks:
@@ -387,7 +389,7 @@ class DoomsdayOptionStrategy:
             indicators = await self._calculate_indicators(candlesticks)
             
             # 获取开盘涨跌幅
-            quotes = await self.quote_ctx.quote([symbol])
+            quotes = await self.quote_ctx.get_basic_quote([symbol])
             if not quotes:
                 return {"trend": "neutral", "signal": None}
             
