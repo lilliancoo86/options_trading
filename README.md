@@ -287,123 +287,47 @@ sudo rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql-2022
 wget https://repo.mysql.com/RPM-GPG-KEY-mysql-2022
 sudo rpm --import RPM-GPG-KEY-mysql-2022
 
-清理 YUM 缓存并重新生成：
-
+# 清理 YUM 缓存并重新生成：
 sudo yum clean all
 sudo yum makecache
-
------------------------------------------------------------------------------
-
-确保 MySQL 配置文件 (通常是 /etc/my.cnf) 包含以下设置:
-
+-----------------------------------------------------------------------
+# 确保 MySQL 配置文件 (通常是 /etc/my.cnf) 包含以下设置:
 [mysqld]
 character-set-server = utf8mb4
 collation-server = utf8mb4_unicode_ci
-
-重启 MySQL 服务:
-
+# 重启 MySQL 服务:
 sudo systemctl restart mysqld
-
------------------------------------------------------------------------------
+-----------------------------------------------------------------------
 # 初始化数据库
 要查看当前 MySQL 的数据目录位置，可以执行：
-
 mysql -u option_trading -p -e "SHOW VARIABLES LIKE 'datadir';"
-
-
 首先，确保 option_trading 用户已创建，并且有足够的权限来执行导入操作。
-
 使用 root 用户登录：
-
 mysql -u root -p
-
-执行授权命令：
-
+# 执行授权命令：
 -- 使用数据库
 USE option_trading;
-
 -- 删除已存在的用户（如果需要）
 DROP USER IF EXISTS 'option_trading'@'localhost';
-
 确保 SQL 文件存在且可读：
-
 ls -l /home/options_trading/database/option_trading.sql
-
 然后以 root 用户执行数据库初始化脚本：
 # 以 root 用户执行 option_trading.sql
 mysql -u root -p < /home/options_trading/database/option_trading.sql
-
 -- 验证权限
 SHOW GRANTS FOR 'option_trading'@'localhost';
-
 如果导入成功，你应该能看到一系列的 SQL 语句执行成功的消息。
-
 导入完成后，你可以检查数据库中的表：
-
-------------------------
-验证结果：
-
 -- 检查数据库
 SHOW DATABASES;
-
-+--------------------+
-| Database           |
-+--------------------+
-| information_schema |
-| mysql              |
-| option_trading     |
-| performance_schema |
-| sys                |
-+--------------------+
-5 rows in set (0.00 sec)
-
 -- 使用数据库
 USE option_trading;
-
 -- 检查表
 SHOW TABLES;
-
-+--------------------------+
-| Tables_in_option_trading |
-+--------------------------+
-| daily_stats              |
-| market_data              |
-| option_metrics           |
-| option_trades            |
-| options                  |
-| order_status             |
-| position_records         |
-| risk_events              |
-| signals                  |
-| system_status            |
-+--------------------------+
-10 rows in set (0.00 sec)
-
-
 -- 检查用户权限
 SHOW GRANTS FOR 'option_trading'@'localhost';
-
-+----------------------------------------------------------------------------+
-| Grants for option_trading@localhost                                        |
-+----------------------------------------------------------------------------+
-| GRANT USAGE ON *.* TO 'option_trading'@'localhost'                         |
-| GRANT ALL PRIVILEGES ON `option_trading`.* TO 'option_trading'@'localhost' |
-+----------------------------------------------------------------------------+
-2 rows in set (0.00 sec)
-
-
 -- 检查初始化数据
 SELECT * FROM system_status;
-
-+----+------------------+---------+---------------------+-------------+-------------------------------------------------+---------------------+---------------------+
-| id | component        | status  | last_heartbeat      | error_count | details                                         | created_at          | updated_at          |
-+----+------------------+---------+---------------------+-------------+-------------------------------------------------+---------------------+---------------------+
-| 16 | data_fetcher     | STOPPED | 2025-01-12 19:05:28 |           0 | {"status": "初始化", "last_update": null}       | 2025-01-12 19:05:28 | 2025-01-12 19:05:28 |
-| 17 | trade_executor   | STOPPED | 2025-01-12 19:05:28 |           0 | {"status": "初始化", "orders_processed": 0}     | 2025-01-12 19:05:28 | 2025-01-12 19:05:28 |
-| 18 | risk_checker     | STOPPED | 2025-01-12 19:05:28 |           0 | {"status": "初始化", "checks_performed": 0}     | 2025-01-12 19:05:28 | 2025-01-12 19:05:28 |
-| 19 | position_manager | STOPPED | 2025-01-12 19:05:28 |           0 | {"status": "初始化", "active_positions": 0}     | 2025-01-12 19:05:28 | 2025-01-12 19:05:28 |
-| 20 | option_strategy  | STOPPED | 2025-01-12 19:05:28 |           0 | {"status": "初始化", "signals_generated": 0}    | 2025-01-12 19:05:28 | 2025-01-12 19:05:28 |
-+----+------------------+---------+---------------------+-------------+-------------------------------------------------+---------------------+---------------------+
 
 请注意，每条语句都需要单独执行，并以分号 (;) 结束。
 
@@ -422,16 +346,14 @@ reset_database.sql 在以下情况下很有用：
 数据出现异常需要重置
 版本升级时需要清理旧数据
 
-
-首先创建备份（以防万一）：
+# 首先创建备份（以防万一）：
 # 备份当前数据库
 mysqldump -u option_trading -p option_trading > option_trading_backup_$(date +%Y%m%d).sql
 
-执行重置脚本：
+# 执行重置脚本：
 
 # 方法1：直接执行SQL文件
 mysql -u option_trading -p option_trading < /home/options_trading/database/reset_database.sql
-
 # 登录 MySQL
 mysql -u option_trading -p option_trading
 
@@ -439,26 +361,19 @@ kWevwjjk6*u4k
 
 -- 检查表结构
 SHOW TABLES;
-
 -- 检查系统状态表的初始记录
 SELECT * FROM system_status;
-
 -- 检查触发器是否正确创建
 SHOW TRIGGERS;
-
-如果遇到权限问题，可以使用 root 用户：
+# 如果遇到权限问题，可以使用 root 用户：
 # 使用 root 用户执行
 sudo mysql -u root -p option_trading < /home/options_trading/scripts/sql/reset_database.sql
 
-如果出现问题可以恢复备份：
-
-# 恢复备份
+# 如果出现问题可以恢复备份：
 mysql -u option_trading -p option_trading < option_trading_backup_20250112.sql
 
-如果你修改了 SQL 文件，记得重新导入：
-
+#如果你修改了 SQL 文件，记得重新导入：
 SOURCE /home/options_trading/database/option_trading.sql;
-
 ---------------
 重启MySQL服务以应用更改：
 sudo systemctl restart mysqld
@@ -727,12 +642,10 @@ EOF
 
 # 设置正确的权限
 sudo chmod 644 /etc/cron.d/doomsday_option
-
 # 添加以下内容（每个交易日的开盘前和收盘后）
 完成后，可以使用以下命令验证：
 # 查看当前 crontab
 crontab -l
-
 # 或者查看系统 cron 任务
 ls -l /etc/cron.d/
 cat /etc/cron.d/doomsday_option
@@ -741,36 +654,25 @@ cat /etc/cron.d/doomsday_option
 只在交易时间内运行和记录日志
 3. 通过 crontab 管理服务的启动和停止
 避免了重复的日志输出
---------------------------------------------
 
 # 检查目录结构
 tree -L 2 /home/options_trading
-
 # 检查关键文件权限
 ls -la /home/options_trading/
 ls -la /home/options_trading/logs/
 ls -la /home/options_trading/config/
 ls -la /home/options_trading/venv/bin/
-
 # 查看服务状态
 sudo systemctl status doomsday_option
-
 # 查看日志
 sudo tail -f /home/options_trading/logs/doomsday.log
 sudo tail -f /home/options_trading/logs/doomsday.error.log
-
 查看完整的系统#systemd日志：
-
 sudo journalctl -u doomsday_option.service -n 50 --no-pager
-
 # 检查应用日志
 sudo tail -f /home/options_trading/logs/doomsday.log
-
 检查服务配置文件：
-
 sudo cat /etc/systemd/system/doomsday_option.service
-
-
 
 #手动运行主程序测试：
 # 确保在虚拟环境中
@@ -778,158 +680,76 @@ source venv/bin/activate
 # 运行主程序
 python -m scripts.main
 
+python -m scripts.test_risk_management
+
 让我们检查并设置日志文件和目录：
 创建并设置日志目录和文件：
 # 创建日志目录（如果不存在）
 sudo mkdir -p /home/options_trading/logs
-
+# 设置所有权
+sudo chown -R trader:trader /home/options_trading/logs
+sudo chmod 755 /home/options_trading/logs
 # 创建日志文件
 sudo touch /home/options_trading/logs/doomsday.log
 sudo touch /home/options_trading/logs/doomsday.error.log
 sudo touch /home/options_trading/logs/trading.log
-
-# 设置所有权
-sudo chown -R trader:trader /home/options_trading/logs
-
-# 设置目录权限
-sudo chmod 755 /home/options_trading/logs
-
 # 设置日志文件权限
 sudo chmod 644 /home/options_trading/logs/doomsday.log
 sudo chmod 644 /home/options_trading/logs/doomsday.error.log
 sudo chmod 644 /home/options_trading/logs/trading.log
 # 检查目录结构和权限
 ls -la /home/options_trading/logs/
-
 # 测试日志写入
 sudo -u trader bash -c 'echo "Test log entry" >> /home/options_trading/logs/doomsday.log'
-
 # 重启服务
 sudo systemctl restart doomsday_option
-
 # 检查状态
 sudo systemctl status doomsday_option
-
 # 查看日志
 sudo tail -f /home/options_trading/logs/doomsday.log
 sudo tail -f /home/options_trading/logs/doomsday.error.log
-
 ----------------------------------
 # 复制服务文件
 sudo cp scripts/doomsday_option.service /etc/systemd/system/
-
 # 设置权限
 sudo chmod 644 /etc/systemd/system/doomsday_option.service
-
 # 8. 重启服务
 sudo systemctl daemon-reload
 sudo systemctl restart doomsday_option
 sudo systemctl status doomsday_option
-sudo journalctl -u doomsday_option -f
-
-
-运行测试：
-python -m scripts.test_risk_management
-
----------------------------------
-
-环境设置完成
-请重新登录 trader 用户以使设置生效：
-1. 退出当前会话: exit
-2. 重新登录: su - trader
-3. 验证环境: systemctl --user status
-
-# 重新登录
-su - trader
-# 验证
-systemctl --user status
-echo $XDG_RUNTIME_DIR
-
-如果还有问题，可以尝试重启系统：
-# 重启系统
-reboot
-# 重启后登录
-su - trader
-# 验证
-systemctl --user status
-
-------------------------------------
-
-检查时区设置：
-# 检查系统时区
-date
-timedatectl
-
-# 设置系统时区（如果需要）
-sudo timedatectl set-timezone America/New_York
-------------------------------------------------------
-放弃本地修改（如果确定本地修改不需要）：
-# 1. 放弃本地修改
-git checkout -- README.md scripts/doomsday_option.service
-
-# 2. 拉取远程更新
-git pull
-
-# 3. 重新应用服务配置
-sudo cp scripts/doomsday_option.service /etc/systemd/system/
-# 2. 设置权限
-sudo chmod 644 /etc/systemd/system/doomsday_option.service
-# 重启服务
-sudo systemctl daemon-reload
-sudo systemctl restart doomsday_option
-
-# 3. 检查状态
-sudo systemctl status doomsday_option
 sudo systemctl list-timers --all
-
-# 查看系统日志
 sudo journalctl -u doomsday_option -f
 
+要终止服务，可以使用以下命令：
+# 停止服务
+sudo systemctl stop doomsday_option
+# 检查服务状态
+sudo systemctl status doomsday_option
+# 如果要禁用开机自启
+sudo systemctl disable doomsday_option
+# 如果要完全移除服务
+sudo rm /etc/systemd/system/doomsday_option.service
+sudo systemctl daemon-reload
+sudo systemctl reset-failed
 # 查看应用日志
 sudo tail -f /home/options_trading/logs/trading.log
 sudo tail -f /home/options_trading/logs/doomsday.log
 sudo tail -f /home/options_trading/logs/doomsday.error.log
 
-# 检查进程
-ps aux | grep doomsday_option
-
-# 检查 Python 进程
-ps aux | grep python
-
-# 检查日志文件
-ls -la /home/options_trading/logs/
-
-
-要终止服务，可以使用以下命令：
-# 停止服务
-sudo systemctl stop doomsday_option
-
-# 检查服务状态
-sudo systemctl status doomsday_option
-
-# 如果要禁用开机自启
-sudo systemctl disable doomsday_option
-
-# 如果要完全移除服务
-sudo rm /etc/systemd/system/doomsday_option.service
-sudo systemctl daemon-reload
-sudo systemctl reset-failed
-
-
--------------------------------------------------------
-
+检查时区设置：
+# 检查系统时区
+date
+timedatectl
+# 设置系统时区（如果需要）
+sudo timedatectl set-timezone America/New_York
 ### 2. 数据库维护
-
 > ⚠️ **特别注意**: 定期清理过期数据，避免数据库占用过大
-
 ```bash
 # 优化数据库表
 mysql -u option_trading -p option_trading -e "OPTIMIZE TABLE options, option_trades, position_records;"
-
 # 清理30天前的数据
 mysql -u option_trading -p option_trading -e "DELETE FROM market_data WHERE data_time < DATE_SUB(NOW(), INTERVAL 30 DAY);"
 ```
-
 ### 3. 监控检查
 ```bash
 # 检查系统资源
@@ -940,35 +760,25 @@ top
 # 检查日志
 tail -f logs/trading.log
 ```
-
-## 故障排除
-
-
 ### 2. 常见问题处理
-
 - **服务无法启动**
   - 检查日志: `journalctl -u doomsday_option -n 100`
   - 验证配置: `python3 scripts/verify_config.py`
   - 检查权限: `ls -l /home/options_trading`
-
 - **数据库连接失败**
   - 检查服务: `systemctl status mysqld`
   - 验证账户: `mysql -u option_trading -p -e "SELECT 1;"`
   - 检查配置: `cat .env | grep DB_`
-
 ## 注意事项
-
 ### 1. 安全建议
 - 禁用root SSH登录
 - 使用密钥认证
 - 定期更新系统和依赖包
 - 定期备份数据库
-
 ### 2. 性能优化
 - 定期清理日志文件
 - 优化数据库查询
 - 监控系统资源使用
-
 ### 3. 特殊说明
 > ⚠️ **重要提示**:
 > 1. 系统使用美东时区，请确保服务器时间正确同步
@@ -976,14 +786,10 @@ tail -f logs/trading.log
 > 3. 必须手动配置Longport API密钥
 > 4. 定期检查数据库备份
 > 5. 关注长桥API的版本更新
-
 ## 版本信息
-
 - 版本号: v1.0.0
 - 更新日期: 2024-01-20
 - 支持的Python版本: 3.7.9
 - 支持的操作系统: CentOS 7
-
 ## 许可证
-
 MIT License
