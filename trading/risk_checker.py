@@ -2,19 +2,20 @@
 风险检查模块
 负责检查持仓风险和市场风险
 """
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 import logging
 from datetime import datetime
 import pytz
+import re
 
 class RiskChecker:
     def __init__(self, config: Dict[str, Any]):
-        self.logger = logging.getLogger(__name__)
         self.config = config
+        self.logger = logging.getLogger(__name__)
         self.tz = pytz.timezone('America/New_York')
         
-        # 简化风险控制参数
-        self.risk_limits = {
+        # 风险控制参数
+        self.risk_limits = config.get('risk_limits', {
             'option': {
                 'stop_loss': -10.0,  # 期权固定10%止损
                 'take_profit': None  # 期权不设固定止盈
@@ -22,8 +23,13 @@ class RiskChecker:
             'stock': {
                 'stop_loss': -3.0,   # 股票固定3%止损
                 'take_profit': 5.0    # 股票固定5%止盈
+            },
+            'volatility': {
+                'min_vix': 15,
+                'max_vix': 40,
+                'max_daily_volatility': 3
             }
-        }
+        })
         
         # 添加收盘平仓设置
         self.market_close = {
@@ -31,68 +37,89 @@ class RiskChecker:
             'warning_time': '15:40'       # 收盘前20分钟发出警告
         }
 
-    async def check_risk(self, position: Dict[str, Any]) -> bool:
-        """检查风险"""
+    async def check_position_risk(self, position: Dict[str, Any]) -> Tuple[bool, str]:
+        """
+        检查持仓风险
+        
+        Returns:
+            Tuple[bool, str]: (是否需要平仓, 平仓原因)
+        """
         try:
-            # 首先检查是否需要收盘平仓
-            current_time = datetime.now(self.tz).strftime('%H:%M')
+            symbol = position['symbol']
+            current_price = float(position['current_price'])
+            cost_price = float(position['cost_price'])
+            volume = position['volume']
             
-            # 收盘前警告
-            if current_time >= self.market_close['warning_time']:
-                self.logger.warning(f"接近收盘时间，准备平仓: {position['symbol']}")
-            
-            # 强制平仓检查
-            if current_time >= self.market_close['force_close_time']:
-                self.logger.warning(
-                    f"收盘前强制平仓:\n"
-                    f"  标的: {position['symbol']}\n"
-                    f"  当前时间: {current_time}\n"
-                    f"  平仓类型: 收盘平仓"
-                )
-                return True
-            
-            # 检查止盈止损
-            current_price = float(position.get('current_price', 0))
-            cost_price = float(position.get('cost_price', 0))
-            if cost_price == 0:
-                return False
-                
+            # 计算盈亏百分比
             pnl_pct = (current_price - cost_price) / cost_price * 100
             
-            # 区分期权和股票
-            is_option = self._is_option(position['symbol'])
+            # 判断是否为期权
+            is_option = bool(re.search(r'\d{6}[CP]\d+\.US$', symbol))
             limits = self.risk_limits['option'] if is_option else self.risk_limits['stock']
             
-            # 检查止损
+            # 检查止损条件
             if limits['stop_loss'] is not None and pnl_pct <= limits['stop_loss']:
                 self.logger.warning(
-                    f"触发止损:\n"
-                    f"  标的: {position['symbol']}\n"
+                    f"触发止损信号:\n"
+                    f"  标的: {symbol}\n"
+                    f"  类型: {'期权' if is_option else '股票'}\n"
                     f"  当前亏损: {pnl_pct:.1f}%\n"
                     f"  止损线: {limits['stop_loss']}%"
                 )
-                return True
-            
-            # 检查止盈（仅股票）
-            if not is_option and limits['take_profit'] is not None and pnl_pct >= limits['take_profit']:
-                self.logger.warning(
-                    f"触发止盈:\n"
-                    f"  标的: {position['symbol']}\n"
-                    f"  当前收益: {pnl_pct:.1f}%\n"
+                return True, "止损"
+                
+            # 检查止盈条件
+            if limits['take_profit'] is not None and pnl_pct >= limits['take_profit']:
+                self.logger.info(
+                    f"触发止盈信号:\n"
+                    f"  标的: {symbol}\n"
+                    f"  类型: {'期权' if is_option else '股票'}\n"
+                    f"  当前盈利: {pnl_pct:.1f}%\n"
                     f"  止盈线: {limits['take_profit']}%"
                 )
-                return True
+                return True, "止盈"
             
-            return False
+            return False, ""
             
         except Exception as e:
-            self.logger.error(f"检查风险时出错: {str(e)}")
+            self.logger.error(f"检查持仓风险时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
-            return False
+            return False, ""
 
-    def _is_option(self, symbol: str) -> bool:
-        """检查是否为期权"""
-        return any(x in symbol for x in ['C', 'P'])
+    async def check_market_risk(self, vix_level: float, daily_volatility: float) -> Tuple[bool, str]:
+        """
+        检查市场风险
+        
+        Returns:
+            Tuple[bool, str]: (是否风险过高, 原因)
+        """
+        try:
+            vol_limits = self.risk_limits['volatility']
+            
+            # 检查VIX
+            if not vol_limits['min_vix'] <= vix_level <= vol_limits['max_vix']:
+                self.logger.warning(
+                    f"VIX超出安全范围:\n"
+                    f"  当前VIX: {vix_level:.1f}\n"
+                    f"  安全范围: {vol_limits['min_vix']}-{vol_limits['max_vix']}"
+                )
+                return True, "VIX超出范围"
+            
+            # 检查日内波动率
+            if daily_volatility > vol_limits['max_daily_volatility']:
+                self.logger.warning(
+                    f"日内波动率过高:\n"
+                    f"  当前波动率: {daily_volatility:.1f}%\n"
+                    f"  最大限制: {vol_limits['max_daily_volatility']}%"
+                )
+                return True, "波动率过高"
+            
+            return False, ""
+            
+        except Exception as e:
+            self.logger.error(f"检查市场风险时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
+            return False, ""
 
     def check_market_status(self) -> bool:
         """检查市场状态"""
@@ -139,3 +166,7 @@ class RiskChecker:
             
         except Exception as e:
             self.logger.error(f"记录风险状态时出错: {str(e)}")
+
+    def _is_option(self, symbol: str) -> bool:
+        """检查是否为期权"""
+        return any(x in symbol for x in ['C', 'P'])

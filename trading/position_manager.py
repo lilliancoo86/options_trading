@@ -294,33 +294,16 @@ class DoomsdayPositionManager:
     async def check_position_risk(self, position: Dict[str, Any]) -> bool:
         """检查持仓风险"""
         try:
-            # 首先检查是否需要收盘平仓（最高优先级）
-            if await self.check_market_close(position):
-                return True
+            # 使用风险检查器检查风险
+            need_close, reason = await self.risk_checker.check_position_risk(position)
             
-            # 获取当前价格和成本价
-            current_price = float(position.get('current_price', 0))
-            cost_price = float(position.get('cost_price', 0))
-            
-            # 计算收益率
-            if cost_price == 0:
-                return False
-            pnl_pct = (current_price - cost_price) / cost_price * 100
-            
-            # 区分期权和股票
-            is_option = self._is_option(position['symbol'])
-            limits = self.risk_limits['option'] if is_option else self.risk_limits['stock']
-            
-            # 检查止损条件
-            if limits['stop_loss'] is not None and pnl_pct <= limits['stop_loss']:
-                self.logger.warning(f"触发固定止损: 当前亏损 {pnl_pct:.1f}% <= {limits['stop_loss']}%")
-                await self._execute_stop_loss(position)
-                return True
-            
-            # 检查止盈条件（仅股票）
-            if not is_option and limits['take_profit'] is not None and pnl_pct >= limits['take_profit']:
-                self.logger.warning(f"触发固定止盈: 当前收益 {pnl_pct:.1f}% >= {limits['take_profit']}%")
-                await self._execute_take_profit(position)
+            if need_close:
+                # 执行平仓
+                await self.close_position(
+                    symbol=position['symbol'],
+                    volume=position['volume'],
+                    reason=reason
+                )
                 return True
             
             return False
