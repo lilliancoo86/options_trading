@@ -37,11 +37,14 @@ sudo journalctl -u doomsday_option -f
 cd /home/options_trading
 source venv/bin/activate
 
-正常模式：
+# 正常模式：
 python -m scripts.main
 
-测试模式：
+# 测试模式：
 python -m scripts.main --test
+
+# 风控测试
+python -m scripts.test_risk_management
 
 测试模式（指定模拟时间）：
 python -m scripts.main --test --fake-time "2025-01-15 10:30:00"
@@ -663,14 +666,6 @@ sudo journalctl -u doomsday_option.service -n 50 --no-pager
 sudo tail -f /home/options_trading/logs/doomsday.log
 检查服务配置文件：
 sudo cat /etc/systemd/system/doomsday_option.service
-
-#手动运行主程序测试：
-# 确保在虚拟环境中
-source venv/bin/activate
-# 运行主程序
-python -m scripts.main
-
-python -m scripts.test_risk_management
 
 让我们检查并设置日志文件和目录：
 创建并设置日志目录和文件：
