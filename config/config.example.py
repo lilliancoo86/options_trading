@@ -19,7 +19,7 @@ TRADING_CONFIG = {
         "AAPL",   # 苹果公司
         "NVDA",   # 英伟达
         "TSLL",   # 特斯拉
-        "IONQ",   # IONQ
+    #    "IONQ",   # IONQ
     ],
     
     # 风险控制参数
