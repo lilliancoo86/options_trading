@@ -1,4 +1,4 @@
-# doomsday_option，使用长桥OpenAPI接口。
+# doomsday_option
 
 ```bash
 ## 相关文档
