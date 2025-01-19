@@ -199,19 +199,37 @@ class DoomsdayPositionManager:
     async def check_market_close(self, position: Dict[str, Any]) -> bool:
         """检查是否需要收盘平仓"""
         try:
+            # 检查是否为期权
+            if not self._is_option(position['symbol']):
+                return False
+            
+            # 检查是否为当日到期期权
+            expiry_date = self._extract_expiry_date(position['symbol'])
+            if not expiry_date:
+                return False
+            
+            current_date = datetime.now(self.tz).date()
+            if expiry_date.date() != current_date:
+                return False
+            
             current_time = datetime.now(self.tz).strftime('%H:%M')
             
             # 收盘前警告
             if current_time >= self.market_close['warning_time']:
-                self.logger.warning(f"接近收盘时间，准备平仓: {position['symbol']}")
+                self.logger.warning(
+                    f"接近收盘时间，准备平仓当日到期期权:\n"
+                    f"  标的: {position['symbol']}\n"
+                    f"  到期日: {expiry_date.strftime('%Y-%m-%d')}"
+                )
             
             # 强制平仓检查
             if current_time >= self.market_close['force_close_time']:
                 self.logger.warning(
                     f"收盘前强制平仓:\n"
                     f"  标的: {position['symbol']}\n"
+                    f"  到期日: {expiry_date.strftime('%Y-%m-%d')}\n"
                     f"  当前时间: {current_time}\n"
-                    f"  平仓类型: 收盘平仓"
+                    f"  平仓类型: 当日到期期权平仓"
                 )
                 await self._execute_market_close(position)
                 return True
@@ -220,7 +238,75 @@ class DoomsdayPositionManager:
             
         except Exception as e:
             self.logger.error(f"检查收盘平仓时出错: {str(e)}")
+            self.logger.exception("详细错误信息:")
             return False
+
+    def _extract_expiry_date(self, symbol: str) -> Optional[datetime]:
+        """从期权代码中提取到期日期"""
+        try:
+            # 期权代码格式: XXXYYMMDDCNNN.US 或 XXXYYMMDDPNNN.US
+            match = re.search(r'(\d{6})[CP]', symbol)
+            if match:
+                date_str = match.group(1)
+                # 转换为日期对象 (假设年份是20YY)
+                return datetime.strptime(f"20{date_str}", "%Y%m%d")
+            return None
+        except Exception as e:
+            self.logger.error(f"提取期权到期日期时出错: {str(e)}")
+            return None
+
+    def _calculate_leverage(self, option_price: float, stock_price: float, delta: float) -> float:
+        """计算期权杠杆率"""
+        try:
+            # 杠杆率 = delta * (股票价格/期权价格)
+            return abs(delta * (stock_price / option_price))
+        except ZeroDivisionError:
+            return float('inf')
+        except Exception as e:
+            self.logger.error(f"计算杠杆率时出错: {str(e)}")
+            return 0
+
+    async def select_option_strike(self, stock_symbol: str, target_leverage: float = 25) -> Optional[str]:
+        """
+        选择合适的期权合约
+        
+        Args:
+            stock_symbol: 正股代码
+            target_leverage: 目标杠杆率 (默认25)
+        """
+        try:
+            # 获取正股价格
+            stock_quotes = self.quote_ctx.quote([stock_symbol])
+            if not stock_quotes:
+                return None
+            stock_price = float(stock_quotes[0].last_done)
+            
+            # 获取可用的期权合约
+            options = await self._get_available_options(stock_symbol)
+            
+            best_option = None
+            min_leverage_diff = float('inf')
+            
+            for option in options:
+                # 计算杠杆率
+                leverage = self._calculate_leverage(
+                    option_price=float(option['price']),
+                    stock_price=stock_price,
+                    delta=float(option['delta'])
+                )
+                
+                # 检查杠杆率是否在目标范围内 (20-30)
+                if 20 <= leverage <= 30:
+                    leverage_diff = abs(leverage - target_leverage)
+                    if leverage_diff < min_leverage_diff:
+                        min_leverage_diff = leverage_diff
+                        best_option = option
+            
+            return best_option['symbol'] if best_option else None
+            
+        except Exception as e:
+            self.logger.error(f"选择期权合约时出错: {str(e)}")
+            return None
 
     async def _execute_market_close(self, position: dict):
         """执行收盘平仓"""
