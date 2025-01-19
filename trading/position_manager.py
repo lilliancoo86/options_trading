@@ -206,7 +206,7 @@ class DoomsdayPositionManager:
             self.logger.error(f"平掉所有持仓时出错: {str(e)}")
             return False
 
-    def can_open_position(self, symbol: str) -> bool:
+    async def can_open_position(self, symbol: str) -> bool:
         """检查是否可以开新仓位"""
         try:
             # 获取当前价格
@@ -274,7 +274,7 @@ class DoomsdayPositionManager:
                 return False
             
             # 检查是否可以开仓
-            if not self.can_open_position(symbol):
+            if not await self.can_open_position(symbol):
                 return False
             
             # 提交市价单开仓
