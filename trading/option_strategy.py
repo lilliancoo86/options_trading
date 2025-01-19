@@ -29,7 +29,15 @@ class DoomsdayOptionStrategy:
         self.tz = pytz.timezone('America/New_York')
         
         # 初始化交易标的
-        self.symbols = ["TSLL.US", "NVDA.US", "AAPL.US"]
+        self.symbols = config.get('symbols', [
+            "TSLL.US",    # 特斯拉做多ETF
+            "NVDA.US",    # 英伟达
+            "AAPL.US",    # 苹果
+        ])
+        
+        # 添加VIX监控
+        self.vix_symbol = "VIX.US"
+        self.symbols.append(self.vix_symbol)
         
         # 简化的风险控制参数
         self.risk_limits = {
@@ -101,6 +109,74 @@ class DoomsdayOptionStrategy:
         # 缓存历史数据
         self.price_history = {}
         self.vwap_history = {}
+
+    async def get_market_data(self) -> Dict[str, Any]:
+        """获取市场数据"""
+        try:
+            market_data = {
+                'vix': 0.0,
+                'volatility': 0.0,
+                'quotes': []
+            }
+            
+            # 获取VIX
+            vix_quote = await self.quote_ctx.quote([self.vix_symbol])
+            if vix_quote:
+                market_data['vix'] = float(vix_quote[0].last_done)
+            
+            # 获取标的行情
+            for symbol in self.symbols:
+                if symbol == self.vix_symbol:
+                    continue
+                    
+                quote = await self.quote_ctx.quote([symbol])
+                if quote:
+                    quote = quote[0]
+                    # 计算日内波动率
+                    volatility = (float(quote.high) - float(quote.low)) / float(quote.open) * 100
+                    market_data['volatility'] = max(market_data['volatility'], volatility)
+                    market_data['quotes'].append(quote)
+            
+            return market_data
+            
+        except Exception as e:
+            self.logger.error(f"获取市场数据时出错: {str(e)}")
+            return {'vix': 0.0, 'volatility': 0.0, 'quotes': []}
+
+    async def generate_trading_signals(self) -> List[Dict[str, Any]]:
+        """生成交易信号"""
+        try:
+            signals = []
+            
+            for symbol in self.symbols:
+                if symbol == self.vix_symbol:
+                    continue
+                    
+                # 分析趋势
+                trend = await self.analyze_stock_trend(symbol)
+                if not trend['signal']:
+                    continue
+                
+                # 选择期权合约
+                option = await self.select_option_contract(
+                    symbol,
+                    trend['trend']
+                )
+                if not option:
+                    continue
+                
+                signals.append({
+                    'symbol': option['symbol'],
+                    'volume': 1,  # 默认交易1张
+                    'type': option['type'],
+                    'reason': f"趋势信号: {trend['trend']}"
+                })
+            
+            return signals
+            
+        except Exception as e:
+            self.logger.error(f"生成交易信号时出错: {str(e)}")
+            return []
 
     async def check_market_close(self, position: Dict[str, Any]) -> bool:
         """检查是否需要收盘平仓"""
@@ -436,45 +512,6 @@ class DoomsdayOptionStrategy:
             
         except Exception as e:
             self.logger.error(f"选择期权合约时出错: {str(e)}")
-            return None
-
-    async def generate_trading_signal(self, stock_symbol: str) -> Optional[Dict[str, Any]]:
-        """生成交易信号"""
-        try:
-            # 1. 分析趋势
-            trend_analysis = await self.analyze_stock_trend(stock_symbol)
-            if not trend_analysis['signal']:
-                return None
-            
-            # 2. 选择期权合约
-            option_symbol = await self.select_option_contract(
-                stock_symbol, 
-                trend_analysis['trend']
-            )
-            if not option_symbol:
-                return None
-            
-            # 3. 生成交易信号
-            signal = {
-                'symbol': option_symbol,
-                'direction': 'buy',
-                'type': 'CALL' if trend_analysis['trend'] in ['strong_up', 'up'] else 'PUT',
-                'reason': f"趋势信号: {trend_analysis['trend']}",
-                'score': trend_analysis['score']
-            }
-            
-            self.logger.info(
-                f"生成交易信号:\n"
-                f"  标的: {signal['symbol']}\n"
-                f"  方向: {signal['direction']}\n"
-                f"  类型: {signal['type']}\n"
-                f"  原因: {signal['reason']}"
-            )
-            
-            return signal
-            
-        except Exception as e:
-            self.logger.error(f"生成交易信号时出错: {str(e)}")
             return None
 
     async def _calculate_indicators(self, klines: List[Any]) -> Dict[str, Any]:

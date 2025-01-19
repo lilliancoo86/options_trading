@@ -100,77 +100,77 @@ async def run_strategy(strategy, position_manager, risk_checker, time_checker, l
 
     try:
 
-        # 检查是否需要强制平仓（最高优先级）
+        # 1. 检查时间（最高优先级）
 
         need_close, reason = time_checker.check_force_close()
 
         if need_close:
 
-            await position_manager.check_force_close(datetime.now())
+            logger.warning(f"触发强制平仓: {reason}")
+
+            await position_manager.close_all_positions(reason)
 
             return
 
             
 
-        # 初始化策略
+        # 2. 检查市场状态
 
-        await strategy.initialize()
+        if not time_checker.is_trading_time():
 
-        
+            logger.info("当前不在交易时间")
 
-        # 获取市场数据
+            return
+
+            
+
+        # 3. 获取市场数据
 
         market_data = await strategy.get_market_data()
 
         
 
-        # 检查交易条件
+        # 4. 检查市场风险
 
-        if not await strategy.check_trading_conditions(market_data):
+        risk_high, risk_reason = await risk_checker.check_market_risk(
 
-            logger.info("当前不满足交易条件")
+            vix_level=market_data['vix'],
+
+            daily_volatility=market_data['volatility']
+
+        )
+
+        if risk_high:
+
+            logger.warning(f"市场风险过高: {risk_reason}")
 
             return
 
             
 
-        # 获取交易信号
+        # 5. 运行交易策略
 
         signals = await strategy.generate_trading_signals()
 
-        if not signals:
+        if signals:
 
-            return
+            for signal in signals:
 
-            
+                if position_manager.can_open_position(signal['symbol']):
 
-        # 执行交易信号
+                    await position_manager.open_position(
 
-        for signal in signals:
+                        symbol=signal['symbol'],
 
-            # 检查持仓限制
+                        volume=signal['volume'],
 
-            if not position_manager.can_open_position(signal['symbol']):
+                        reason=signal['reason']
 
-                continue
-
-                
-
-            # 执行开仓
-
-            await position_manager.open_position(
-
-                symbol=signal['symbol'],
-
-                volume=signal['volume'],
-
-                reason=signal['reason']
-
-            )
+                    )
 
         
 
-        # 检查现有持仓
+        # 6. 检查现有持仓
 
         positions = await position_manager.get_real_positions()
 
@@ -178,19 +178,25 @@ async def run_strategy(strategy, position_manager, risk_checker, time_checker, l
 
             for position in positions["active"]:
 
-                # 检查风险状态
+                # 检查持仓风险
 
-                await position_manager.check_position_risk(position)
+                need_close, reason = await risk_checker.check_position_risk(position)
 
-                
+                if need_close:
 
-                # 检查是否需要收盘平仓
+                    await position_manager.close_position(
 
-                await position_manager.check_market_close(position)
+                        position['symbol'],
+
+                        position['volume'],
+
+                        reason
+
+                    )
 
         
 
-        # 添加休眠时间
+        # 7. 休眠间隔
 
         await asyncio.sleep(1)
 
@@ -208,13 +214,13 @@ async def run_strategy(strategy, position_manager, risk_checker, time_checker, l
 
 async def main():
 
+    """主程序入口"""
+
     try:
 
         # 初始化日志
 
-        setup_logging()
-
-        logger = logging.getLogger(__name__)
+        logger = setup_logging()
 
         
 
@@ -224,67 +230,55 @@ async def main():
 
         
 
-        # 初始化持仓管理器
+        # 加载配置
 
-        async with DoomsdayPositionManager(config=TRADING_CONFIG, test_mode=args.test) as position_manager:
+        config = load_config()
 
-            while True:
+        
 
-                try:
+        # 初始化组件
 
-                    # 打印交易状态
+        strategy = DoomsdayOptionStrategy(config, args.test)
 
-                    await position_manager.print_trading_status()
+        position_manager = DoomsdayPositionManager(config, args.test)
 
-                    
+        risk_checker = RiskChecker(config)
 
-                    # 检查是否需要强制平仓
+        time_checker = TimeChecker(config)
 
-                    current_time = datetime.now(pytz.timezone('America/New_York'))
+        
 
-                    if await position_manager.check_force_close(current_time):
+        # 运行主循环
 
-                        logger.warning("触发强制平仓条件")
+        while True:
 
-                        # 执行强制平仓逻辑
+            try:
 
-                        positions = await position_manager.get_real_positions()
+                await run_strategy(
 
-                        if positions and positions.get("active"):
+                    strategy=strategy,
 
-                            for pos in positions["active"]:
+                    position_manager=position_manager,
 
-                                await position_manager.close_position(
+                    risk_checker=risk_checker,
 
-                                    pos["symbol"],
+                    time_checker=time_checker,
 
-                                    int(pos["volume"]),
+                    logger=logger
 
-                                    "强制平仓"
+                )
 
-                                )
+                
 
-                    
+            except Exception as e:
 
-                    # 检查风险状态
+                logger.error(f"主循环出错: {str(e)}")
 
-                    await position_manager.check_position_risks()
+                logger.exception("详细错误信息:")
 
-                    
+                await asyncio.sleep(5)
 
-                    await asyncio.sleep(10)  # 每10秒检查一次
-
-                    
-
-                except Exception as e:
-
-                    logger.error(f"主循环出错: {str(e)}")
-
-                    logger.exception("详细错误信息:")
-
-                    await asyncio.sleep(5)
-
-                    
+                
 
     except Exception as e:
 
