@@ -19,6 +19,8 @@ from longport.openapi import (
 import os
 import json
 import re
+import numpy as np
+from trading.data_manager import DataManager
 
 class DoomsdayOptionStrategy:
     def __init__(self, config: Dict[str, Any], test_mode: bool = False):
@@ -147,6 +149,9 @@ class DoomsdayOptionStrategy:
         # 趋势跟踪
         self._trend_cache = {}
         self._position_records = {}
+
+        # 初始化数据管理器
+        self.data_manager = DataManager(config)
 
     async def __aenter__(self):
         """异步上下文管理器的进入方法"""
@@ -346,3 +351,60 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"检查加仓机会时出错: {str(e)}")
             return False, 0, str(e)
+
+    async def get_market_data(self) -> Dict[str, Any]:
+        """获取市场数据"""
+        try:
+            market_data = {}
+            
+            # 获取所有标的的实时行情
+            for symbol in self.symbols:
+                try:
+                    # 更新K线数据
+                    await self.data_manager.update_klines(symbol, self.quote_ctx)
+                    
+                    # 获取最新K线数据
+                    df = await self.data_manager.get_latest_klines(symbol)
+                    if df.empty:
+                        continue
+                    
+                    # 获取实时报价
+                    quotes = await self.quote_ctx.quote([symbol])
+                    if not quotes:
+                        continue
+                    quote = quotes[0]
+                    
+                    # 整合市场数据
+                    market_data[symbol] = {
+                        'quote': {
+                            'last_done': float(quote.last_done),
+                            'open': float(quote.open),
+                            'high': float(quote.high),
+                            'low': float(quote.low),
+                            'timestamp': quote.timestamp,
+                            'volume': int(quote.volume),
+                            'turnover': float(quote.turnover)
+                        },
+                        'technical': {
+                            'close': df['close'].tolist(),
+                            'volume': df['volume'].tolist(),
+                            'high': df['high'].tolist(),
+                            'low': df['low'].tolist()
+                        }
+                    }
+                    
+                    # 计算波动率
+                    returns = df['close'].pct_change().dropna()
+                    if not returns.empty:
+                        volatility = returns.std() * np.sqrt(252)  # 年化波动率
+                        market_data[symbol]['volatility'] = volatility
+                    
+                except Exception as e:
+                    self.logger.error(f"获取 {symbol} 市场数据时出错: {str(e)}")
+                    continue
+            
+            return market_data
+            
+        except Exception as e:
+            self.logger.error(f"获取市场数据时出错: {str(e)}")
+            return {}
