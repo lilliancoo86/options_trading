@@ -175,15 +175,15 @@ class DoomsdayOptionStrategy:
         """分析股票趋势"""
         try:
             # 获取历史K线数据
-            resp = await self.quote_ctx.candlesticks(
+            candlesticks = await self.quote_ctx.candlesticks(
                 symbol=symbol,
                 period=Period.Day,
                 count=30,
                 adjust_type=AdjustType.NoAdjust
             )
             
-            # 根据SDK文档，resp是SecurityCandlestickResponse对象
-            if not resp or not resp.candlesticks:
+            # candlesticks 是一个 list
+            if not candlesticks:
                 return {
                     "symbol": symbol,
                     "trend": "neutral",
@@ -193,7 +193,7 @@ class DoomsdayOptionStrategy:
                 }
             
             # 计算技术指标
-            indicators = await self._calculate_indicators(resp.candlesticks)
+            indicators = await self._calculate_indicators(candlesticks)
             
             # 获取开盘涨跌幅
             quotes = await self.quote_ctx.quote([symbol])

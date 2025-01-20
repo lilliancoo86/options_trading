@@ -76,21 +76,21 @@ class DataManager:
             
             # 获取K线数据
             try:
-                resp = await quote_ctx.candlesticks(
+                candlesticks = await quote_ctx.candlesticks(
                     symbol=symbol,
                     period=Period.Day,
                     count=30,
                     adjust_type=AdjustType.NoAdjust
                 )
                 
-                # 根据SDK文档，resp是SecurityCandlestickResponse对象
-                if not resp or not resp.candlesticks:
+                # candlesticks 是一个 list
+                if not candlesticks:
                     self.logger.warning(f"未获取到K线数据 ({symbol})")
                     return False
                     
                 # 转换为DataFrame
                 data = []
-                for candle in resp.candlesticks:
+                for candle in candlesticks:
                     data.append({
                         'time': datetime.fromtimestamp(candle.timestamp),
                         'open': float(candle.open),
