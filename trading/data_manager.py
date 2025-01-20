@@ -11,6 +11,7 @@ import pytz
 import os
 import json
 from pathlib import Path
+from longport.openapi import Period, AdjustType  # 添加导入
 
 class DataManager:
     def __init__(self, config: Dict[str, Any]):
@@ -64,33 +65,24 @@ class DataManager:
             # 检查是否需要更新
             now = datetime.now(self.tz)
             last_update = self.last_update.get(symbol)
-            if (last_update and 
-                (now - last_update).total_seconds() < self.update_interval):
+            
+            if last_update and (now - last_update).seconds < self.update_interval:
                 return True
-
-            # 加载现有数据
-            df = await self.load_klines(symbol)
-            
-            # 确定需要请求的数据范围
-            if df.empty:
-                start_time = now - timedelta(days=90)  # 首次加载90天数据
-            else:
-                start_time = df.index[-1]
-            
-            # 获取新数据
+                
+            # 获取K线数据
             candlesticks = await quote_ctx.candlesticks(
                 symbol=symbol,
-                period="day",
+                period=Period.Day,  # 使用 Period 枚举
                 count=30,
-                adjust_type="no_adjust"
+                adjust_type=AdjustType.NoAdjust
             )
             
             if not candlesticks:
                 return False
                 
             # 转换为DataFrame
-            new_data = pd.DataFrame([{
-                'time': k.timestamp,
+            df = pd.DataFrame([{
+                'time': datetime.fromtimestamp(k.timestamp),
                 'open': float(k.open),
                 'high': float(k.high),
                 'low': float(k.low),
@@ -99,27 +91,18 @@ class DataManager:
                 'turnover': float(k.turnover)
             } for k in candlesticks])
             
-            if new_data.empty:
-                return True
-                
-            new_data['time'] = pd.to_datetime(new_data['time'])
-            new_data.set_index('time', inplace=True)
-            
-            # 合并数据
-            if df.empty:
-                df = new_data
-            else:
-                df = pd.concat([df, new_data])
-                df = df[~df.index.duplicated(keep='last')]
-                df.sort_index(inplace=True)
-            
             # 保存数据
             file_path = self.get_kline_path(symbol)
-            df.to_csv(file_path)
+            df.to_csv(file_path, index=False)
             
             # 更新缓存
             self.kline_cache[symbol] = df
             self.last_update[symbol] = now
+            
+            # 特殊处理VIX数据
+            if symbol == 'VIX.US':
+                self.vix_level = float(df.iloc[-1]['close'])
+                self.logger.info(f"已更新VIX数据: {self.vix_level}")
             
             return True
             
@@ -166,4 +149,8 @@ class DataManager:
             return None
         except Exception as e:
             self.logger.error(f"加载缓存数据出错 ({name}): {str(e)}")
-            return None 
+            return None
+
+    def get_vix_level(self) -> float:
+        """获取最新的VIX水平"""
+        return getattr(self, 'vix_level', None) 

@@ -399,6 +399,10 @@ class DoomsdayOptionStrategy:
                         volatility = returns.std() * np.sqrt(252)  # 年化波动率
                         market_data[symbol]['volatility'] = volatility
                     
+                    # 添加VIX数据
+                    if symbol == 'VIX.US':
+                        market_data['vix'] = float(quote.last_done)
+                    
                 except Exception as e:
                     self.logger.error(f"获取 {symbol} 市场数据时出错: {str(e)}")
                     continue
