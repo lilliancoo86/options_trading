@@ -37,9 +37,9 @@ class DoomsdayOptionStrategy:
             "AAPL.US",    # 苹果
         ])
         
-        # 添加VIX监控（使用正确的代码）
-        self.vix_symbol = "^VIX.US"  # 修改VIX代码
-        self.symbols.append(self.vix_symbol)
+        # 添加VIX监控（尝试多个可能的代码）
+        self.vix_symbols = ['$VIX.US', 'VXX.US']  # 添加备选VIX指标
+        self.symbols.extend(self.vix_symbols)
         
         # 初始化 Longport 配置
         try:
@@ -356,15 +356,19 @@ class DoomsdayOptionStrategy:
         """获取市场数据"""
         try:
             market_data = {}
+            vix_found = False
             
             # 获取所有标的的实时行情
             for symbol in self.symbols:
                 try:
                     # 更新K线数据
-                    await self.data_manager.update_klines(symbol, self.quote_ctx)
+                    success = await self.data_manager.update_klines(symbol, self.quote_ctx)
+                    if not success:
+                        continue
                     
                     # 获取最新K线数据
-                    df = await self.data_manager.get_latest_klines(symbol.replace('^', ''))  # 去掉^符号
+                    symbol_clean = symbol.replace('$', '').replace('^', '')
+                    df = await self.data_manager.get_latest_klines(symbol_clean)
                     if df.empty:
                         continue
                     
@@ -375,7 +379,7 @@ class DoomsdayOptionStrategy:
                     quote = quotes[0]
                     
                     # 整合市场数据
-                    market_data[symbol.replace('^', '')] = {  # 去掉^符号
+                    market_data[symbol_clean] = {
                         'quote': {
                             'last_done': float(quote.last_done),
                             'open': float(quote.open),
@@ -396,20 +400,31 @@ class DoomsdayOptionStrategy:
                     # 计算波动率
                     returns = df['close'].pct_change().dropna()
                     if not returns.empty:
-                        volatility = returns.std() * np.sqrt(252)  # 年化波动率
-                        market_data[symbol.replace('^', '')]['volatility'] = volatility
+                        volatility = returns.std() * np.sqrt(252)
+                        market_data[symbol_clean]['volatility'] = volatility
                     
                     # 添加VIX数据
-                    if symbol == '^VIX.US':
+                    if symbol in self.vix_symbols and not vix_found:
                         market_data['vix'] = float(quote.last_done)
                         self.logger.info(f"当前VIX水平: {market_data['vix']}")
+                        vix_found = True
                     
                 except Exception as e:
                     self.logger.error(f"获取 {symbol} 市场数据时出错: {str(e)}")
                     continue
             
+            # 如果没有找到VIX数据，使用数据管理器中的缓存值
+            if not vix_found:
+                vix_level = self.data_manager.get_vix_level()
+                if vix_level is not None:
+                    market_data['vix'] = vix_level
+                    self.logger.info(f"使用缓存的VIX水平: {vix_level}")
+                else:
+                    market_data['vix'] = 20.0  # 默认值
+                    self.logger.warning(f"无法获取VIX数据，使用默认值: 20.0")
+            
             return market_data
             
         except Exception as e:
             self.logger.error(f"获取市场数据时出错: {str(e)}")
-            return {}
+            return {'vix': 20.0}  # 确保至少返回一个默认的VIX值
