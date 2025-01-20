@@ -56,11 +56,9 @@ class TimeChecker:
     def is_trading_time()  # 检查交易时间
     def get_next_market_open()  # 获取下次开市时间           
 
-
+-----------------------------------------------------------------------------
 
 ## 安装部署
-```bash
-
 # 下载安装脚本
 这些命令应该在 root 用户下运行，目录位置不重要，因为这些是系统级命令。让我们按顺序执行：
 # 1. 切换到 root 用户（如果还不是）
@@ -104,17 +102,15 @@ python -m scripts.main --test --fake-time "2025-01-15 10:30:00"
 退出虚拟环境
 deactivate
 
-```
-### 1. 系统环境配置
-```bash
-CentOS7、Python3.7、MySQL5.7：这是一个稳定且广泛使用的版本，完全兼容。
+-----------------------------------------------------------------------------
 
+# 1. 系统环境配置
+CentOS7、Python3.7、MySQL5.7：这是一个稳定且广泛使用的版本，完全兼容。
 #### CentOS 7 基础环境配置
-```bash
-> ⚠️ **特别注意**: 由于CentOS 7官方源已停止维护，需要先更换为阿里云镜像源
+⚠️ **特别注意**: 由于CentOS 7官方源已停止维护，需要先更换为阿里云镜像源
 
 1. 更换阿里云镜像源
-```bash
+
 # 备份原有repo文件
 sudo mv /etc/yum.repos.d/CentOS-Base.repo /etc/yum.repos.d/CentOS-Base.repo.backup
 
@@ -138,11 +134,11 @@ sudo vi /etc/resolv.conf
 # 添加公共DNS
 nameserver 8.8.8.8
 nameserver 8.8.4.4
-```
 
+-----------------------------------------------------------------------------
 
 2. 安装Python环境
-```bash
+
 # 安装开发工具和依赖
 sudo yum groupinstall "Development Tools" -y
 sudo yum install openssl-devel bzip2-devel libffi-devel -y
@@ -158,9 +154,9 @@ sudo make altinstall
 # 创建软链接
 sudo ln -sf /usr/local/bin/python3.7 /usr/bin/python3
 sudo ln -sf /usr/local/bin/pip3.7 /usr/bin/pip3
-```
+
 -----------------------------------------------------------------------------
-```bash
+
 在 CentOS 7 上，我们需要手动编译安装 TA-Lib：
 # 1. 首先安装编译工具（如果还没安装的话）
 sudo yum install -y wget
@@ -215,6 +211,8 @@ git pull 不会影响 venv 目录，因为它在 .gitignore 中
 不要把虚拟环境提交到 git 仓库
 每次重新打开终端都需要重新激活虚拟环境
 如果要退出虚拟环境，使用 deactivate 命令
+
+-----------------------------------------------------------------------------
 
 ### 3. 数据库配置
 
@@ -496,7 +494,6 @@ DROP DATABASE IF EXISTS option_trading;
 mysql -u root -p < /path/to/updated_option_trading.sql
 
 -----------------------------------------------------------------------------
-```bash
 
 如何卸载mysql5.7
 
@@ -562,6 +559,7 @@ sudo yum remove mysql-workbench*
 如果你使用的是其他 Linux 发行版，包管理器和一些路径可能会有所不同。
 完成这些步骤后，MySQL 5.7 应该已经从你的系统中完全移除了。如果你计划安装新版本的 MySQL 或其他数据库系统，现在可以进行了。
 
+-----------------------------------------------------------------------------
 
 ## 系统配置
 
@@ -612,7 +610,7 @@ deactivate
 
 #最后启动系统服务：查看相关部分操作
 
--------------------------------------------------------
+-----------------------------------------------------------------------------
 
 ### 1. 环境变量配置
 
@@ -745,7 +743,9 @@ sudo systemctl status doomsday_option
 # 查看日志
 sudo tail -f /home/options_trading/logs/doomsday.log
 sudo tail -f /home/options_trading/logs/doomsday.error.log
-----------------------------------
+
+-----------------------------------------------------------------------------
+
 # 复制服务文件
 sudo cp scripts/doomsday_option.service /etc/systemd/system/
 # 设置权限
@@ -786,9 +786,10 @@ sudo timedatectl set-timezone America/New_York
 mysql -u option_trading -p option_trading -e "OPTIMIZE TABLE options, option_trades, position_records;"
 # 清理30天前的数据
 mysql -u option_trading -p option_trading -e "DELETE FROM market_data WHERE data_time < DATE_SUB(NOW(), INTERVAL 30 DAY);"
-```
+
+-----------------------------------------------------------------------------
+
 ### 3. 监控检查
-```bash
 # 检查系统资源
 free -h
 df -h
@@ -796,7 +797,7 @@ top
 
 # 检查日志
 tail -f logs/trading.log
-```
+
 ### 2. 常见问题处理
 - **服务无法启动**
   - 检查日志: `journalctl -u doomsday_option -n 100`
