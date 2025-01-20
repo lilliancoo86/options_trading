@@ -71,19 +71,16 @@ class DataManager:
             
             # VIX指数使用正确的代码
             if symbol == 'VIX.US':
-                symbol = '$VIX.US'  # 尝试使用 $VIX.US
+                symbol = 'VXX.US'  # 直接使用 VXX ETN
             
             # 获取K线数据
             try:
-                resp = await quote_ctx.candlesticks(
+                candlesticks = await quote_ctx.candlesticks(
                     symbol=symbol,
                     period=Period.Day,
                     count=30,
                     adjust_type=AdjustType.NoAdjust
                 )
-                
-                # 确保 resp 是可迭代的
-                candlesticks = resp if isinstance(resp, (list, tuple)) else [resp]
                 
                 if not candlesticks:
                     self.logger.warning(f"未获取到K线数据 ({symbol})")
@@ -100,8 +97,14 @@ class DataManager:
                     'turnover': float(candle.turnover)
                 } for candle in candlesticks])
                 
+                # 计算波动率
+                returns = df['close'].pct_change().dropna()
+                if not returns.empty:
+                    volatility = float(returns.std() * np.sqrt(252))  # 年化波动率
+                    df['volatility'] = volatility
+                
                 # 保存数据
-                symbol_clean = symbol.replace('$', '').replace('^', '')  # 清理特殊字符
+                symbol_clean = symbol.replace('$', '').replace('^', '')
                 file_path = self.get_kline_path(symbol_clean)
                 df.to_csv(file_path, index=False)
                 
@@ -110,7 +113,7 @@ class DataManager:
                 self.last_update[symbol_clean] = now
                 
                 # 特殊处理VIX数据
-                if symbol in ['$VIX.US', '^VIX.US', 'VIX.US']:
+                if symbol == 'VXX.US':
                     self.vix_level = float(df.iloc[-1]['close'])
                     self.logger.info(f"已更新VIX数据: {self.vix_level}")
                 
@@ -118,17 +121,14 @@ class DataManager:
                 
             except Exception as e:
                 if 'invalid symbol' in str(e):
-                    # 如果是VIX，尝试其他可能的代码
-                    if symbol == '$VIX.US':
-                        self.logger.warning(f"尝试使用其他VIX代码")
-                        return await self.update_klines('VXX.US', quote_ctx)  # 尝试使用VIX ETN
+                    self.logger.error(f"无效的交易代码 ({symbol})")
                 raise
                 
         except Exception as e:
             self.logger.error(f"更新K线数据出错 ({symbol}): {str(e)}")
-            if symbol in ['$VIX.US', '^VIX.US', 'VIX.US']:
+            if symbol == 'VXX.US':
                 # VIX获取失败时设置一个默认值
-                self.vix_level = 20.0  # 设置一个中性值
+                self.vix_level = 20.0
                 self.logger.warning(f"VIX数据获取失败，使用默认值: {self.vix_level}")
             return False
 

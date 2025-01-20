@@ -355,7 +355,10 @@ class DoomsdayOptionStrategy:
     async def get_market_data(self) -> Dict[str, Any]:
         """获取市场数据"""
         try:
-            market_data = {}
+            market_data = {
+                'volatility': 0.0,  # 默认波动率
+                'vix': 20.0  # 默认VIX值
+            }
             vix_found = False
             
             # 获取所有标的的实时行情
@@ -397,14 +400,12 @@ class DoomsdayOptionStrategy:
                         }
                     }
                     
-                    # 计算波动率
-                    returns = df['close'].pct_change().dropna()
-                    if not returns.empty:
-                        volatility = returns.std() * np.sqrt(252)
-                        market_data[symbol_clean]['volatility'] = volatility
+                    # 使用数据中的波动率
+                    if 'volatility' in df.columns:
+                        market_data['volatility'] = float(df.iloc[-1]['volatility'])
                     
                     # 添加VIX数据
-                    if symbol in self.vix_symbols and not vix_found:
+                    if symbol == 'VXX.US' and not vix_found:
                         market_data['vix'] = float(quote.last_done)
                         self.logger.info(f"当前VIX水平: {market_data['vix']}")
                         vix_found = True
@@ -419,12 +420,12 @@ class DoomsdayOptionStrategy:
                 if vix_level is not None:
                     market_data['vix'] = vix_level
                     self.logger.info(f"使用缓存的VIX水平: {vix_level}")
-                else:
-                    market_data['vix'] = 20.0  # 默认值
-                    self.logger.warning(f"无法获取VIX数据，使用默认值: 20.0")
             
             return market_data
             
         except Exception as e:
             self.logger.error(f"获取市场数据时出错: {str(e)}")
-            return {'vix': 20.0}  # 确保至少返回一个默认的VIX值
+            return {
+                'volatility': 0.0,
+                'vix': 20.0
+            }
