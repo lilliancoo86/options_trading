@@ -572,10 +572,10 @@ class DoomsdayOptionStrategy:
             available_options = []
             current_date = datetime.now(self.tz).date()
             
-            # 遍历到期日(排除当日到期)
+            # 遍历到期日(排除当日和次日到期)
             for expiry_date in expiry_dates:
                 expiry_date_obj = datetime.strptime(expiry_date, "%Y%m%d").date()
-                if expiry_date_obj <= current_date:
+                if (expiry_date_obj - current_date).days <= 1:  # 排除当日和次日到期
                     continue
                     
                 # 获取该到期日的期权链

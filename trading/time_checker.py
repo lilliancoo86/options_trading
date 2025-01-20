@@ -6,6 +6,7 @@ from typing import Dict, Any, Tuple
 from datetime import datetime, time, timedelta
 import logging
 import pytz
+import re
 
 class TimeChecker:
     def __init__(self, config: Dict[str, Any], test_mode: bool = False):
@@ -183,4 +184,40 @@ class TimeChecker:
             )
             
         except Exception as e:
-            self.logger.error(f"记录时间状态时出错: {str(e)}") 
+            self.logger.error(f"记录时间状态时出错: {str(e)}")
+
+    def check_expiry_close(self, symbol: str) -> Tuple[bool, str]:
+        """检查是否需要提前平仓（针对次日到期的期权）"""
+        try:
+            # 测试模式下不强制平仓
+            if self.test_mode:
+                return False, ""
+            
+            # 检查是否为期权
+            if not re.search(r'\d{6}[CP]\d+\.US$', symbol):
+                return False, ""
+            
+            # 从期权代码中提取到期日
+            expiry_date_str = re.search(r'(\d{6})[CP]', symbol).group(1)
+            expiry_date = datetime.strptime(expiry_date_str, '%y%m%d').date()
+            
+            # 获取当前日期
+            current_date = datetime.now(self.tz).date()
+            
+            # 如果是次日到期，且当前时间超过警告时间，则需要平仓
+            if (expiry_date - current_date).days <= 1:
+                current_time = datetime.now(self.tz).strftime('%H:%M')
+                if current_time >= self.market_times['warning']:
+                    self.logger.warning(
+                        f"期权即将到期，需要提前平仓:\n"
+                        f"  合约: {symbol}\n"
+                        f"  到期日: {expiry_date}\n"
+                        f"  当前时间: {current_time}"
+                    )
+                    return True, "期权次日到期提前平仓"
+            
+            return False, ""
+            
+        except Exception as e:
+            self.logger.error(f"检查期权到期平仓时出错: {str(e)}")
+            return False, "" 

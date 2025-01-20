@@ -54,6 +54,17 @@ class RiskChecker:
         """
         try:
             symbol = position['symbol']
+            
+            # 首先检查期权到期日（最高优先级）
+            need_close, reason = self.time_checker.check_expiry_close(symbol)
+            if need_close:
+                return True, reason
+            
+            # 检查是否需要收盘平仓（次高优先级）
+            need_close, reason = self.time_checker.check_force_close()
+            if need_close:
+                return True, reason
+            
             current_price = float(position['current_price'])
             cost_price = float(position['cost_price'])
             volume = position['volume']
