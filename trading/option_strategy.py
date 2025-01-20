@@ -14,7 +14,9 @@ from longport.openapi import (
     SubType, 
     OrderType, 
     OrderSide,
-    TimeInForceType
+    TimeInForceType,
+    Period,
+    AdjustType
 )
 import os
 import json
@@ -178,13 +180,19 @@ class DoomsdayOptionStrategy:
             
             candlesticks = await self.quote_ctx.candlesticks(
                 symbol=symbol,
-                period="day",  # 使用字符串常量
+                period=Period.Day,  # 使用 Period 枚举
                 count=30,
-                adjust_type="no_adjust"  # 使用字符串常量
+                adjust_type=AdjustType.NoAdjust  # 使用 AdjustType 枚举
             )
             
             if not candlesticks:
-                return {"trend": "neutral", "signal": None}
+                return {
+                    "symbol": symbol,
+                    "trend": "neutral",
+                    "signal": "hold",
+                    "score": 0,
+                    "timestamp": datetime.now(self.tz).isoformat()
+                }
             
             # 计算技术指标
             indicators = await self._calculate_indicators(candlesticks)
@@ -192,25 +200,46 @@ class DoomsdayOptionStrategy:
             # 获取开盘涨跌幅
             quotes = await self.quote_ctx.quote([symbol])
             if not quotes:
-                return {"trend": "neutral", "signal": None}
+                return {
+                    "symbol": symbol,
+                    "trend": "neutral",
+                    "signal": "hold",
+                    "score": 0,
+                    "timestamp": datetime.now(self.tz).isoformat()
+                }
             
             open_change_pct = self._calculate_open_change(quotes[0])
             
             # 综合分析趋势
             trend_analysis = self._analyze_trend(indicators, open_change_pct)
             
+            # 确保返回标准格式的信号
+            signal = {
+                "symbol": symbol,
+                "trend": trend_analysis.get('trend', 'neutral'),
+                "signal": trend_analysis.get('signal', 'hold'),
+                "score": trend_analysis.get('score', 0),
+                "timestamp": datetime.now(self.tz).isoformat()
+            }
+            
             self.logger.info(
                 f"趋势分析结果 - {symbol}:\n"
-                f"  趋势: {trend_analysis['trend']}\n"
-                f"  信号: {trend_analysis['signal']}\n"
-                f"  得分: {trend_analysis['score']:.2f}"
+                f"  趋势: {signal['trend']}\n"
+                f"  信号: {signal['signal']}\n"
+                f"  得分: {signal['score']:.2f}"
             )
             
-            return trend_analysis
+            return signal
             
         except Exception as e:
             self.logger.error(f"分析股票趋势时出错: {str(e)}")
-            return {"trend": "neutral", "signal": None}
+            return {
+                "symbol": symbol,
+                "trend": "neutral",
+                "signal": "hold",
+                "score": 0,
+                "timestamp": datetime.now(self.tz).isoformat()
+            }
 
     async def select_option_contract(self, stock_symbol: str, trend: str) -> Optional[str]:
         """根据趋势选择合适的期权合约"""
@@ -475,3 +504,46 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"生成交易信号时出错: {str(e)}")
             return {}
+
+    def _analyze_trend(self, indicators: Dict[str, Any], open_change_pct: float) -> Dict[str, Any]:
+        """综合分析趋势"""
+        try:
+            # 计算趋势得分
+            ma_score = self._calculate_ma_score(indicators['ma'])
+            momentum_score = self._calculate_momentum_score(indicators['momentum'])
+            volume_score = self._calculate_volume_score(indicators['volume'])
+            
+            # 综合得分 (0-100)
+            total_score = (ma_score * 0.4 + momentum_score * 0.4 + volume_score * 0.2)
+            
+            # 确定趋势
+            if total_score >= 70:
+                trend = "bullish"
+                signal = "buy"
+            elif total_score <= 30:
+                trend = "bearish"
+                signal = "sell"
+            else:
+                trend = "neutral"
+                signal = "hold"
+            
+            return {
+                "trend": trend,
+                "signal": signal,
+                "score": total_score,
+                "details": {
+                    "ma_score": ma_score,
+                    "momentum_score": momentum_score,
+                    "volume_score": volume_score,
+                    "open_change": open_change_pct
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"分析趋势时出错: {str(e)}")
+            return {
+                "trend": "neutral",
+                "signal": "hold",
+                "score": 0,
+                "details": {}
+            }
