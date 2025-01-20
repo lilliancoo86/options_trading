@@ -87,15 +87,19 @@ class DataManager:
                     return False
                     
                 # 转换为DataFrame
-                df = pd.DataFrame([{
-                    'time': datetime.fromtimestamp(candle.timestamp),
-                    'open': float(candle.open),
-                    'high': float(candle.high),
-                    'low': float(candle.low),
-                    'close': float(candle.close),
-                    'volume': int(candle.volume),
-                    'turnover': float(candle.turnover)
-                } for candle in candlesticks])
+                data = []
+                for candle in candlesticks:
+                    data.append({
+                        'time': datetime.fromtimestamp(candle.timestamp),
+                        'open': float(candle.open),
+                        'high': float(candle.high),
+                        'low': float(candle.low),
+                        'close': float(candle.close),
+                        'volume': int(candle.volume),
+                        'turnover': float(candle.turnover)
+                    })
+                
+                df = pd.DataFrame(data)
                 
                 # 计算波动率
                 returns = df['close'].pct_change().dropna()

@@ -429,3 +429,49 @@ class DoomsdayOptionStrategy:
                 'volatility': 0.0,
                 'vix': 20.0
             }
+
+    async def generate_trading_signals(self) -> Dict[str, Any]:
+        """生成交易信号"""
+        try:
+            signals = {}
+            
+            # 获取市场数据
+            market_data = await self.get_market_data()
+            
+            # 分析每个标的
+            for symbol in self.symbols:
+                if symbol in ['VXX.US', '$VIX.US']:  # 跳过VIX相关标的
+                    continue
+                    
+                try:
+                    # 分析趋势
+                    trend_analysis = await self.analyze_stock_trend(symbol)
+                    
+                    # 生成信号
+                    signal = {
+                        'symbol': symbol,
+                        'trend': trend_analysis['trend'],
+                        'action': trend_analysis['signal'],
+                        'score': trend_analysis.get('score', 0),
+                        'timestamp': datetime.now(self.tz).isoformat(),
+                        'market_data': {
+                            'vix': market_data.get('vix', 20.0),
+                            'volatility': market_data.get('volatility', 0.0)
+                        }
+                    }
+                    
+                    # 添加技术指标数据
+                    if symbol in market_data:
+                        signal['technical'] = market_data[symbol].get('technical', {})
+                    
+                    signals[symbol] = signal
+                    
+                except Exception as e:
+                    self.logger.error(f"生成{symbol}交易信号时出错: {str(e)}")
+                    continue
+            
+            return signals
+            
+        except Exception as e:
+            self.logger.error(f"生成交易信号时出错: {str(e)}")
+            return {}
