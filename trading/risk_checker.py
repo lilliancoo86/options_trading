@@ -319,16 +319,16 @@ class RiskChecker:
         is_option = bool(re.search(r'\d{6}[CP]\d+\.US$', symbol))
         limits = self.risk_control['capital_protection']['stop_loss'] if is_option else self.risk_control['capital_protection']['stop_loss']
         
-        if limits['stop_loss'] is not None and pnl_pct <= limits['stop_loss']:
-            self.logger.warning(
+            if limits['stop_loss'] is not None and pnl_pct <= limits['stop_loss']:
+                self.logger.warning(
                 f"触发止损信号:\n"
                 f"  标的: {symbol}\n"
                 f"  类型: {'期权' if is_option else '股票'}\n"
-                f"  当前亏损: {pnl_pct:.1f}%\n"
-                f"  止损线: {limits['stop_loss']}%"
-            )
-            return True
-        
+                    f"  当前亏损: {pnl_pct:.1f}%\n"
+                    f"  止损线: {limits['stop_loss']}%"
+                )
+                return True
+            
         return False
 
     def _check_daily_loss_limit(self, position: Dict[str, Any]) -> bool:

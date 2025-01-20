@@ -143,7 +143,7 @@ class DoomsdayOptionStrategy:
         # 缓存历史数据
         self.price_history = {}
         self.vwap_history = {}
-        
+
         # 趋势跟踪
         self._trend_cache = {}
         self._position_records = {}
@@ -216,42 +216,6 @@ class DoomsdayOptionStrategy:
             self.logger.error(f"生成交易信号时出错: {str(e)}")
             return []
 
-    async def _execute_market_close(self, position: dict):
-        """执行收盘平仓"""
-        try:
-            symbol = position["symbol"]
-            volume = abs(position["volume"])
-            
-            self.logger.warning(
-                f"执行收盘平仓:\n"
-                f"  标的: {symbol}\n"
-                f"  数量: {volume}\n"
-                f"  成本价: ${position['cost_price']:.2f}\n"
-                f"  现价: ${position['current_price']:.2f}\n"
-                f"  平仓原因: 收盘前强制平仓"
-            )
-            
-            # 执行市价单平仓
-            order = await self.trade_ctx.submit_order(
-                symbol=symbol,
-                order_type=OrderType.MO,  # 使用市价单
-                side=OrderSide.SELL if position["volume"] > 0 else OrderSide.BUY,
-                submitted_quantity=volume,
-                time_in_force=TimeInForceType.DAY,
-                remark="Market Close"
-            )
-            
-            self.logger.info(f"收盘平仓订单已提交 - 订单号: {order.order_id}")
-            
-            # 等待订单状态更新
-            await asyncio.sleep(1)
-            order_status = await self.trade_ctx.get_order(order.order_id)
-            self.logger.info(f"收盘平仓订单状态: {order_status.status}")
-            
-        except Exception as e:
-            self.logger.error(f"执行收盘平仓时出错: {str(e)}")
-            self.logger.exception("详细错误信息:")
-
     def _is_option(self, symbol: str) -> bool:
         """检查是否为期权合约"""
         try:
@@ -260,78 +224,6 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"检查期权代码时出错: {str(e)}")
             return False
-
-    async def _execute_stop_loss(self, position: dict):
-        """执行止损"""
-        try:
-            symbol = position["symbol"]
-            volume = abs(position["volume"])
-            
-            self.logger.warning(
-                f"执行止损:\n"
-                f"  标的: {symbol}\n"
-                f"  数量: {volume}\n"
-                f"  成本价: ${position['cost_price']:.2f}\n"
-                f"  现价: ${position['current_price']:.2f}\n"
-                f"  止损类型: 固定止损"
-            )
-            
-            # 执行市价单平仓
-            order = await self.trade_ctx.submit_order(
-                symbol=symbol,
-                order_type=OrderType.MO,  # 使用市价单
-                side=OrderSide.SELL if position["volume"] > 0 else OrderSide.BUY,
-                submitted_quantity=volume,
-                time_in_force=TimeInForceType.DAY,
-                remark="Fixed Stop Loss"
-            )
-            
-            self.logger.info(f"止损订单已提交 - 订单号: {order.order_id}")
-            
-            # 等待订单状态更新
-            await asyncio.sleep(1)
-            order_status = await self.trade_ctx.get_order(order.order_id)
-            self.logger.info(f"止损订单状态: {order_status.status}")
-            
-        except Exception as e:
-            self.logger.error(f"执行止损时出错: {str(e)}")
-            self.logger.exception("详细错误信息:")
-
-    async def _execute_take_profit(self, position: dict):
-        """执行止盈"""
-        try:
-            symbol = position["symbol"]
-            volume = abs(position["volume"])
-            
-            self.logger.warning(
-                f"执行止盈:\n"
-                f"  标的: {symbol}\n"
-                f"  数量: {volume}\n"
-                f"  成本价: ${position['cost_price']:.2f}\n"
-                f"  现价: ${position['current_price']:.2f}\n"
-                f"  止盈类型: 固定止盈"
-            )
-            
-            # 执行市价单平仓
-            order = await self.trade_ctx.submit_order(
-                symbol=symbol,
-                order_type=OrderType.MO,  # 使用市价单
-                side=OrderSide.SELL if position["volume"] > 0 else OrderSide.BUY,
-                submitted_quantity=volume,
-                time_in_force=TimeInForceType.DAY,
-                remark="Fixed Take Profit"
-            )
-            
-            self.logger.info(f"止盈订单已提交 - 订单号: {order.order_id}")
-            
-            # 等待订单状态更新
-            await asyncio.sleep(1)
-            order_status = await self.trade_ctx.get_order(order.order_id)
-            self.logger.info(f"止盈订单状态: {order_status.status}")
-            
-        except Exception as e:
-            self.logger.error(f"执行止盈时出错: {str(e)}")
-            self.logger.exception("详细错误信息:")
 
     async def analyze_stock_trend(self, symbol: str) -> Dict[str, Any]:
         """分析股票趋势"""
