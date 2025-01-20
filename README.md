@@ -6,55 +6,7 @@
 - 长桥开发文档：https://open.longportapp.com/docs
 - SDK文档：https://github.com/longportapp/openapi-sdk/tree/release-v2
 
-# main.py - 主程序模块
-程序入口和初始化
-组件协调和流程控制
-错误处理和恢复
-async def run_strategy():
-    # 1. 检查时间（最高优先级）
-    # 2. 检查市场风险
-    # 3. 运行交易策略
-    # 4. 管理持仓风险
-
-# option_strategy.py - 期权交易策略模块
-趋势分析和信号生成
-期权合约筛选和选择
-交易时机判断
-生成交易信号     
-class DoomsdayOptionStrategy:
-    async def analyze_stock_trend()  # 分析股票趋势
-    async def select_option_contract()  # 选择期权合约
-    async def generate_trading_signal()  # 生成交易信号
-    async def _get_available_options()  # 获取可用期权
-    async def _calculate_indicators()  # 计算技术指标
-
-# position_manager.py - 持仓管理模块
-持仓状态管理
-订单执行
-仓位控制
-class DoomsdayPositionManager:
-    async def get_real_positions()  # 获取实际持仓
-    async def close_position()  # 执行平仓
-    async def open_position()  # 执行开仓
-    async def print_trading_status()  # 打印持仓状态
-
-# risk_checker.py - 风险控制模块
-持仓风险检查
-市场风险检查
-风险状态日志
-class RiskChecker:
-    async def check_position_risk()  # 检查持仓风险
-    async def check_market_risk()  # 检查市场风险
-    def log_risk_status()  # 记录风险状态
-
-# time_checker.py - 时间检查模块
-交易时间检查
-强制平仓时间检查
-市场状态检查
-class TimeChecker:
-    def check_force_close()  # 检查强制平仓时间
-    def is_trading_time()  # 检查交易时间
-    def get_next_market_open()  # 获取下次开市时间           
+          
 
 -----------------------------------------------------------------------------
 
@@ -90,8 +42,8 @@ source venv/bin/activate
 # 正常模式：
 python -m scripts.main
 
-# 测试模式：# 添加 debug 参数查看更多日志
-python -m scripts.main --test --debug  
+# 测试模式：
+python -m scripts.main --test  
 
 # 风控测试
 python -m scripts.test_risk_management
@@ -124,10 +76,10 @@ sudo yum install curl -y
 sudo yum clean all
 sudo yum makecache
 sudo yum update -y
-```
-> 🔔 **提示**: 如果遇到无法访问镜像源问题
+
+🔔 **提示**: 如果遇到无法访问镜像源问题
 如果无法访问镜像源，可以手动配置DNS：
-```bash
+
 # 编辑网络配置
 sudo vi /etc/resolv.conf
 
