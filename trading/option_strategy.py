@@ -466,18 +466,20 @@ class DoomsdayOptionStrategy:
             
             # 分析每个标的
             for symbol in self.symbols:
-                if symbol in ['VXX.US', '$VIX.US']:  # 跳过VIX相关标的
+                if symbol == self.vix_symbol:  # 跳过VIX相关标的
                     continue
                     
                 try:
                     # 分析趋势
                     trend_analysis = await self.analyze_stock_trend(symbol)
+                    if not trend_analysis:
+                        continue
                     
                     # 生成信号
-                    signal = {
+                    signals[symbol] = {
                         'symbol': symbol,
-                        'trend': trend_analysis['trend'],
-                        'action': trend_analysis['signal'],
+                        'trend': trend_analysis.get('trend', 'neutral'),
+                        'action': trend_analysis.get('signal', 'hold'),
                         'score': trend_analysis.get('score', 0),
                         'timestamp': datetime.now(self.tz).isoformat(),
                         'market_data': {
@@ -488,9 +490,9 @@ class DoomsdayOptionStrategy:
                     
                     # 添加技术指标数据
                     if symbol in market_data:
-                        signal['technical'] = market_data[symbol].get('technical', {})
+                        signals[symbol]['technical'] = market_data[symbol].get('technical', {})
                     
-                    signals[symbol] = signal
+                    self.logger.info(f"生成交易信号 - {symbol}: {signals[symbol]}")
                     
                 except Exception as e:
                     self.logger.error(f"生成{symbol}交易信号时出错: {str(e)}")
