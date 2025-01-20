@@ -231,10 +231,11 @@ async def main():
 
         longport_config = Config.from_env()
         
-        # 创建一个共享的上下文
-        async with QuoteContext(longport_config) as quote_ctx, \
-                  TradeContext(longport_config) as trade_ctx:
-            
+        # 创建上下文
+        quote_ctx = QuoteContext(longport_config)
+        trade_ctx = TradeContext(longport_config)
+        
+        try:
             # 合并配置
             config = {
                 **TRADING_CONFIG,
@@ -271,6 +272,13 @@ async def main():
                             logger=logger
                         )
                         await asyncio.sleep(1)  # 添加适当的延迟
+                    
+        finally:
+            # 确保关闭连接
+            if hasattr(quote_ctx, 'close'):
+                await quote_ctx.close()
+            if hasattr(trade_ctx, 'close'):
+                await trade_ctx.close()
                     
     except Exception as e:
         logger.error(f"程序运行出错: {str(e)}")
