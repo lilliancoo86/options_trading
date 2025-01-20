@@ -11,8 +11,8 @@ from longport.openapi import (
     Config, 
     QuoteContext, 
     TradeContext,
-    SubType,
-    OrderType,
+    SubType, 
+    OrderType, 
     OrderSide,
     TimeInForceType
 )
@@ -77,7 +77,7 @@ class DoomsdayOptionStrategy:
         # 持仓管理
         self.positions = {}             # 当前持仓
         
-        # 添加趋势判断参数
+        # 策略相关配置
         self.trend_config = {
             'ma_periods': [5, 10, 20],
             'rsi_period': 14,
@@ -89,11 +89,7 @@ class DoomsdayOptionStrategy:
             'volume_ma': 20
         }
         
-        # 缓存历史数据
-        self.price_history = {}
-        self.vwap_history = {}
-        
-        # 分批建仓策略配置
+        # 建仓策略配置
         self.position_sizing = {
             'initial': {
                 'ratio': 0.25,     # 初始仓位比例
@@ -143,6 +139,10 @@ class DoomsdayOptionStrategy:
                 ]
             }
         }
+        
+        # 缓存历史数据
+        self.price_history = {}
+        self.vwap_history = {}
         
         # 趋势跟踪
         self._trend_cache = {}
@@ -216,32 +216,6 @@ class DoomsdayOptionStrategy:
             self.logger.error(f"生成交易信号时出错: {str(e)}")
             return []
 
-    async def check_market_close(self, position: Dict[str, Any]) -> bool:
-        """检查是否需要收盘平仓"""
-        try:
-            current_time = datetime.now(self.tz).strftime('%H:%M')
-            
-            # 收盘前警告
-            if current_time >= self.market_close['warning_time']:
-                self.logger.warning(f"接近收盘时间，准备平仓: {position['symbol']}")
-            
-            # 强制平仓检查
-            if current_time >= self.market_close['force_close_time']:
-                self.logger.warning(
-                    f"收盘前强制平仓:\n"
-                    f"  标的: {position['symbol']}\n"
-                    f"  当前时间: {current_time}\n"
-                    f"  平仓类型: 收盘平仓"
-                )
-                await self._execute_market_close(position)
-                return True
-            
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"检查收盘平仓时出错: {str(e)}")
-            return False
-
     async def _execute_market_close(self, position: dict):
         """执行收盘平仓"""
         try:
@@ -277,50 +251,6 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"执行收盘平仓时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
-
-    async def check_position_risk(self, position: Dict[str, Any]) -> bool:
-        """检查持仓风险"""
-        try:
-            # 首先检查是否需要收盘平仓（最高优先级）
-            if await self.check_market_close(position):
-                return True
-            
-            # 分析趋势
-            trend_analysis = await self.analyze_trend(position['symbol'])
-            
-            # 根据趋势信号处理
-            if trend_analysis['signal'] == 'close':
-                self.logger.warning(f"趋势信号触发平仓: {position['symbol']}")
-                await self._execute_market_close(position)
-                return True
-            elif trend_analysis['signal'] == 'reduce':
-                # 可以添加减仓逻辑
-                pass
-            elif trend_analysis['signal'] == 'add':
-                # 可以添加加仓逻辑
-                pass
-            
-            # 继续检查止损条件
-            current_price = float(position.get('current_price', 0))
-            cost_price = float(position.get('cost_price', 0))
-            if cost_price == 0:
-                return False
-                
-            pnl_pct = (current_price - cost_price) / cost_price * 100
-            is_option = self._is_option(position['symbol'])
-            limits = self.risk_limits['option'] if is_option else self.risk_limits['stock']
-            
-            # 检查止损条件
-            if limits['stop_loss'] is not None and pnl_pct <= limits['stop_loss']:
-                self.logger.warning(f"触发固定止损: 当前亏损 {pnl_pct:.1f}% <= {limits['stop_loss']}%")
-                await self._execute_stop_loss(position)
-                return True
-            
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"检查持仓风险时出错: {str(e)}")
-            return False
 
     def _is_option(self, symbol: str) -> bool:
         """检查是否为期权合约"""

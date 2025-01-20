@@ -439,3 +439,11 @@ class RiskChecker:
         except Exception as e:
             self.logger.error(f"检查新开仓位风险时出错: {str(e)}")
             return False, ""
+
+    async def check_market_close(self, position: Dict[str, Any]) -> Tuple[bool, str]:
+        """检查收盘平仓"""
+        # ... 收盘检查代码 ...
+
+    def calculate_pnl(self, position: Dict[str, Any]) -> float:
+        """计算持仓盈亏"""
+        # ... 盈亏计算代码 ...
