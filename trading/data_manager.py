@@ -12,6 +12,7 @@ import os
 import json
 from pathlib import Path
 from longport.openapi import Period, AdjustType, QuoteContext  # 添加 QuoteContext 导入
+import asyncio
 
 class DataManager:
     def __init__(self, config: Dict[str, Any]):
@@ -75,23 +76,21 @@ class DataManager:
             
             # 获取K线数据
             try:
-                candlesticks = await quote_ctx.candlesticks(
+                resp = await quote_ctx.candlesticks(
                     symbol=symbol,
                     period=Period.Day,
                     count=30,
                     adjust_type=AdjustType.NoAdjust
                 )
                 
-                # 将 candlesticks 转换为列表
-                candle_list = list(candlesticks)
-                
-                if not candle_list:
+                # 根据SDK文档，resp是一个包含candlesticks的响应对象
+                if not resp or not resp.candlesticks:
                     self.logger.warning(f"未获取到K线数据 ({symbol})")
                     return False
                     
                 # 转换为DataFrame
                 data = []
-                for candle in candle_list:
+                for candle in resp.candlesticks:
                     data.append({
                         'time': datetime.fromtimestamp(candle.timestamp),
                         'open': float(candle.open),
@@ -129,6 +128,9 @@ class DataManager:
             except Exception as e:
                 if 'invalid symbol' in str(e):
                     self.logger.error(f"无效的交易代码 ({symbol})")
+                elif 'request rate limit' in str(e):
+                    self.logger.warning(f"请求频率限制 ({symbol})，等待重试")
+                    await asyncio.sleep(1)  # 添加延迟
                 raise
                 
         except Exception as e:
