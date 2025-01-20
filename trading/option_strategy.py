@@ -182,6 +182,7 @@ class DoomsdayOptionStrategy:
                 adjust_type=AdjustType.NoAdjust
             )
             
+            # 根据SDK文档，resp是SecurityCandlestickResponse对象
             if not resp or not resp.candlesticks:
                 return {
                     "symbol": symbol,
