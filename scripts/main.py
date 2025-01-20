@@ -243,6 +243,14 @@ async def main():
 
         
 
+        # 确保数据目录存在
+
+        data_dir = Path('/home/options_trading/data')
+
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+        
+
         # 从环境变量加载 Longport 配置
 
         longport_config = Config.from_env()
@@ -266,6 +274,14 @@ async def main():
                     'trade_context': trade_ctx
                 },
                 'logging': LOGGING_CONFIG,
+                'DATA_CONFIG': {
+                    'base_dir': '/home/options_trading/data',
+                    'market_data_dir': '/home/options_trading/data/market_data',
+                    'update_interval': 60,
+                    'retention_days': 30,
+                    'backup_enabled': True,
+                    'compression': True
+                },
                 'test_mode': args.test
             }
 
