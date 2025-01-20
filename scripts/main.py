@@ -273,7 +273,7 @@ async def main():
                     'quote_context': quote_ctx,
                     'trade_context': trade_ctx
                 },
-                'logging': LOGGING_CONFIG,
+                'LOGGING_CONFIG': LOGGING_CONFIG,
                 'DATA_CONFIG': {
                     'base_dir': '/home/options_trading/data',
                     'market_data_dir': '/home/options_trading/data/market_data',
