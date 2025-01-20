@@ -39,9 +39,9 @@ class DoomsdayOptionStrategy:
             "AAPL.US",    # 苹果
         ])
         
-        # 添加VIX监控（尝试多个可能的代码）
-        self.vix_symbols = ['$VIX.US', 'VXX.US']  # 添加备选VIX指标
-        self.symbols.extend(self.vix_symbols)
+        # 添加VIX监控（使用VIXY ETF）
+        self.vix_symbol = "VIXY.US"  # 使用 VIXY ETF
+        self.symbols.append(self.vix_symbol)
         
         # 初始化 Longport 配置
         try:
@@ -175,17 +175,17 @@ class DoomsdayOptionStrategy:
         """分析股票趋势"""
         try:
             # 获取历史K线数据
-            end_time = datetime.now(self.tz)
-            start_time = end_time - timedelta(days=30)
-            
             candlesticks = await self.quote_ctx.candlesticks(
                 symbol=symbol,
-                period=Period.Day,  # 使用 Period 枚举
+                period=Period.Day,
                 count=30,
-                adjust_type=AdjustType.NoAdjust  # 使用 AdjustType 枚举
+                adjust_type=AdjustType.NoAdjust
             )
             
-            if not candlesticks:
+            # 将 candlesticks 转换为列表
+            candle_list = list(candlesticks)
+            
+            if not candle_list:
                 return {
                     "symbol": symbol,
                     "trend": "neutral",
@@ -195,7 +195,7 @@ class DoomsdayOptionStrategy:
                 }
             
             # 计算技术指标
-            indicators = await self._calculate_indicators(candlesticks)
+            indicators = await self._calculate_indicators(candle_list)
             
             # 获取开盘涨跌幅
             quotes = await self.quote_ctx.quote([symbol])

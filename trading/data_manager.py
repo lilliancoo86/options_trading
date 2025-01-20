@@ -69,9 +69,9 @@ class DataManager:
             if last_update and (now - last_update).seconds < self.update_interval:
                 return True
             
-            # VIX指数使用正确的代码
+            # VIX指数使用VIXY ETF
             if symbol == 'VIX.US':
-                symbol = 'VXX.US'  # 直接使用 VXX ETN
+                symbol = 'VIXY.US'  # 使用 VIXY ETF
             
             # 获取K线数据
             try:
@@ -82,13 +82,16 @@ class DataManager:
                     adjust_type=AdjustType.NoAdjust
                 )
                 
-                if not candlesticks:
+                # 将 candlesticks 转换为列表
+                candle_list = list(candlesticks)
+                
+                if not candle_list:
                     self.logger.warning(f"未获取到K线数据 ({symbol})")
                     return False
                     
                 # 转换为DataFrame
                 data = []
-                for candle in candlesticks:
+                for candle in candle_list:
                     data.append({
                         'time': datetime.fromtimestamp(candle.timestamp),
                         'open': float(candle.open),
@@ -117,7 +120,7 @@ class DataManager:
                 self.last_update[symbol_clean] = now
                 
                 # 特殊处理VIX数据
-                if symbol == 'VXX.US':
+                if symbol == 'VIXY.US':
                     self.vix_level = float(df.iloc[-1]['close'])
                     self.logger.info(f"已更新VIX数据: {self.vix_level}")
                 
@@ -130,8 +133,7 @@ class DataManager:
                 
         except Exception as e:
             self.logger.error(f"更新K线数据出错 ({symbol}): {str(e)}")
-            if symbol == 'VXX.US':
-                # VIX获取失败时设置一个默认值
+            if symbol == 'VIXY.US':
                 self.vix_level = 20.0
                 self.logger.warning(f"VIX数据获取失败，使用默认值: {self.vix_level}")
             return False
