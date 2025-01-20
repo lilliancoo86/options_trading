@@ -77,13 +77,40 @@ class RiskChecker:
         }
         
         # 缓存数据
-        self._atr_cache = {}
+        self._atr_cache = {
+            'time': None,
+            'data': {}
+        }
         self._position_peaks = {}
         self._intraday_data = {}
+
+        # 初始化时添加 TimeChecker 引用
+        self.time_checker = config.get('time_checker')
+        
+        # 添加仓位阶段跟踪
+        self._position_stages = {}  # 用于跟踪分批止盈阶段
+
+        # 重新排序风险检查优先级
+        self.risk_priority = {
+            'stop_loss': 1,     # 固定止损永远最高优先级（保护本金）
+            'trailing': 2,      # 移动止损次高优先级（保护利润）
+            'time': 3,          # 收盘时间风险（避免隔夜风险）
+            'expiry': 4,        # 期权到期风险
+            'atr': 5,          # ATR动态调整（日内波动管理）
+            'take_profit': 6,   # 常规止盈最低优先级
+        }
 
     async def calculate_atr(self, symbol: str, klines: List[Dict]) -> float:
         """计算ATR"""
         try:
+            current_time = datetime.now(self.tz)
+            
+            # 检查缓存是否有效（1分钟内）
+            if (self._atr_cache['time'] and 
+                (current_time - self._atr_cache['time']).total_seconds() < 60 and
+                symbol in self._atr_cache['data']):
+                return self._atr_cache['data'][symbol]
+            
             if len(klines) < self.atr_config['min_periods']:
                 return 0.0
                 
@@ -102,6 +129,11 @@ class RiskChecker:
             
             # 计算ATR
             atr = sum(tr_list[-self.atr_config['period']:]) / len(tr_list[-self.atr_config['period']:])
+            
+            # 更新缓存
+            self._atr_cache['time'] = current_time
+            self._atr_cache['data'][symbol] = atr
+            
             return atr
             
         except Exception as e:
@@ -162,33 +194,19 @@ class RiskChecker:
             self.logger.error(f"检查利润时出错: {str(e)}")
             return False
 
-    async def check_position_risk(self, position: Dict[str, Any]) -> Tuple[bool, str, float]:
-        """检查持仓风险，返回是否平仓、原因和平仓比例"""
+    async def check_position_risk(self, position: Dict[str, Any], market_data: Dict[str, Any]) -> Tuple[bool, str, float]:
+        """检查持仓风险"""
         try:
             symbol = position['symbol']
-            
-            # 首先检查期权到期日（最高优先级）
-            need_close, reason = self.time_checker.check_expiry_close(symbol)
-            if need_close:
-                return True, reason, 1.0
-            
-            # 检查是否需要收盘平仓（次高优先级）
-            need_close, reason = self.time_checker.check_force_close()
-            if need_close:
-                return True, reason, 1.0
-            
             current_price = float(position['current_price'])
             cost_price = float(position['cost_price'])
-            volume = position['volume']
-            
-            # 计算盈亏百分比
             pnl_pct = (current_price - cost_price) / cost_price * 100
             
             # 判断是否为期权
             is_option = bool(re.search(r'\d{6}[CP]\d+\.US$', symbol))
             limits = self.risk_limits['option'] if is_option else self.risk_limits['stock']
             
-            # 检查止损条件
+            # 1. 固定止损（保护本金，最高优先级）
             if limits['stop_loss'] is not None and pnl_pct <= limits['stop_loss']:
                 self.logger.warning(
                     f"触发止损信号:\n"
@@ -198,21 +216,9 @@ class RiskChecker:
                     f"  止损线: {limits['stop_loss']}%"
                 )
                 return True, "止损", 1.0
-                
-            # 检查止盈条件
-            if limits['take_profit'] is not None and pnl_pct >= limits['take_profit']:
-                self.logger.info(
-                    f"触发止盈信号:\n"
-                    f"  标的: {symbol}\n"
-                    f"  类型: {'期权' if is_option else '股票'}\n"
-                    f"  当前盈利: {pnl_pct:.1f}%\n"
-                    f"  止盈线: {limits['take_profit']}%"
-                )
-                return True, "止盈", 1.0
             
-            # 移动止损检查
+            # 2. 移动止损（保护已有利润）
             if is_option and pnl_pct >= self.trailing_stop['activation']:
-                # 计算历史最高收益
                 if symbol not in self._position_peaks:
                     self._position_peaks[symbol] = pnl_pct
                 else:
@@ -221,7 +227,6 @@ class RiskChecker:
                 peak_pnl = self._position_peaks[symbol]
                 drawdown = peak_pnl - pnl_pct
                 
-                # 如果回撤超过设定比例且仍有足够利润，触发移动止损
                 if (drawdown >= self.trailing_stop['trail_percent'] and 
                     pnl_pct >= self.trailing_stop['min_profit']):
                     self.logger.warning(
@@ -233,7 +238,22 @@ class RiskChecker:
                     )
                     return True, "移动止损", 1.0
             
-            # 分批止盈检查
+            # 3. 收盘时间风险（避免隔夜风险）
+            need_close, reason = self.time_checker.check_force_close()
+            if need_close:
+                return True, reason, 1.0
+            
+            # 4. 期权到期风险
+            need_close, reason = self.time_checker.check_expiry_close(symbol)
+            if need_close:
+                return True, reason, 1.0
+            
+            # 5. ATR动态调整（日内波动管理）
+            need_close, reason, ratio = await self.check_intraday_position(position, market_data)
+            if need_close:
+                return True, reason, ratio
+            
+            # 6. 分批止盈（最低优先级）
             if is_option and pnl_pct >= self.take_profit_stages['stage2']['threshold']:
                 if symbol not in self._position_stages:
                     self._position_stages[symbol] = set()
@@ -248,16 +268,10 @@ class RiskChecker:
                     self._position_stages[symbol].add('stage1')
                     return True, "分批止盈-阶段1", self.take_profit_stages['stage1']['ratio']
             
-            # 检查日内ATR
-            need_close, reason, ratio = await self.check_intraday_position(position, market_data)
-            if need_close:
-                return True, reason, ratio
-            
             return False, "", 0.0
             
         except Exception as e:
             self.logger.error(f"检查持仓风险时出错: {str(e)}")
-            self.logger.exception("详细错误信息:")
             return False, "", 0.0
 
     async def check_market_risk(self, vix_level: float, daily_volatility: float) -> Tuple[bool, str]:
@@ -285,26 +299,6 @@ class RiskChecker:
             self.logger.error(f"检查市场风险时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
             return False, ""
-
-    def check_market_status(self) -> bool:
-        """检查市场状态"""
-        try:
-            current_time = datetime.now(self.tz)
-            
-            # 检查是否为工作日
-            if current_time.weekday() > 4:  # 周六日不交易
-                return False
-            
-            # 检查是否在交易时段 (9:30-16:00)
-            time_str = current_time.strftime('%H:%M')
-            if '09:30' <= time_str <= '16:00':
-                return True
-            
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"检查市场状态时出错: {str(e)}")
-            return False
 
     def log_risk_status(self, position: Dict[str, Any]):
         """记录风险状态"""

@@ -61,6 +61,9 @@ class DoomsdayPositionManager:
         # 初始化风险检查器
         self.risk_checker = RiskChecker(config)
 
+        # 添加仓位跟踪
+        self._position_history = {}  # 记录每个标的的交易历史
+
     async def __aenter__(self):
         """异步上下文管理器的进入方法"""
         try:
@@ -182,6 +185,20 @@ class DoomsdayPositionManager:
                         f"  数量: {order_status.executed_quantity}张\n"
                         f"  成交价: ${order_status.executed_price:.2f}"
                     )
+                    
+                    # 记录平仓历史
+                    if symbol not in self._position_history:
+                        self._position_history[symbol] = []
+                    
+                    self._position_history[symbol].append({
+                        'action': 'close',
+                        'time': datetime.now(self.tz),
+                        'price': float(order_status.executed_price),
+                        'volume': close_volume,
+                        'ratio': ratio,
+                        'reason': reason
+                    })
+                    
                     return True
                     
                 elif order_status.status in [OrderStatus.Failed, OrderStatus.Rejected, OrderStatus.Cancelled]:
@@ -319,6 +336,19 @@ class DoomsdayPositionManager:
                         f"  成交价: ${order_status.executed_price:.2f}\n"
                         f"  原因: {reason}"
                     )
+                    
+                    # 记录开仓历史
+                    if symbol not in self._position_history:
+                        self._position_history[symbol] = []
+                    
+                    self._position_history[symbol].append({
+                        'action': 'open',
+                        'time': datetime.now(self.tz),
+                        'price': float(order_status.executed_price),
+                        'volume': volume,
+                        'reason': reason
+                    })
+                    
                     return True
                     
                 elif order_status.status in [OrderStatus.Failed, OrderStatus.Rejected, OrderStatus.Cancelled]:
@@ -349,3 +379,7 @@ class DoomsdayPositionManager:
                 self.logger.info("交易上下文初始化成功")
         except Exception as e:
             self.logger.error(f"初始化交易上下文失败: {str(e)}")
+
+    def get_position_history(self, symbol: str) -> List[Dict[str, Any]]:
+        """获取标的的交易历史"""
+        return self._position_history.get(symbol, [])
