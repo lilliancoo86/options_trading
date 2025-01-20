@@ -231,51 +231,46 @@ async def main():
 
         longport_config = Config.from_env()
         
-        # 创建上下文 - 直接使用构造函数
-        quote_ctx = QuoteContext(longport_config)
-        trade_ctx = TradeContext(longport_config)
-        
-        # 合并配置
-        config = {
-            **TRADING_CONFIG,
-            'longport': {
-                'app_key': os.getenv('LONGPORT_APP_KEY'),
-                'app_secret': os.getenv('LONGPORT_APP_SECRET'),
-                'access_token': os.getenv('LONGPORT_ACCESS_TOKEN'),
-                'region': os.getenv('LONGPORT_REGION', 'cn')
-            },
-            'api': {
-                'quote_context': quote_ctx,
-                'trade_context': trade_ctx
-            },
-            'logging': LOGGING_CONFIG,
-            'test_mode': args.test
-        }
+        # 创建一个共享的上下文
+        async with QuoteContext(longport_config) as quote_ctx, \
+                  TradeContext(longport_config) as trade_ctx:
+            
+            # 合并配置
+            config = {
+                **TRADING_CONFIG,
+                'longport': {
+                    'app_key': os.getenv('LONGPORT_APP_KEY'),
+                    'app_secret': os.getenv('LONGPORT_APP_SECRET'),
+                    'access_token': os.getenv('LONGPORT_ACCESS_TOKEN'),
+                    'region': os.getenv('LONGPORT_REGION', 'cn')
+                },
+                'api': {
+                    'quote_context': quote_ctx,
+                    'trade_context': trade_ctx
+                },
+                'logging': LOGGING_CONFIG,
+                'test_mode': args.test
+            }
 
-        
+            if args.test:
+                logger.info("=== 运行在测试模式 ===")
 
-        if args.test:
-
-            logger.info("=== 运行在测试模式 ===")
-
-        
-
-        # 初始化组件
-
-        async with DoomsdayOptionStrategy(config, args.test) as strategy:
-            async with DoomsdayPositionManager(config, args.test) as position_manager:
-                risk_checker = RiskChecker(config)
-                time_checker = TimeChecker(config, args.test)  # 确保这里传入了测试模式
-                
-                # 运行主循环
-                while True:
-                    await run_strategy(
-                        strategy=strategy,
-                        position_manager=position_manager,
-                        risk_checker=risk_checker,
-                        time_checker=time_checker,
-                        logger=logger
-                    )
+            # 初始化组件，传入共享的上下文
+            async with DoomsdayOptionStrategy(config, args.test) as strategy:
+                async with DoomsdayPositionManager(config, args.test) as position_manager:
+                    risk_checker = RiskChecker(config)
+                    time_checker = TimeChecker(config, args.test)
+                    
+                    # 运行主循环
+                    while True:
+                        await run_strategy(
+                            strategy=strategy,
+                            position_manager=position_manager,
+                            risk_checker=risk_checker,
+                            time_checker=time_checker,
+                            logger=logger
+                        )
+                        await asyncio.sleep(1)  # 添加适当的延迟
                     
     except Exception as e:
         logger.error(f"程序运行出错: {str(e)}")

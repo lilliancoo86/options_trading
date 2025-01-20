@@ -51,9 +51,9 @@ class DoomsdayOptionStrategy:
             self.logger.error(f"Longport配置初始化失败: {str(e)}")
             raise
         
-        # 初始化交易和行情上下文
-        self.quote_ctx = QuoteContext(self.longport_config)
-        self.trade_ctx = TradeContext(self.longport_config)
+        # 使用传入的上下文
+        self.quote_ctx = config['api']['quote_context']
+        self.trade_ctx = config['api']['trade_context']
         
         # 添加订阅类型
         self.sub_types = [
@@ -151,16 +151,8 @@ class DoomsdayOptionStrategy:
     async def __aenter__(self):
         """异步上下文管理器的进入方法"""
         try:
-            # 创建配置
-            self.longport_config = Config.from_env()
-            
-            # 创建交易和行情上下文
-            self.quote_ctx = QuoteContext(self.longport_config)
-            self.trade_ctx = TradeContext(self.longport_config)
-            
-            self.logger.info("交易和行情连接已建立")
+            self.logger.info("策略初始化完成")
             return self
-            
         except Exception as e:
             self.logger.error(f"初始化失败: {str(e)}")
             raise
@@ -168,13 +160,7 @@ class DoomsdayOptionStrategy:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """异步上下文管理器的退出方法"""
         try:
-            if hasattr(self.quote_ctx, 'close'):
-                await self.quote_ctx.close()
-            if hasattr(self.trade_ctx, 'close'):
-                await self.trade_ctx.close()
-            
-            self.logger.info("交易和行情连接已关闭")
-            
+            self.logger.info("策略清理完成")
         except Exception as e:
             self.logger.error(f"清理资源时出错: {str(e)}")
 

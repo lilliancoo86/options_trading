@@ -48,9 +48,9 @@ class DoomsdayPositionManager:
         self.logger = logging.getLogger(__name__)
         self.tz = pytz.timezone('America/New_York')
         
-        # 初始化为None，将在__aenter__中创建
-        self.trade_ctx = None
-        self.quote_ctx = None
+        # 使用传入的上下文
+        self.quote_ctx = config['api']['quote_context']
+        self.trade_ctx = config['api']['trade_context']
         
         # 持仓限制
         self.position_limits = {
@@ -79,16 +79,8 @@ class DoomsdayPositionManager:
     async def __aenter__(self):
         """异步上下文管理器的进入方法"""
         try:
-            # 创建配置
-            longport_config = Config.from_env()
-            
-            # 创建交易和行情上下文
-            self.trade_ctx = TradeContext(longport_config)
-            self.quote_ctx = QuoteContext(longport_config)
-            
-            self.logger.info("交易和行情连接已建立")
+            self.logger.info("持仓管理器初始化完成")
             return self
-            
         except Exception as e:
             self.logger.error(f"初始化失败: {str(e)}")
             raise
@@ -96,16 +88,9 @@ class DoomsdayPositionManager:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """异步上下文管理器的退出方法"""
         try:
-            if hasattr(self.trade_ctx, 'close'):
-                await self.trade_ctx.close()
-            if hasattr(self.quote_ctx, 'close'):
-                await self.quote_ctx.close()
-            
-            self.logger.info("交易和行情连接已关闭")
-            
+            self.logger.info("持仓管理器清理完成")
         except Exception as e:
             self.logger.error(f"清理资源时出错: {str(e)}")
-            raise
 
     async def get_real_positions(self) -> Dict[str, List[Dict[str, Any]]]:
         """获取实际持仓数据"""
