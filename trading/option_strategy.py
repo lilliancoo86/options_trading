@@ -37,8 +37,8 @@ class DoomsdayOptionStrategy:
             "AAPL.US",    # 苹果
         ])
         
-        # 添加VIX监控
-        self.vix_symbol = "VIX.US"
+        # 添加VIX监控（使用正确的代码）
+        self.vix_symbol = "^VIX.US"  # 修改VIX代码
         self.symbols.append(self.vix_symbol)
         
         # 初始化 Longport 配置
@@ -364,7 +364,7 @@ class DoomsdayOptionStrategy:
                     await self.data_manager.update_klines(symbol, self.quote_ctx)
                     
                     # 获取最新K线数据
-                    df = await self.data_manager.get_latest_klines(symbol)
+                    df = await self.data_manager.get_latest_klines(symbol.replace('^', ''))  # 去掉^符号
                     if df.empty:
                         continue
                     
@@ -375,7 +375,7 @@ class DoomsdayOptionStrategy:
                     quote = quotes[0]
                     
                     # 整合市场数据
-                    market_data[symbol] = {
+                    market_data[symbol.replace('^', '')] = {  # 去掉^符号
                         'quote': {
                             'last_done': float(quote.last_done),
                             'open': float(quote.open),
@@ -397,11 +397,12 @@ class DoomsdayOptionStrategy:
                     returns = df['close'].pct_change().dropna()
                     if not returns.empty:
                         volatility = returns.std() * np.sqrt(252)  # 年化波动率
-                        market_data[symbol]['volatility'] = volatility
+                        market_data[symbol.replace('^', '')]['volatility'] = volatility
                     
                     # 添加VIX数据
-                    if symbol == 'VIX.US':
+                    if symbol == '^VIX.US':
                         market_data['vix'] = float(quote.last_done)
+                        self.logger.info(f"当前VIX水平: {market_data['vix']}")
                     
                 except Exception as e:
                     self.logger.error(f"获取 {symbol} 市场数据时出错: {str(e)}")

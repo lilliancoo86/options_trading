@@ -11,7 +11,7 @@ import pytz
 import os
 import json
 from pathlib import Path
-from longport.openapi import Period, AdjustType  # 添加导入
+from longport.openapi import Period, AdjustType, QuoteContext  # 添加 QuoteContext 导入
 
 class DataManager:
     def __init__(self, config: Dict[str, Any]):
@@ -59,7 +59,7 @@ class DataManager:
             self.logger.error(f"加载K线数据出错 ({symbol}): {str(e)}")
             return pd.DataFrame()
 
-    async def update_klines(self, symbol: str, quote_ctx) -> bool:
+    async def update_klines(self, symbol: str, quote_ctx: QuoteContext) -> bool:
         """更新K线数据"""
         try:
             # 检查是否需要更新
@@ -68,39 +68,43 @@ class DataManager:
             
             if last_update and (now - last_update).seconds < self.update_interval:
                 return True
+            
+            # VIX指数使用正确的代码
+            if symbol == 'VIX.US':
+                symbol = '^VIX.US'  # 使用正确的VIX指数代码
                 
             # 获取K线数据
-            candlesticks = await quote_ctx.candlesticks(
+            resp = await quote_ctx.candlesticks(
                 symbol=symbol,
-                period=Period.Day,  # 使用 Period 枚举
+                period=Period.Day,
                 count=30,
                 adjust_type=AdjustType.NoAdjust
             )
             
-            if not candlesticks:
+            if not resp:
                 return False
                 
             # 转换为DataFrame
             df = pd.DataFrame([{
-                'time': datetime.fromtimestamp(k.timestamp),
-                'open': float(k.open),
-                'high': float(k.high),
-                'low': float(k.low),
-                'close': float(k.close),
-                'volume': int(k.volume),
-                'turnover': float(k.turnover)
-            } for k in candlesticks])
+                'time': datetime.fromtimestamp(candle.timestamp),
+                'open': float(candle.open),
+                'high': float(candle.high),
+                'low': float(candle.low),
+                'close': float(candle.close),
+                'volume': int(candle.volume),
+                'turnover': float(candle.turnover)
+            } for candle in resp])
             
             # 保存数据
-            file_path = self.get_kline_path(symbol)
+            file_path = self.get_kline_path(symbol.replace('^', ''))  # 保存时去掉^符号
             df.to_csv(file_path, index=False)
             
             # 更新缓存
-            self.kline_cache[symbol] = df
-            self.last_update[symbol] = now
+            self.kline_cache[symbol.replace('^', '')] = df  # 缓存时去掉^符号
+            self.last_update[symbol.replace('^', '')] = now
             
             # 特殊处理VIX数据
-            if symbol == 'VIX.US':
+            if symbol == '^VIX.US':
                 self.vix_level = float(df.iloc[-1]['close'])
                 self.logger.info(f"已更新VIX数据: {self.vix_level}")
             
