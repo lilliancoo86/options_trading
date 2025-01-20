@@ -240,20 +240,24 @@ class RiskChecker:
         """检查持仓风险（按优先级）"""
         try:
             # 1. 资金安全检查（不可忽略）
-            if need_close := await self._check_capital_safety(position):
-                return need_close
+            result = await self._check_capital_safety(position)
+            if result[0]:
+                return result
                 
             # 2. 利润保护检查（可选但重要）
-            if need_close := await self._check_profit_protection(position):
-                return need_close
+            result = await self._check_profit_protection(position)
+            if result[0]:
+                return result
                 
             # 3. 时间风险检查（强制执行）
-            if need_close := await self._check_time_risk(position):
-                return need_close
+            result = await self._check_time_risk(position)
+            if result[0]:
+                return result
                 
             # 4. 波动管理检查（动态调整）
-            if need_close := await self._check_volatility(position, market_data):
-                return need_close
+            result = await self._check_volatility(position, market_data)
+            if result[0]:
+                return result
                 
             return False, "", 0.0
             
