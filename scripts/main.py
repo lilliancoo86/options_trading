@@ -30,6 +30,8 @@ import argparse
 
 from longport.openapi import Config, QuoteContext, TradeContext
 
+from trading.data_cleaner import DataCleaner
+
 
 
 # 设置基础路径
@@ -209,6 +211,20 @@ async def run_strategy(strategy, position_manager, risk_checker, time_checker, l
 
 
 
+async def run_cleanup(data_cleaner: DataCleaner):
+    """运行数据清理任务"""
+    try:
+        # 每天凌晨2点运行清理任务
+        while True:
+            now = datetime.now(pytz.timezone('America/New_York'))
+            if now.hour == 2 and now.minute == 0:
+                await data_cleaner.cleanup()
+            await asyncio.sleep(60)  # 每分钟检查一次
+    except Exception as e:
+        logger.error(f"运行清理任务时出错: {str(e)}")
+
+
+
 async def main():
 
     """主程序入口"""
@@ -262,6 +278,12 @@ async def main():
                     risk_checker = RiskChecker(config)
                     time_checker = TimeChecker(config, args.test)
                     
+                    # 初始化数据清理器
+                    data_cleaner = DataCleaner(config)
+                    
+                    # 启动清理任务
+                    cleanup_task = asyncio.create_task(run_cleanup(data_cleaner))
+                    
                     # 运行主循环
                     while True:
                         await run_strategy(
@@ -283,6 +305,9 @@ async def main():
     except Exception as e:
         logger.error(f"程序运行出错: {str(e)}")
         logger.exception("详细错误信息:")
+    finally:
+        if 'cleanup_task' in locals():
+            cleanup_task.cancel()
 
 
 
