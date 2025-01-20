@@ -138,10 +138,19 @@ class DoomsdayPositionManager:
             self.logger.error(f"获取持仓数据时出错: {str(e)}")
             return {"active": []}
 
-    async def close_position(self, symbol: str, volume: int, reason: str = "") -> bool:
+    async def close_position(self, symbol: str, volume: int, reason: str = "", ratio: float = 1.0) -> bool:
         """平仓指定持仓"""
         try:
-            self.logger.info(f"准备平仓: {symbol}, 数量: {volume}, 原因: {reason}")
+            self.logger.info(f"准备平仓: {symbol}, 数量: {volume}, 比例: {ratio:.2%}, 原因: {reason}")
+            
+            if ratio <= 0 or ratio > 1:
+                self.logger.error(f"无效的平仓比例: {ratio}")
+                return False
+            
+            # 计算实际平仓数量
+            close_volume = int(volume * ratio)
+            if close_volume < 1:
+                close_volume = 1
             
             if not self.trade_ctx:
                 self.logger.error("交易上下文未初始化")
@@ -152,7 +161,7 @@ class DoomsdayPositionManager:
                 symbol=symbol,
                 order_type=OrderType.Market,
                 side=OrderSide.Sell,
-                submitted_quantity=volume,
+                submitted_quantity=close_volume,
                 time_in_force=TimeInForceType.Day,
                 remark=f"Close position: {reason}"
             )

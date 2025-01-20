@@ -434,18 +434,29 @@ class DoomsdayOptionStrategy:
             if not filtered_options:
                 return None
             
-            # 选择得分最高的期权
-            best_option = max(filtered_options, key=lambda x: x['score'])
+            # 筛选最佳期权（取前3个得分最高的）
+            filtered_options.sort(key=lambda x: x['score'], reverse=True)
+            best_options = filtered_options[:3]
             
-            self.logger.info(
-                f"选择期权合约:\n"
-                f"  代码: {best_option['symbol']}\n"
-                f"  类型: {best_option['type']}\n"
-                f"  价格: ${best_option['price']:.2f}\n"
-                f"  杠杆率: {best_option['leverage']:.1f}x"
-            )
+            if best_options:
+                self.logger.info(
+                    f"筛选出最佳期权合约:\n" + 
+                    "\n".join([
+                        f"  {i+1}. {opt['symbol']}\n"
+                        f"     得分: {opt['score']:.1f}\n"
+                        f"     杠杆: {opt['leverage']:.1f}x\n"
+                        f"     成交量: {opt['volume']}\n"
+                        f"     持仓量: {opt['open_interest']}\n"
+                        f"     隐含波动率: {opt['implied_volatility']:.2%}\n"
+                        f"     Delta: {opt['delta']:.2f}"
+                        for i, opt in enumerate(best_options)
+                    ])
+                )
+                
+                # 返回得分最高的期权
+                return best_options[0]['symbol']
             
-            return best_option['symbol']
+            return None
             
         except Exception as e:
             self.logger.error(f"选择期权合约时出错: {str(e)}")
@@ -637,6 +648,57 @@ class DoomsdayOptionStrategy:
             self.logger.error(f"获取可用期权合约时出错: {str(e)}")
             self.logger.exception("详细错误信息:")
             return []
+
+    def _calculate_option_score(self, option: Dict[str, Any]) -> float:
+        """计算期权得分"""
+        try:
+            score = 0.0
+            
+            # 1. 杠杆分数 (20-30倍最优)
+            leverage = option['leverage']
+            if 20 <= leverage <= 30:
+                score += 30  # 杠杆在理想范围内
+                # 更倾向于杠杆在25倍左右
+                score -= abs(25 - leverage) * 0.5
+            else:
+                return 0  # 杠杆不在范围内直接排除
+            
+            # 2. 流动性分数 (25分)
+            volume = option['volume']
+            open_interest = option['open_interest']
+            if volume > 1000 and open_interest > 5000:
+                score += 25
+            elif volume > 500 and open_interest > 2000:
+                score += 15
+            elif volume > 100 and open_interest > 1000:
+                score += 5
+            
+            # 3. 隐含波动率分数 (20分)
+            iv = option['implied_volatility']
+            if 0.3 <= iv <= 0.7:  # 适中的隐含波动率
+                score += 20
+            elif 0.2 <= iv <= 0.8:
+                score += 10
+            
+            # 4. Delta分数 (15分)
+            delta = abs(option['delta'])
+            if 0.3 <= delta <= 0.5:  # 适中的Delta
+                score += 15
+            elif 0.2 <= delta <= 0.6:
+                score += 8
+            
+            # 5. 到期时间分数 (10分)
+            days_to_expiry = (option['expiry_date'] - datetime.now(self.tz).date()).days
+            if 14 <= days_to_expiry <= 21:  # 优先选择2-3周到期
+                score += 10
+            elif 7 <= days_to_expiry <= 30:
+                score += 5
+            
+            return score
+            
+        except Exception as e:
+            self.logger.error(f"计算期权得分时出错: {str(e)}")
+            return 0.0
 
     async def _on_quote(self, symbol: str, quote: Dict[str, Any]):
         """行情回调"""
