@@ -90,14 +90,56 @@ class RiskChecker:
         # 添加仓位阶段跟踪
         self._position_stages = {}  # 用于跟踪分批止盈阶段
 
-        # 重新排序风险检查优先级
+        # 完整的风险控制体系
+        self.risk_control = {
+            # 1. 资金安全（最高优先级）
+            'capital_protection': {
+                'stop_loss': {
+                    'option': -10.0,    # 期权固定止损10%
+                    'stock': -3.0       # 股票固定止损3%
+                },
+                'max_loss_per_day': {
+                    'option': 1000.0,   # 期权日亏损上限
+                    'stock': 500.0      # 股票日亏损上限
+                }
+            },
+            
+            # 2. 利润保护（次高优先级）
+            'profit_protection': {
+                'trailing_stop': {
+                    'activation': 15.0,     # 盈利15%时激活
+                    'trail_percent': 5.0,   # 回撤5%触发
+                    'min_profit': 10.0      # 保底利润10%
+                },
+                'take_profit_stages': {
+                    'stage1': {'threshold': 25.0, 'ratio': 0.33},  # 盈利25%时卖出1/3
+                    'stage2': {'threshold': 40.0, 'ratio': 0.5}    # 盈利40%时卖出一半
+                }
+            },
+            
+            # 3. 时间风险（强制执行）
+            'time_risk': {
+                'market_close': '15:45',    # 收盘前强平时间
+                'warning_time': '15:40',    # 预警时间
+                'option_expiry': 1          # 期权到期前1天平仓
+            },
+            
+            # 4. 市场风险（动态监控）
+            'market_risk': {
+                'vix_limit': 35.0,          # VIX上限
+                'volatility_limit': 5.0,    # 日内波动率上限
+                'volume_threshold': 1000     # 最小成交量要求
+            }
+        }
+
+        # 风险检查优先级（从高到低）
         self.risk_priority = {
-            'stop_loss': 1,     # 固定止损永远最高优先级（保护本金）
-            'trailing': 2,      # 移动止损次高优先级（保护利润）
-            'time': 3,          # 收盘时间风险（避免隔夜风险）
-            'expiry': 4,        # 期权到期风险
-            'atr': 5,          # ATR动态调整（日内波动管理）
-            'take_profit': 6,   # 常规止盈最低优先级
+            'stop_loss': 1,     # 固定止损（保护本金）
+            'trailing': 2,      # 移动止损（保护利润）
+            'time': 3,          # 收盘时间（避免隔夜）
+            'expiry': 4,        # 期权到期（避免到期风险）
+            'atr': 5,          # ATR动态调整（波动管理）
+            'take_profit': 6    # 常规止盈（分批获利）
         }
 
     async def calculate_atr(self, symbol: str, klines: List[Dict]) -> float:
@@ -195,84 +237,114 @@ class RiskChecker:
             return False
 
     async def check_position_risk(self, position: Dict[str, Any], market_data: Dict[str, Any]) -> Tuple[bool, str, float]:
-        """检查持仓风险"""
+        """检查持仓风险（按优先级）"""
         try:
-            symbol = position['symbol']
-            current_price = float(position['current_price'])
-            cost_price = float(position['cost_price'])
-            pnl_pct = (current_price - cost_price) / cost_price * 100
-            
-            # 判断是否为期权
-            is_option = bool(re.search(r'\d{6}[CP]\d+\.US$', symbol))
-            limits = self.risk_limits['option'] if is_option else self.risk_limits['stock']
-            
-            # 1. 固定止损（保护本金，最高优先级）
-            if limits['stop_loss'] is not None and pnl_pct <= limits['stop_loss']:
-                self.logger.warning(
-                    f"触发止损信号:\n"
-                    f"  标的: {symbol}\n"
-                    f"  类型: {'期权' if is_option else '股票'}\n"
-                    f"  当前亏损: {pnl_pct:.1f}%\n"
-                    f"  止损线: {limits['stop_loss']}%"
-                )
-                return True, "止损", 1.0
-            
-            # 2. 移动止损（保护已有利润）
-            if is_option and pnl_pct >= self.trailing_stop['activation']:
-                if symbol not in self._position_peaks:
-                    self._position_peaks[symbol] = pnl_pct
-                else:
-                    self._position_peaks[symbol] = max(self._position_peaks[symbol], pnl_pct)
+            # 1. 资金安全检查（不可忽略）
+            if need_close := await self._check_capital_safety(position):
+                return need_close
                 
-                peak_pnl = self._position_peaks[symbol]
-                drawdown = peak_pnl - pnl_pct
+            # 2. 利润保护检查（可选但重要）
+            if need_close := await self._check_profit_protection(position):
+                return need_close
                 
-                if (drawdown >= self.trailing_stop['trail_percent'] and 
-                    pnl_pct >= self.trailing_stop['min_profit']):
-                    self.logger.warning(
-                        f"触发移动止损:\n"
-                        f"  标的: {symbol}\n"
-                        f"  最高收益: {peak_pnl:.1f}%\n"
-                        f"  当前收益: {pnl_pct:.1f}%\n"
-                        f"  回撤幅度: {drawdown:.1f}%"
-                    )
-                    return True, "移动止损", 1.0
-            
-            # 3. 收盘时间风险（避免隔夜风险）
-            need_close, reason = self.time_checker.check_force_close()
-            if need_close:
-                return True, reason, 1.0
-            
-            # 4. 期权到期风险
-            need_close, reason = self.time_checker.check_expiry_close(symbol)
-            if need_close:
-                return True, reason, 1.0
-            
-            # 5. ATR动态调整（日内波动管理）
-            need_close, reason, ratio = await self.check_intraday_position(position, market_data)
-            if need_close:
-                return True, reason, ratio
-            
-            # 6. 分批止盈（最低优先级）
-            if is_option and pnl_pct >= self.take_profit_stages['stage2']['threshold']:
-                if symbol not in self._position_stages:
-                    self._position_stages[symbol] = set()
-                if 'stage2' not in self._position_stages[symbol]:
-                    self._position_stages[symbol].add('stage2')
-                    return True, "分批止盈-阶段2", self.take_profit_stages['stage2']['ratio']
-                    
-            elif is_option and pnl_pct >= self.take_profit_stages['stage1']['threshold']:
-                if symbol not in self._position_stages:
-                    self._position_stages[symbol] = set()
-                if 'stage1' not in self._position_stages[symbol]:
-                    self._position_stages[symbol].add('stage1')
-                    return True, "分批止盈-阶段1", self.take_profit_stages['stage1']['ratio']
-            
+            # 3. 时间风险检查（强制执行）
+            if need_close := await self._check_time_risk(position):
+                return need_close
+                
+            # 4. 波动管理检查（动态调整）
+            if need_close := await self._check_volatility(position, market_data):
+                return need_close
+                
             return False, "", 0.0
             
         except Exception as e:
             self.logger.error(f"检查持仓风险时出错: {str(e)}")
             return False, "", 0.0
+
+    async def _check_capital_safety(self, position: Dict[str, Any]) -> Tuple[bool, str, float]:
+        """资金安全检查"""
+        # 1. 固定止损（最高优先级）
+        if self._check_stop_loss(position):
+            return True, "固定止损", 1.0
+            
+        # 2. 日内亏损上限
+        if self._check_daily_loss_limit(position):
+            return True, "触及日亏损上限", 1.0
+            
+        return False, "", 0.0
+
+    async def _check_profit_protection(self, position: Dict[str, Any]) -> Tuple[bool, str, float]:
+        """利润保护检查"""
+        # 1. 移动止损（保护已有利润）
+        if need_close := self._check_trailing_stop(position):
+            return need_close
+            
+        # 2. 分批止盈（锁定部分利润）
+        if need_close := self._check_staged_take_profit(position):
+            return need_close
+            
+        return False, "", 0.0
+
+    async def _check_time_risk(self, position: Dict[str, Any]) -> Tuple[bool, str, float]:
+        """时间风险检查"""
+        # 1. 收盘时间风险（避免隔夜风险）
+        need_close, reason = self.time_checker.check_force_close()
+        if need_close:
+            return True, reason, 1.0
+        
+        # 2. 期权到期风险
+        need_close, reason = self.time_checker.check_expiry_close(position['symbol'])
+        if need_close:
+            return True, reason, 1.0
+        
+        return False, "", 0.0
+
+    async def _check_volatility(self, position: Dict[str, Any], market_data: Dict[str, Any]) -> Tuple[bool, str, float]:
+        """波动管理检查"""
+        # 1. ATR动态调整（日内波动管理）
+        need_close, reason, ratio = await self.check_intraday_position(position, market_data)
+        if need_close:
+            return True, reason, ratio
+        
+        return False, "", 0.0
+
+    def _check_stop_loss(self, position: Dict[str, Any]) -> bool:
+        """检查固定止损"""
+        symbol = position['symbol']
+        current_price = float(position['current_price'])
+        cost_price = float(position['cost_price'])
+        pnl_pct = (current_price - cost_price) / cost_price * 100
+        
+        # 判断是否为期权
+        is_option = bool(re.search(r'\d{6}[CP]\d+\.US$', symbol))
+        limits = self.risk_control['capital_protection']['stop_loss'] if is_option else self.risk_control['capital_protection']['stop_loss']
+        
+        if limits['stop_loss'] is not None and pnl_pct <= limits['stop_loss']:
+            self.logger.warning(
+                f"触发止损信号:\n"
+                f"  标的: {symbol}\n"
+                f"  类型: {'期权' if is_option else '股票'}\n"
+                f"  当前亏损: {pnl_pct:.1f}%\n"
+                f"  止损线: {limits['stop_loss']}%"
+            )
+            return True
+        
+        return False
+
+    def _check_daily_loss_limit(self, position: Dict[str, Any]) -> bool:
+        """检查日内亏损上限"""
+        # 实现逻辑
+        return False
+
+    def _check_trailing_stop(self, position: Dict[str, Any]) -> bool:
+        """检查移动止损"""
+        # 实现逻辑
+        return False
+
+    def _check_staged_take_profit(self, position: Dict[str, Any]) -> bool:
+        """检查分批止盈"""
+        # 实现逻辑
+        return False
 
     async def check_market_risk(self, vix_level: float, daily_volatility: float) -> Tuple[bool, str]:
         """

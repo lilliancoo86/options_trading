@@ -1,7 +1,7 @@
 """
 末日期权系统 - 日内交易策略模块
 """
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 import logging
 from datetime import datetime, timedelta
 import pytz
@@ -38,24 +38,6 @@ class DoomsdayOptionStrategy:
         # 添加VIX监控
         self.vix_symbol = "VIX.US"
         self.symbols.append(self.vix_symbol)
-        
-        # 简化的风险控制参数
-        self.risk_limits = {
-            'option': {
-                'stop_loss': -10.0,  # 期权固定10%止损
-                'take_profit': None  # 期权不设固定止盈
-            },
-            'stock': {
-                'stop_loss': -3.0,   # 股票固定3%止损
-                'take_profit': 5.0    # 股票固定5%止盈
-            }
-        }
-        
-        # 添加收盘平仓时间设置
-        self.market_close = {
-            'force_close_time': '15:45',  # 收盘前15分钟强制平仓
-            'warning_time': '15:40'       # 收盘前20分钟发出警告
-        }
         
         # 初始化 Longport 配置
         try:
@@ -110,6 +92,61 @@ class DoomsdayOptionStrategy:
         # 缓存历史数据
         self.price_history = {}
         self.vwap_history = {}
+        
+        # 分批建仓策略配置
+        self.position_sizing = {
+            'initial': {
+                'ratio': 0.25,     # 初始仓位比例
+                'conditions': {     
+                    'technical': {
+                        'ma_trend': True,      # 均线趋势向上
+                        'macd': 'golden_cross', # MACD金叉
+                        'rsi': (30, 70)        # RSI合理区间
+                    }
+                }
+            },
+            'scale_in': {
+                'max_times': 3,    # 最大加仓次数
+                'min_interval': 5, # 最小加仓间隔(分钟)
+                'conditions': {
+                    'trend_confirmation': {
+                        'ma_alignment': True,      # 均线多头排列
+                        'volume_increase': 1.2,    # 成交量需要放大20%
+                        'momentum_positive': True   # 动量指标保持向上
+                    }
+                },
+                'stages': [
+                    {
+                        'ratio': 0.25,
+                        'technical_requirements': {
+                            'ma_support': '5ma',     # 5日均线支撑
+                            'volume_ratio': 1.2,     # 成交量比
+                            'rsi_range': (35, 45)    # RSI回调区间
+                        }
+                    },
+                    {
+                        'ratio': 0.25,
+                        'technical_requirements': {
+                            'ma_support': '10ma',  # 10日均线支撑
+                            'volume_ratio': 1.5,
+                            'rsi_range': (30, 40)
+                        }
+                    },
+                    {
+                        'ratio': 0.25,
+                        'technical_requirements': {
+                            'ma_support': '20ma',  # 20日均线支撑
+                            'volume_ratio': 2.0,
+                            'rsi_range': (25, 35)
+                        }
+                    }
+                ]
+            }
+        }
+        
+        # 趋势跟踪
+        self._trend_cache = {}
+        self._position_records = {}
 
     async def get_market_data(self) -> Dict[str, Any]:
         """获取市场数据"""
@@ -708,3 +745,115 @@ class DoomsdayOptionStrategy:
             
         except Exception as e:
             self.logger.error(f"处理行情数据出错: {str(e)}")
+
+    async def check_entry_opportunity(self, symbol: str, market_data: Dict[str, Any]) -> Tuple[bool, float, str]:
+        """检查建仓机会"""
+        try:
+            # 1. 获取正股代码和趋势
+            stock_symbol = self._get_underlying_symbol(symbol)
+            trend_data = await self.analyze_stock_trend(stock_symbol)
+            
+            # 2. 只在趋势明确时建仓
+            if trend_data['trend'] not in ['strong_up', 'up']:
+                return False, 0, "趋势不明确"
+            
+            # 3. 检查是否已有持仓
+            if symbol in self._position_records:
+                return await self._check_scale_in(symbol, stock_symbol, market_data)
+            
+            # 4. 检查初始建仓条件
+            if not await self._check_initial_entry(symbol, stock_symbol, market_data):
+                return False, 0, "不满足初始建仓条件"
+            
+            return True, self.position_sizing['initial']['ratio'], "初始建仓"
+            
+        except Exception as e:
+            self.logger.error(f"检查建仓机会时出错: {str(e)}")
+            return False, 0, str(e)
+
+    async def _check_initial_entry(self, symbol: str, stock_symbol: str, 
+                                 market_data: Dict[str, Any]) -> bool:
+        """检查初始建仓条件"""
+        try:
+            conditions = self.position_sizing['initial']['conditions']
+            
+            # 1. 检查VIX
+            if market_data['vix'] > conditions['vix_max']:
+                return False
+            
+            # 2. 检查成交量
+            if market_data['volume'] < conditions['min_volume']:
+                return False
+            
+            # 3. 检查期权合约的特定条件
+            option_data = await self._get_option_data(symbol)
+            if not self._check_option_conditions(option_data):
+                return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"检查初始建仓条件时出错: {str(e)}")
+            return False
+
+    async def _check_scale_in(self, option_symbol: str, stock_symbol: str, 
+                             market_data: Dict[str, Any]) -> Tuple[bool, float, str]:
+        """检查加仓机会"""
+        try:
+            position_record = self._position_records[option_symbol]
+            current_stage = len(position_record['entries'])
+            
+            # 1. 基本条件检查
+            if current_stage >= self.position_sizing['scale_in']['max_times']:
+                return False, 0, "已达最大加仓次数"
+            
+            if not self._check_entry_interval(position_record['entries'][-1]['time']):
+                return False, 0, "加仓间隔不足"
+                
+            # 2. 获取技术指标数据
+            tech_data = await self._get_technical_indicators(stock_symbol)
+            
+            # 3. 检查趋势确认
+            trend_conf = self.position_sizing['scale_in']['conditions']['trend_confirmation']
+            if not self._check_trend_confirmation(tech_data, trend_conf):
+                return False, 0, "趋势未确认"
+            
+            # 4. 检查回调条件
+            pullback = self.position_sizing['scale_in']['conditions']['pullback']
+            stock_pb = await self._calculate_pullback(stock_symbol)
+            option_pb = await self._calculate_pullback(option_symbol)
+            
+            if not (pullback['stock']['min'] >= stock_pb >= pullback['stock']['max']):
+                return False, 0, "正股回调不符合条件"
+            
+            if not (pullback['option']['min'] >= option_pb >= pullback['option']['max']):
+                return False, 0, "期权回调不符合条件"
+            
+            # 5. 检查当前阶段的技术要求
+            stage_reqs = self.position_sizing['scale_in']['stages'][current_stage]['technical_requirements']
+            
+            # 检查均线支撑
+            if stage_reqs['ma_support'] == '5ma':
+                if not self._check_ma_support(tech_data, 5):
+                    return False, 0, "未到5日均线支撑"
+            elif stage_reqs['ma_support'] == '10ma':
+                if not self._check_ma_support(tech_data, 10):
+                    return False, 0, "未到10日均线支撑"
+            elif stage_reqs['ma_support'] == '20ma':
+                if not self._check_ma_support(tech_data, 20):
+                    return False, 0, "未到20日均线支撑"
+            
+            # 检查成交量
+            if not self._check_volume_ratio(tech_data, stage_reqs['volume_ratio']):
+                return False, 0, "成交量不足"
+            
+            # 检查RSI
+            if not self._check_rsi_range(tech_data, stage_reqs['rsi_range']):
+                return False, 0, "RSI不在目标区间"
+            
+            # 所有条件都满足，允许加仓
+            return True, self.position_sizing['scale_in']['stages'][current_stage]['ratio'], f"第{current_stage + 1}次加仓"
+            
+        except Exception as e:
+            self.logger.error(f"检查加仓机会时出错: {str(e)}")
+            return False, 0, str(e)
