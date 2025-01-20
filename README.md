@@ -587,6 +587,41 @@ sudo groupadd -f trader
 # 设置项目目录权限
 sudo chown -R trader:trader /home/options_trading
 sudo chmod -R 755 /home/options_trading
+------------------------------------------------------
+2025-01-21新增
+权限设置：
+# 创建数据目录
+sudo mkdir -p /home/options_trading/data
+sudo chown -R trader:trader /home/options_trading/data
+sudo chmod -R 755 /home/options_trading/data
+
+# 确保 trader 用户有写入权限
+sudo usermod -a -G trader $(whoami)
+
+
+/home/options_trading/
+├── config/
+├── database/
+├── logs/
+├── scripts/
+├── trading/
+├── data/                   # 新增：数据存储目录
+│   ├── market_data/       # 市场数据
+│   │   ├── klines/        # K线数据
+│   │   │   ├── AAPL_US_daily.csv
+│   │   │   ├── NVDA_US_daily.csv
+│   │   │   └── ...
+│   │   ├── cache/        # 缓存数据
+│   │   │   ├── technical_indicators.json
+│   │   │   └── ...
+│   │   └── logs/         # 数据相关日志
+├── venv/
+└── ...
+
+
+
+
+----------------------------------------------------
 
 # 复制配置文件
 cp .env.example .env

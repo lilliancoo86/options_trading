@@ -100,5 +100,15 @@ LOGGING_CONFIG = {
     'backup_count': 5,
 }
 
+# 数据存储配置
+DATA_CONFIG = {
+    'base_dir': '/home/options_trading/data',  # 项目根目录下的 data 目录
+    'market_data_dir': '/home/options_trading/data/market_data',
+    'update_interval': int(os.getenv('DATA_UPDATE_INTERVAL', '60')),  # 数据更新间隔（秒）
+    'retention_days': int(os.getenv('DATA_RETENTION_DAYS', '365')),  # 数据保留天数
+    'backup_enabled': os.getenv('DATA_BACKUP_ENABLED', 'true').lower() == 'true',  # 是否启用备份
+    'compression': os.getenv('DATA_COMPRESSION', 'true').lower() == 'true',    # 是否压缩历史数据
+}
+
 # 注意：实际的 config.py 文件应该包含真实的配置值
 # 并且不应该被提交到版本控制系统中

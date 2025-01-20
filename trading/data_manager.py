@@ -18,14 +18,19 @@ class DataManager:
         self.logger = logging.getLogger(__name__)
         self.tz = pytz.timezone('America/New_York')
         
-        # 数据存储路径
-        self.data_dir = Path(config.get('data_dir', 'data'))
-        self.kline_dir = self.data_dir / 'klines'
-        self.cache_dir = self.data_dir / 'cache'
+        # 数据存储根目录
+        self.base_dir = Path('/home/options_trading/data')  # 项目根目录下
         
-        # 确保目录存在
-        self.kline_dir.mkdir(parents=True, exist_ok=True)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        # 各类数据目录
+        self.data_dir = self.base_dir / 'market_data'
+        self.kline_dir = self.data_dir / 'klines'      # K线数据
+        self.cache_dir = self.data_dir / 'cache'       # 缓存数据
+        self.logs_dir = self.data_dir / 'logs'         # 数据日志
+        
+        # 确保目录存在并设置正确的权限
+        for directory in [self.base_dir, self.data_dir, self.kline_dir, self.cache_dir, self.logs_dir]:
+            directory.mkdir(parents=True, exist_ok=True)
+            os.chmod(directory, 0o755)  # rwxr-xr-x
         
         # 数据缓存
         self.kline_cache = {}
