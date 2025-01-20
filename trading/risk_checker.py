@@ -1,6 +1,6 @@
 """
 风险检查模块
-负责检查持仓风险和市场风险
+负责检查持仓风险和市场风险，包括止盈止损管理
 """
 from typing import Dict, Any, Tuple, List
 import logging
@@ -263,135 +263,199 @@ class RiskChecker:
 
     async def _check_capital_safety(self, position: Dict[str, Any]) -> Tuple[bool, str, float]:
         """资金安全检查"""
-        # 1. 固定止损（最高优先级）
-        if self._check_stop_loss(position):
-            return True, "固定止损", 1.0
+        try:
+            symbol = position['symbol']
+            current_price = float(position['current_price'])
+            cost_price = float(position['cost_price'])
+            pnl_pct = (current_price - cost_price) / cost_price * 100
             
-        # 2. 日内亏损上限
-        if self._check_daily_loss_limit(position):
-            return True, "触及日亏损上限", 1.0
+            # 判断是否为期权
+            is_option = bool(re.search(r'\d{6}[CP]\d+\.US$', symbol))
+            stop_loss = self.risk_control['capital_protection']['stop_loss']
             
-        return False, "", 0.0
+            # 1. 固定止损（最高优先级）
+            if pnl_pct <= (stop_loss['option'] if is_option else stop_loss['stock']):
+                self.logger.warning(
+                    f"触发固定止损:\n"
+                    f"  标的: {symbol}\n"
+                    f"  亏损: {pnl_pct:.1f}%\n"
+                    f"  止损线: {stop_loss['option'] if is_option else stop_loss['stock']}%"
+                )
+                return True, "固定止损", 1.0
+            
+            # 2. 日内亏损上限
+            daily_limit = self.risk_control['capital_protection']['max_loss_per_day']
+            daily_loss = self.calculate_daily_loss(position)
+            if daily_loss >= (daily_limit['option'] if is_option else daily_limit['stock']):
+                self.logger.warning(
+                    f"触发日亏损上限:\n"
+                    f"  标的: {symbol}\n"
+                    f"  日内亏损: ${daily_loss:.2f}\n"
+                    f"  上限: ${daily_limit['option'] if is_option else daily_limit['stock']}"
+                )
+                return True, "日亏损上限", 1.0
+            
+            return False, "", 0.0
+            
+        except Exception as e:
+            self.logger.error(f"检查资金安全时出错: {str(e)}")
+            return False, "", 0.0
 
     async def _check_profit_protection(self, position: Dict[str, Any]) -> Tuple[bool, str, float]:
         """利润保护检查"""
-        # 1. 移动止损（保护已有利润）
-        if need_close := self._check_trailing_stop(position):
-            return need_close
+        try:
+            symbol = position['symbol']
+            current_price = float(position['current_price'])
+            cost_price = float(position['cost_price'])
+            pnl_pct = (current_price - cost_price) / cost_price * 100
             
-        # 2. 分批止盈（锁定部分利润）
-        if need_close := self._check_staged_take_profit(position):
-            return need_close
+            # 1. 移动止损
+            trailing = self.risk_control['profit_protection']['trailing_stop']
+            if pnl_pct >= trailing['activation']:
+                if symbol not in self._position_peaks:
+                    self._position_peaks[symbol] = pnl_pct
+                else:
+                    self._position_peaks[symbol] = max(self._position_peaks[symbol], pnl_pct)
+                
+                peak_pnl = self._position_peaks[symbol]
+                drawdown = peak_pnl - pnl_pct
+                
+                if drawdown >= trailing['trail_percent'] and pnl_pct >= trailing['min_profit']:
+                    self.logger.warning(
+                        f"触发移动止损:\n"
+                        f"  标的: {symbol}\n"
+                        f"  最高收益: {peak_pnl:.1f}%\n"
+                        f"  当前收益: {pnl_pct:.1f}%\n"
+                        f"  回撤: {drawdown:.1f}%"
+                    )
+                    return True, "移动止损", 1.0
             
-        return False, "", 0.0
+            # 2. 分批止盈
+            take_profit = self.risk_control['profit_protection']['take_profit_stages']
+            if symbol not in self._position_stages:
+                self._position_stages[symbol] = set()
+            
+            # 检查第二阶段止盈
+            if (pnl_pct >= take_profit['stage2']['threshold'] and 
+                'stage2' not in self._position_stages[symbol]):
+                self._position_stages[symbol].add('stage2')
+                return True, "分批止盈-阶段2", take_profit['stage2']['ratio']
+            
+            # 检查第一阶段止盈
+            if (pnl_pct >= take_profit['stage1']['threshold'] and 
+                'stage1' not in self._position_stages[symbol]):
+                self._position_stages[symbol].add('stage1')
+                return True, "分批止盈-阶段1", take_profit['stage1']['ratio']
+            
+            return False, "", 0.0
+            
+        except Exception as e:
+            self.logger.error(f"检查利润保护时出错: {str(e)}")
+            return False, "", 0.0
 
     async def _check_time_risk(self, position: Dict[str, Any]) -> Tuple[bool, str, float]:
         """时间风险检查"""
-        # 1. 收盘时间风险（避免隔夜风险）
-        need_close, reason = self.time_checker.check_force_close()
-        if need_close:
-            return True, reason, 1.0
-        
-        # 2. 期权到期风险
-        need_close, reason = self.time_checker.check_expiry_close(position['symbol'])
-        if need_close:
-            return True, reason, 1.0
-        
-        return False, "", 0.0
-
-    async def _check_volatility(self, position: Dict[str, Any], market_data: Dict[str, Any]) -> Tuple[bool, str, float]:
-        """波动管理检查"""
-        # 1. ATR动态调整（日内波动管理）
-        need_close, reason, ratio = await self.check_intraday_position(position, market_data)
-        if need_close:
-            return True, reason, ratio
-        
-        return False, "", 0.0
-
-    def _check_stop_loss(self, position: Dict[str, Any]) -> bool:
-        """检查固定止损"""
-        symbol = position['symbol']
-        current_price = float(position['current_price'])
-        cost_price = float(position['cost_price'])
-        pnl_pct = (current_price - cost_price) / cost_price * 100
-        
-        # 判断是否为期权
-        is_option = bool(re.search(r'\d{6}[CP]\d+\.US$', symbol))
-        limits = self.risk_control['capital_protection']['stop_loss'] if is_option else self.risk_control['capital_protection']['stop_loss']
-        
-            if limits['stop_loss'] is not None and pnl_pct <= limits['stop_loss']:
-                self.logger.warning(
-                f"触发止损信号:\n"
-                f"  标的: {symbol}\n"
-                f"  类型: {'期权' if is_option else '股票'}\n"
-                    f"  当前亏损: {pnl_pct:.1f}%\n"
-                    f"  止损线: {limits['stop_loss']}%"
-                )
-                return True
+        try:
+            # 1. 检查是否需要收盘平仓
+            need_close, reason = await self.check_market_close(position)
+            if need_close:
+                return True, reason, 1.0
             
-        return False
+            # 2. 检查期权是否即将到期
+            need_close, reason = self.time_checker.check_expiry_close(position['symbol'])
+            if need_close:
+                return True, reason, 1.0
+            
+            return False, "", 0.0
+            
+        except Exception as e:
+            self.logger.error(f"检查时间风险时出错: {str(e)}")
+            return False, "", 0.0
 
-    def _check_daily_loss_limit(self, position: Dict[str, Any]) -> bool:
-        """检查日内亏损上限"""
-        # 实现逻辑
-        return False
+    async def check_market_close(self, position: Dict[str, Any]) -> Tuple[bool, str]:
+        """检查收盘平仓"""
+        try:
+            current_time = datetime.now(self.tz).strftime('%H:%M')
+            
+            # 收盘前警告
+            if current_time >= self.risk_control['time_risk']['warning_time']:
+                self.logger.warning(
+                    f"接近收盘时间:\n"
+                    f"  标的: {position['symbol']}\n"
+                    f"  当前时间: {current_time}"
+                )
+            
+            # 强制平仓检查
+            if current_time >= self.risk_control['time_risk']['market_close']:
+                self.logger.warning(
+                    f"触发收盘平仓:\n"
+                    f"  标的: {position['symbol']}\n"
+                    f"  当前时间: {current_time}"
+                )
+                return True, "收盘平仓"
+            
+            return False, ""
+            
+        except Exception as e:
+            self.logger.error(f"检查收盘平仓时出错: {str(e)}")
+            return False, ""
 
-    def _check_trailing_stop(self, position: Dict[str, Any]) -> bool:
-        """检查移动止损"""
-        # 实现逻辑
-        return False
+    def calculate_pnl(self, position: Dict[str, Any]) -> float:
+        """计算持仓盈亏"""
+        try:
+            current_price = float(position['current_price'])
+            cost_price = float(position['cost_price'])
+            volume = int(position['volume'])
+            
+            pnl = (current_price - cost_price) * volume
+            return pnl
+            
+        except Exception as e:
+            self.logger.error(f"计算持仓盈亏时出错: {str(e)}")
+            return 0.0
 
-    def _check_staged_take_profit(self, position: Dict[str, Any]) -> bool:
-        """检查分批止盈"""
-        # 实现逻辑
-        return False
+    def calculate_daily_loss(self, position: Dict[str, Any]) -> float:
+        """计算日内亏损"""
+        try:
+            pnl = self.calculate_pnl(position)
+            return abs(min(0, pnl))
+            
+        except Exception as e:
+            self.logger.error(f"计算日内亏损时出错: {str(e)}")
+            return 0.0
 
     async def check_market_risk(self, vix_level: float, daily_volatility: float) -> Tuple[bool, str]:
-        """
-        检查市场风险
-        
-        Returns:
-            Tuple[bool, str]: (是否风险过高, 原因)
-        """
+        """检查市场风险"""
         try:
-            vol_limits = self.risk_limits['volatility']
+            market_risk = self.risk_control['market_risk']
             
-            # 检查日内波动率
-            if daily_volatility > vol_limits['max_daily']:
-                self.logger.warning(
-                    f"日内波动率过高:\n"
-                    f"  当前波动率: {daily_volatility:.1f}%\n"
-                    f"  最大限制: {vol_limits['max_daily']}%"
-                )
-                return True, "波动率过高"
+            # 检查VIX
+            if vix_level > market_risk['vix_limit']:
+                return True, f"VIX过高: {vix_level:.1f} > {market_risk['vix_limit']}"
+            
+            # 检查波动率
+            if daily_volatility > market_risk['volatility_limit']:
+                return True, f"波动率过高: {daily_volatility:.1f}% > {market_risk['volatility_limit']}%"
             
             return False, ""
             
         except Exception as e:
             self.logger.error(f"检查市场风险时出错: {str(e)}")
-            self.logger.exception("详细错误信息:")
             return False, ""
 
     def log_risk_status(self, position: Dict[str, Any]):
         """记录风险状态"""
         try:
-            current_price = float(position.get('current_price', 0))
-            cost_price = float(position.get('cost_price', 0))
-            if cost_price == 0:
-                return
-            
-            pnl_pct = (current_price - cost_price) / cost_price * 100
-            is_option = self._is_option(position['symbol'])
-            limits = self.risk_limits['option'] if is_option else self.risk_limits['stock']
+            pnl = self.calculate_pnl(position)
+            pnl_pct = pnl / (float(position['cost_price']) * int(position['volume'])) * 100
             
             self.logger.info(
                 f"\n=== 风险状态 [{position['symbol']}] ===\n"
-                f"当前价格: ${current_price:.2f}\n"
-                f"成本价格: ${cost_price:.2f}\n"
-                f"收益率: {pnl_pct:+.1f}%\n"
-                f"止损线: {limits['stop_loss']}%\n"
-                f"止盈线: {limits['take_profit'] if not is_option else 'N/A'}\n"
-                f"当前时间: {datetime.now(self.tz).strftime('%H:%M:%S')}\n"
+                f"当前价格: ${position['current_price']:.2f}\n"
+                f"成本价格: ${position['cost_price']:.2f}\n"
+                f"持仓数量: {position['volume']}张\n"
+                f"盈亏金额: ${pnl:.2f}\n"
+                f"盈亏比例: {pnl_pct:+.1f}%\n"
                 f"{'='*40}"
             )
             
@@ -439,11 +503,3 @@ class RiskChecker:
         except Exception as e:
             self.logger.error(f"检查新开仓位风险时出错: {str(e)}")
             return False, ""
-
-    async def check_market_close(self, position: Dict[str, Any]) -> Tuple[bool, str]:
-        """检查收盘平仓"""
-        # ... 收盘检查代码 ...
-
-    def calculate_pnl(self, position: Dict[str, Any]) -> float:
-        """计算持仓盈亏"""
-        # ... 盈亏计算代码 ...
