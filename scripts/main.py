@@ -262,52 +262,23 @@ async def main():
 
         # 初始化组件
 
-        strategy = DoomsdayOptionStrategy(config, args.test)
-
-        position_manager = DoomsdayPositionManager(config, args.test)
-
-        risk_checker = RiskChecker(config)
-
-        time_checker = TimeChecker(config, args.test)  # 确保这里传入了测试模式
-
-        
-
-        # 运行主循环
-
-        while True:
-
-            try:
-
-                await run_strategy(
-
-                    strategy=strategy,
-
-                    position_manager=position_manager,
-
-                    risk_checker=risk_checker,
-
-                    time_checker=time_checker,
-
-                    logger=logger
-
-                )
-
+        async with DoomsdayOptionStrategy(config, args.test) as strategy:
+            async with DoomsdayPositionManager(config, args.test) as position_manager:
+                risk_checker = RiskChecker(config)
+                time_checker = TimeChecker(config, args.test)  # 确保这里传入了测试模式
                 
-
-            except Exception as e:
-
-                logger.error(f"主循环出错: {str(e)}")
-
-                logger.exception("详细错误信息:")
-
-                await asyncio.sleep(5)
-
-                
-
+                # 运行主循环
+                while True:
+                    await run_strategy(
+                        strategy=strategy,
+                        position_manager=position_manager,
+                        risk_checker=risk_checker,
+                        time_checker=time_checker,
+                        logger=logger
+                    )
+                    
     except Exception as e:
-
         logger.error(f"程序运行出错: {str(e)}")
-
         logger.exception("详细错误信息:")
 
 
