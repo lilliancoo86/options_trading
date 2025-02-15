@@ -183,11 +183,17 @@ class DataManager:
                         # 创建新连接
                         self._quote_ctx = QuoteContext(self.longport_config)
                         
-                        # 打开连接
-                        await self._quote_ctx.open()
-                        
-                        self._last_quote_time = current_time
-                        self.logger.info("成功创建新的行情连接")
+                        # 验证连接
+                        try:
+                            # 尝试获取一个简单的行情数据来验证连接
+                            if self.symbols:
+                                await self._quote_ctx.quote(symbols=[self.symbols[0]])
+                            self._last_quote_time = current_time
+                            self.logger.info("成功创建新的行情连接")
+                        except Exception as e:
+                            self.logger.error(f"验证行情连接失败: {str(e)}")
+                            self._quote_ctx = None
+                            return None
                         
                     except OpenApiException as e:
                         self.logger.error(f"创建行情连接失败: {str(e)}")
