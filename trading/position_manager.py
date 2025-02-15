@@ -147,27 +147,34 @@ class DoomsdayPositionManager:
             try:
                 trade_ctx = await self._get_trade_ctx()
                 if not trade_ctx:
-                    raise ValueError("交易连接未就绪")
+                    self.logger.error("无法获取交易连接")
+                    return False
                     
                 # 获取账户余额
-                balance = await trade_ctx.account_balance()
-                if not balance:
-                    raise ValueError("无法获取账户余额")
-                
-                # 构建余额信息
-                balance_info = (
-                    f"账户余额 ({balance.currency}):\n"
-                    f"  总资产: ${float(balance.net_assets):,.2f}\n"
-                    f"  初始保证金: ${float(balance.init_margin):,.2f}\n"
-                    f"  维持保证金: ${float(balance.maintenance_margin):,.2f}\n"
-                    f"  风险等级: {balance.risk_level}"
-                )
-                
-                self.logger.info(balance_info)
-                
-                # 保存账户余额
-                self.account_balances = balance
-                return True
+                try:
+                    balance = await trade_ctx.account_balance()
+                    if not balance:
+                        self.logger.error("账户余额为空")
+                        return False
+                    
+                    # 构建余额信息
+                    balance_info = (
+                        f"账户余额 ({balance.currency}):\n"
+                        f"  总资产: ${float(balance.net_assets):,.2f}\n"
+                        f"  初始保证金: ${float(balance.init_margin):,.2f}\n"
+                        f"  维持保证金: ${float(balance.maintenance_margin):,.2f}\n"
+                        f"  风险等级: {balance.risk_level}"
+                    )
+                    
+                    self.logger.info(balance_info)
+                    
+                    # 保存账户余额
+                    self.account_balances = balance
+                    return True
+                    
+                except OpenApiException as e:
+                    self.logger.error(f"获取账户余额失败: {str(e)}")
+                    return False
                 
             except Exception as e:
                 self.logger.error(f"验证账户状态时出错: {str(e)}")
@@ -707,6 +714,13 @@ class DoomsdayPositionManager:
             if (self._trade_ctx is None or 
                 current_time - self._last_trade_time > self._connection_timeout):
                 
+                # 关闭旧连接
+                if self._trade_ctx:
+                    try:
+                        await self._trade_ctx.close()
+                    except Exception as e:
+                        self.logger.warning(f"关闭旧交易连接时出错: {str(e)}")
+                
                 self._trade_ctx = None
                 
                 try:
@@ -715,14 +729,21 @@ class DoomsdayPositionManager:
                     
                     # 创建新连接
                     self._trade_ctx = TradeContext(self.longport_config)
-                    self._last_trade_time = current_time
                     
-                    # 等待连接就绪
-                    await asyncio.sleep(1)
+                    # 等待连接建立并验证
+                    await self._trade_ctx.connect()
+                    await asyncio.sleep(2)
                     
-                    if not self._trade_ctx:
-                        raise ValueError("交易连接创建失败")
-                        
+                    # 验证连接
+                    try:
+                        await self._trade_ctx.account_balance()
+                        self._last_trade_time = current_time
+                        self.logger.info("交易连接验证成功")
+                    except Exception as e:
+                        self.logger.error(f"交易连接验证失败: {str(e)}")
+                        self._trade_ctx = None
+                        raise
+                
                 except Exception as e:
                     self.logger.error(f"创建交易连接失败: {str(e)}")
                     self._trade_ctx = None
@@ -932,7 +953,7 @@ class DoomsdayPositionManager:
         """平仓"""
         try:
             symbol = position.get('symbol', '')
-            quantity = int(float(position.get('quantity', 0)) * ratio)
+            quantity = int(float(position.get('quantity', 0)) * ratio
             
             # 构建日志信息
             log_message = (
@@ -1437,28 +1458,35 @@ class DoomsdayPositionManager:
             try:
                 trade_ctx = await self._get_trade_ctx()
                 if not trade_ctx:
-                    raise ValueError("交易连接未就绪")
+                    self.logger.error("无法获取交易连接")
+                    return False
                     
                 # 获取账户余额
-                balance = await trade_ctx.account_balance()
-                if not balance:
-                    raise ValueError("无法获取账户余额")
-                
-                # 构建余额信息
-                balance_info = (
-                    f"账户余额 ({balance.currency}):\n"
-                    f"  总资产: ${float(balance.net_assets):,.2f}\n"
-                    f"  初始保证金: ${float(balance.init_margin):,.2f}\n"
-                    f"  维持保证金: ${float(balance.maintenance_margin):,.2f}\n"
-                    f"  风险等级: {balance.risk_level}"
-                )
-                
-                self.logger.info(balance_info)
-                
-                # 保存账户余额
-                self.account_balances = balance
-                return True
-                
+                try:
+                    balance = await trade_ctx.account_balance()
+                    if not balance:
+                        self.logger.error("账户余额为空")
+                        return False
+                    
+                    # 构建余额信息
+                    balance_info = (
+                        f"账户余额 ({balance.currency}):\n"
+                        f"  总资产: ${float(balance.net_assets):,.2f}\n"
+                        f"  初始保证金: ${float(balance.init_margin):,.2f}\n"
+                        f"  维持保证金: ${float(balance.maintenance_margin):,.2f}\n"
+                        f"  风险等级: {balance.risk_level}"
+                    )
+                    
+                    self.logger.info(balance_info)
+                    
+                    # 保存账户余额
+                    self.account_balances = balance
+                    return True
+                    
+                except OpenApiException as e:
+                    self.logger.error(f"获取账户余额失败: {str(e)}")
+                    return False
+                    
             except Exception as e:
                 self.logger.error(f"验证账户状态时出错: {str(e)}")
                 return False
