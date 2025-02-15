@@ -528,7 +528,7 @@ class DoomsdayPositionManager:
                         raise ValueError("订单提交失败")
                     
                     # 等待订单成交
-                    filled = await self._wait_order_fill(order.order_id, timeout=order_config['timeout'])
+                    filled = await self._wait_order_filled(order.order_id, timeout=order_config['timeout'])
                     if filled:
                         await self._record_trade(order, reason)
                         return True
@@ -548,22 +548,30 @@ class DoomsdayPositionManager:
             self.logger.error(f"订单执行出错: {str(e)}")
             return False
 
-    async def _wait_order_fill(self, order_id: str, timeout: int = 10) -> bool:
-        """等待订单成交"""
+    async def _wait_order_filled(self, order_id: str, timeout: int = 10) -> bool:
+        """
+        等待订单成交
+        
+        Args:
+            order_id: 订单ID
+            timeout: 超时时间(秒)
+        """
         try:
             start_time = time.time()
-            while (datetime.now() - start_time).seconds < timeout:
-                order_status = await self.get_order_status(order_id)
-                if not order_status:
-                    return False
+            while time.time() - start_time < timeout:
+                trade_ctx = await self._get_trade_ctx()
+                if not trade_ctx:
+                    raise ValueError("交易连接未就绪")
                 
-                if order_status['status'] == OrderStatus.Filled:
+                # 修改为异步调用
+                order = await trade_ctx.order_detail(order_id)
+                if order.status in [OrderStatus.Filled, OrderStatus.PartiallyFilled]:
                     return True
-                elif order_status['status'] in [OrderStatus.Failed, OrderStatus.Rejected, OrderStatus.Cancelled]:
+                elif order.status in [OrderStatus.Failed, OrderStatus.Cancelled]:
                     return False
-                    
-                await asyncio.sleep(0.5)
                 
+                await asyncio.sleep(0.5)
+            
             return False
             
         except Exception as e:
@@ -1035,35 +1043,6 @@ class DoomsdayPositionManager:
             
         except Exception as e:
             self.logger.error(f"平仓所有持仓时出错: {str(e)}")
-            return False
-
-    async def _wait_order_filled(self, order_id: str, timeout: int = 10) -> bool:
-        """
-        等待订单成交
-        
-        Args:
-            order_id: 订单ID
-            timeout: 超时时间(秒)
-        """
-        try:
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                trade_ctx = await self._get_trade_ctx()
-                if not trade_ctx:
-                    raise ValueError("交易连接未就绪")
-                
-                order = trade_ctx.order_detail(order_id)
-                if order.status in [OrderStatus.Filled, OrderStatus.PartiallyFilled]:
-                    return True
-                elif order.status in [OrderStatus.Failed, OrderStatus.Cancelled]:
-                    return False
-                
-                await asyncio.sleep(0.5)
-            
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"等待订单成交时出错: {str(e)}")
             return False
 
     async def update_position_status(self):
