@@ -18,6 +18,7 @@ import asyncio
 import time
 from collections import deque
 from config.config import API_CONFIG
+from trading.time_checker import TimeChecker  # 添加导入
 
 class DataManager:
     def __init__(self, config: Dict[str, Any]):
@@ -42,6 +43,9 @@ class DataManager:
         
         # 交易标的
         self.symbols = config.get('symbols', [])
+        
+        # 添加时间检查器
+        self.time_checker = TimeChecker(config)
         
         # 实时数据缓存
         self._quote_cache = {
@@ -210,14 +214,19 @@ class DataManager:
             
             # 批量订阅
             try:
-                await quote_ctx.subscribe(
-                    symbols=symbols,
-                    sub_types=[SubType.Quote, SubType.Trade, SubType.Depth],
-                    is_first_push=True
-                )
-                self.logger.info(f"成功订阅标的: {', '.join(symbols)}")
-                return True
-                
+                # 确保 quote_ctx 不为 None 且有 subscribe 方法
+                if hasattr(quote_ctx, 'subscribe'):
+                    await quote_ctx.subscribe(
+                        symbols=symbols,
+                        sub_types=[SubType.Quote, SubType.Trade, SubType.Depth],
+                        is_first_push=True
+                    )
+                    self.logger.info(f"成功订阅标的: {', '.join(symbols)}")
+                    return True
+                else:
+                    self.logger.error("行情连接对象无效")
+                    return False
+                    
             except OpenApiException as e:
                 self.logger.error(f"订阅行情失败: {str(e)}")
                 return False
