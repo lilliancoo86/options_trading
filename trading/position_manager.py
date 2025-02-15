@@ -948,7 +948,7 @@ class DoomsdayPositionManager:
         """平仓"""
         try:
             symbol = position.get('symbol', '')
-            quantity = int(float(position.get('quantity', 0)) * ratio
+            quantity = int(float(position.get('quantity', 0)) * ratio)
             
             # 构建日志信息
             log_message = (
