@@ -154,3 +154,74 @@ class DataManager:
         except Exception as e:
             self.logger.error(f"获取实时数据时出错: {str(e)}")
             return None
+
+    async def ensure_quote_ctx(self) -> Optional[QuoteContext]:
+        """确保行情连接可用"""
+        try:
+            async with self._quote_ctx_lock:
+                current_time = time.time()
+                
+                # 检查是否需要重新连接
+                if (self._quote_ctx is None or 
+                    current_time - self._last_quote_time > self._quote_timeout):
+                    
+                    # 关闭旧连接
+                    if self._quote_ctx:
+                        try:
+                            await self._quote_ctx.close()
+                        except Exception as e:
+                            self.logger.warning(f"关闭旧连接时出错: {str(e)}")
+                    
+                    try:
+                        # 创建新连接前等待
+                        await asyncio.sleep(1)
+                        
+                        # 创建新连接
+                        self._quote_ctx = QuoteContext(self.longport_config)
+                        self._last_quote_time = current_time
+                        
+                        self.logger.info("成功创建新的行情连接")
+                        
+                    except OpenApiException as e:
+                        self.logger.error(f"创建行情连接失败: {str(e)}")
+                        self._quote_ctx = None
+                        return None
+                        
+                    except Exception as e:
+                        self.logger.error(f"创建行情连接时出错: {str(e)}")
+                        self._quote_ctx = None
+                        return None
+                
+                return self._quote_ctx
+                
+        except Exception as e:
+            self.logger.error(f"确保行情连接时出错: {str(e)}")
+            return None
+
+    async def subscribe_symbols(self, symbols: List[str]) -> bool:
+        """订阅行情"""
+        try:
+            if not symbols:
+                return True
+                
+            quote_ctx = await self.ensure_quote_ctx()
+            if not quote_ctx:
+                return False
+            
+            # 批量订阅
+            try:
+                await quote_ctx.subscribe(
+                    symbols=symbols,
+                    sub_types=[SubType.Quote, SubType.Trade, SubType.Depth],
+                    is_first_push=True
+                )
+                self.logger.info(f"成功订阅标的: {', '.join(symbols)}")
+                return True
+                
+            except OpenApiException as e:
+                self.logger.error(f"订阅行情失败: {str(e)}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"订阅标的时出错: {str(e)}")
+            return False
