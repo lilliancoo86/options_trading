@@ -730,8 +730,8 @@ class DoomsdayPositionManager:
                     # 创建新连接
                     self._trade_ctx = TradeContext(self.longport_config)
                     
-                    # 等待连接建立并验证
-                    await self._trade_ctx.connect()
+                    # 打开连接
+                    await self._trade_ctx.open()  # 使用 open() 替代 connect()
                     await asyncio.sleep(2)
                     
                     # 验证连接

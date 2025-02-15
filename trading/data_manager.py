@@ -182,8 +182,11 @@ class DataManager:
                         
                         # 创建新连接
                         self._quote_ctx = QuoteContext(self.longport_config)
-                        self._last_quote_time = current_time
                         
+                        # 打开连接
+                        await self._quote_ctx.open()
+                        
+                        self._last_quote_time = current_time
                         self.logger.info("成功创建新的行情连接")
                         
                     except OpenApiException as e:
