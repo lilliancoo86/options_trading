@@ -71,7 +71,7 @@ class DataManager:
                 raise ConnectionError("初始化行情连接失败")
             
             # 设置行情推送回调
-            quote_ctx.set_handler(self._quote_handler)
+            quote_ctx.on_quote = self._quote_handler
             
             # 订阅行情
             await self.subscribe_symbols(self.symbols)
