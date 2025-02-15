@@ -146,42 +146,28 @@ class DoomsdayPositionManager:
             # 验证账户状态
             try:
                 trade_ctx = await self._get_trade_ctx()
+                # 修改账户余额查询方式
                 balances = await trade_ctx.account_balance()
                 if not balances:
                     raise ValueError("无法获取账户余额")
                 
-                # 遍历并记录所有账户余额
-                for balance in balances:
+                # 遍历单个余额对象而不是列表
+                for balance in [balances]:  # 修改这里
                     # 获取现金详情
                     cash_info = balance.cash_infos[0] if balance.cash_infos else None
                     
-                    # 获取货币符号
-                    currency_symbol = 'USD' if balance.currency == 'USD' else balance.currency
-                    
-                    # 构建现金详情列表
-                    cash_details = []
-                    if cash_info:
-                        cash_details = [
-                            f"    可用现金: ${float(cash_info.available_cash):,.2f}",
-                            f"    可提现金: ${float(cash_info.withdraw_cash):,.2f}",
-                            f"    冻结现金: ${float(cash_info.frozen_cash):,.2f}",
-                            f"    待结算现金: ${float(cash_info.settling_cash):,.2f}"
-                        ]
-                    
-                    # 构建余额信息字符串
+                    # 构建余额信息...
                     balance_info = (
-                        f"账户余额 ({currency_symbol}):\n"
+                        f"账户余额 ({balance.currency}):\n"
                         f"  总资产: ${float(balance.net_assets):,.2f}\n"
                         f"  初始保证金: ${float(balance.init_margin):,.2f}\n"
                         f"  维持保证金: ${float(balance.maintenance_margin):,.2f}\n"
-                        f"  风险等级: {balance.risk_level}\n"
-                        f"  现金详情:\n{chr(10).join(cash_details) if cash_details else '    无现金详情'}"
+                        f"  风险等级: {balance.risk_level}"
                     )
                     
-                    # 使用单行日志记录
                     self.logger.info(balance_info)
                 
-                # 保存账户余额供后续使用
+                # 保存账户余额
                 self.account_balances = balances
                 return True
                 
@@ -948,7 +934,7 @@ class DoomsdayPositionManager:
         """平仓"""
         try:
             symbol = position.get('symbol', '')
-            quantity = int(float(position.get('quantity', 0)) * ratio)
+            quantity = int(float(position.get('quantity', 0)) * ratio
             
             # 构建日志信息
             log_message = (
@@ -1452,42 +1438,28 @@ class DoomsdayPositionManager:
             # 验证账户状态
             try:
                 trade_ctx = await self._get_trade_ctx()
+                # 修改账户余额查询方式
                 balances = await trade_ctx.account_balance()
                 if not balances:
                     raise ValueError("无法获取账户余额")
                 
-                # 遍历并记录所有账户余额
-                for balance in balances:
+                # 遍历单个余额对象而不是列表
+                for balance in [balances]:  # 修改这里
                     # 获取现金详情
                     cash_info = balance.cash_infos[0] if balance.cash_infos else None
                     
-                    # 获取货币符号
-                    currency_symbol = 'USD' if balance.currency == 'USD' else balance.currency
-                    
-                    # 构建现金详情列表
-                    cash_details = []
-                    if cash_info:
-                        cash_details = [
-                            f"    可用现金: ${float(cash_info.available_cash):,.2f}",
-                            f"    可提现金: ${float(cash_info.withdraw_cash):,.2f}",
-                            f"    冻结现金: ${float(cash_info.frozen_cash):,.2f}",
-                            f"    待结算现金: ${float(cash_info.settling_cash):,.2f}"
-                        ]
-                    
-                    # 构建余额信息字符串
+                    # 构建余额信息...
                     balance_info = (
-                        f"账户余额 ({currency_symbol}):\n"
+                        f"账户余额 ({balance.currency}):\n"
                         f"  总资产: ${float(balance.net_assets):,.2f}\n"
                         f"  初始保证金: ${float(balance.init_margin):,.2f}\n"
                         f"  维持保证金: ${float(balance.maintenance_margin):,.2f}\n"
-                        f"  风险等级: {balance.risk_level}\n"
-                        f"  现金详情:\n{chr(10).join(cash_details) if cash_details else '    无现金详情'}"
+                        f"  风险等级: {balance.risk_level}"
                     )
                     
-                    # 使用单行日志记录
                     self.logger.info(balance_info)
                 
-                # 保存账户余额供后续使用
+                # 保存账户余额
                 self.account_balances = balances
                 return True
                 

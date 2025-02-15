@@ -86,13 +86,16 @@ class DoomsdayOptionStrategy:
             if not self.symbols:
                 raise ValueError("未配置交易标的")
             
-            # 订阅初始标的
+            # 修改订阅方式
             for symbol in self.symbols:
                 try:
-                    await self.data_manager.subscribe_symbols(
+                    # 使用正确的订阅方法
+                    await self.data_manager.quote_ctx.subscribe(
                         symbols=[symbol],
-                        sub_types=[SubType.Quote, SubType.Trade, SubType.Depth]
+                        sub_types=[SubType.Quote, SubType.Trade, SubType.Depth],
+                        is_first_push=True
                     )
+                    self.logger.info(f"成功订阅 {symbol} 的行情数据")
                 except Exception as e:
                     self.logger.error(f"订阅{symbol}失败: {str(e)}")
                     continue
