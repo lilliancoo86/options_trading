@@ -206,17 +206,16 @@ class DataManager:
                         
                         # 验证连接是否成功
                         try:
-                            # 使用正确的方式调用 quote 方法
+                            # 使用 subscribe 方法来验证连接
                             test_symbol = self.symbols[0]
-                            quotes = await self._quote_ctx.quote([test_symbol])  # 获取行情数据
+                            await self._quote_ctx.subscribe(
+                                symbols=[test_symbol],
+                                sub_types=[SubType.Quote],
+                                is_first_push=True
+                            )
+                            self.logger.info(f"行情连接验证成功 (测试标的: {test_symbol})")
+                            self._last_quote_time = time.time()
                             
-                            # 验证返回的数据
-                            if quotes and len(quotes) > 0:
-                                self.logger.info(f"行情连接验证成功 (测试标的: {test_symbol})")
-                                self._last_quote_time = time.time()
-                            else:
-                                raise ValueError("未能获取有效的行情数据")
-                                
                         except Exception as e:
                             self.logger.error(f"行情连接验证失败: {str(e)}")
                             if self._quote_ctx:
@@ -253,13 +252,14 @@ class DataManager:
                         
                         # 验证新连接
                         test_symbol = self.symbols[0]
-                        quotes = await self._quote_ctx.quote([test_symbol])
+                        await self._quote_ctx.subscribe(
+                            symbols=[test_symbol],
+                            sub_types=[SubType.Quote],
+                            is_first_push=True
+                        )
                         
-                        if quotes and len(quotes) > 0:
-                            self.logger.info("已重新建立行情连接")
-                            self._last_quote_time = time.time()
-                        else:
-                            raise ValueError("未能获取有效的行情数据")
+                        self.logger.info("已重新建立行情连接")
+                        self._last_quote_time = time.time()
                         
                     except Exception as e:
                         self.logger.error(f"重新连接失败: {str(e)}")
