@@ -198,8 +198,14 @@ class DataManager:
             async with self._quote_ctx_lock:
                 if self._quote_ctx is None:
                     try:
+                        # 创建新的行情连接
                         self._quote_ctx = QuoteContext(self.longport_config)
+                        
+                        # 等待连接建立
                         await asyncio.sleep(3)  # 等待连接建立
+                        
+                        # 尝试打开连接
+                        await self._quote_ctx.connect()
                         
                         # 验证连接是否成功
                         if not self._quote_ctx:
@@ -210,69 +216,35 @@ class DataManager:
                         
                     except Exception as e:
                         self.logger.error(f"创建行情连接时出错: {str(e)}")
+                        if self._quote_ctx:
+                            try:
+                                await self._quote_ctx.close()
+                            except:
+                                pass
                         self._quote_ctx = None
                         raise
                 
                 elif time.time() - self._last_quote_time > self._quote_timeout:
-                    # 重新连接
-                    retry_count = 0
-                    while retry_count < self.api_config['quote_context']['max_retry']:
-                        try:
-                            if self._quote_ctx:
-                                try:
-                                    # 尝试取消订阅
-                                    if self.symbols:
-                                        await self._quote_ctx.unsubscribe(symbols=self.symbols)
-                                except Exception as e:
-                                    self.logger.warning(f"取消订阅时出错: {str(e)}")
-                                self._quote_ctx = None
-                                
-                            # 重连前等待
-                            await asyncio.sleep(self.api_config['quote_context']['reconnect_interval'])
-                            
-                            # 创建新连接
-                            config = Config(
-                                app_key=os.getenv('LONGPORT_APP_KEY'),
-                                app_secret=os.getenv('LONGPORT_APP_SECRET'),
-                                access_token=os.getenv('LONGPORT_ACCESS_TOKEN'),
-                                http_url=self.api_config['http_url'],
-                                quote_ws_url=self.api_config['quote_ws_url'],
-                                trade_ws_url=self.api_config['trade_ws_url']
-                            )
-                            
-                            self._quote_ctx = QuoteContext(config)
-                            await asyncio.sleep(1)  # 等待连接建立
-                            
-                            # 重新订阅
-                            if self.symbols:
-                                sub_types = []
-                                valid_types = ['Quote', 'Depth', 'Brokers', 'Trade']
-                                for st in valid_types:
-                                    try:
-                                        sub_type = getattr(SubType, st)
-                                        if sub_type:
-                                            sub_types.append(sub_type)
-                                    except AttributeError:
-                                        continue
-                                
-                                if sub_types:
-                                    await self._quote_ctx.subscribe(
-                                        symbols=self.symbols,
-                                        sub_types=sub_types
-                                    )
-                            
-                            self.logger.info("已重新建立行情连接")
-                            self._last_quote_time = time.time()
-                            break
-                            
-                        except Exception as e:
-                            retry_count += 1
-                            if retry_count >= self.api_config['quote_context']['max_retry']:
-                                self.logger.error(f"重连失败，已达到最大重试次数: {str(e)}")
-                                self._quote_ctx = None
-                                raise
-                            self.logger.warning(f"第 {retry_count} 次重连失败: {str(e)}")
-                            await asyncio.sleep(1)
+                    # 重新连接逻辑...
+                    try:
+                        # 关闭旧连接
+                        if self._quote_ctx:
+                            try:
+                                await self._quote_ctx.close()
+                            except:
+                                pass
+                        
+                        # 创建新连接
+                        self._quote_ctx = QuoteContext(self.longport_config)
+                        await self._quote_ctx.connect()
+                        
+                        self.logger.info("已重新建立行情连接")
+                        self._last_quote_time = time.time()
+                        
+                    except Exception as e:
+                        self.logger.error(f"重新连接失败: {str(e)}")
+                        self._quote_ctx = None
+                        raise
                 
                 return self._quote_ctx
                 
