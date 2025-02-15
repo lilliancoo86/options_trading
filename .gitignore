@@ -25,51 +25,69 @@ venv/
 env/
 ENV/
 .env
+.venv
+env.bak/
+venv.bak/
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-.DS_Store
+.project
+.pydevproject
+.settings/
+*.sublime-workspace
+*.sublime-project
 
-# 项目特定文件
+# 配置文件
 config/config.py
-config/*.env
-logs/
-*.log
-*.log.*
+.env
+*.ini
+*.cfg
 
 # 数据文件
 data/
 *.csv
-*.xlsx
 *.json
-
-# 测试覆盖率
-.coverage
-htmlcov/
-.pytest_cache/
-.tox/
-
-# 数据库
+*.parquet
+*.pkl
+*.h5
 *.db
 *.sqlite3
+
+# 日志文件
+logs/
+*.log
+logs/*.log
+logs/trading_*.log
+logs/error_*.log
+logs/debug_*.log
 
 # 临时文件
 *.tmp
 *.bak
 *.swp
-*~
-
-# 系统文件
+*.pid
 .DS_Store
 Thumbs.db
 
-# 日志文件
-logs/
-*.log
-logs/data.log
-logs/strategy.log
-logs/trade.log
-logs/error.log
+# 测试文件
+.coverage
+htmlcov/
+.tox/
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# 文档
+docs/_build/
+docs/api/
+
+# 其他
+*.zip
+*.tar.gz
+*.rar
+*.7z

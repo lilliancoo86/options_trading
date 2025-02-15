@@ -7,6 +7,9 @@ from datetime import datetime, time, timedelta
 import pytz
 import re
 import os
+from pathlib import Path
+import json
+import asyncio
 
 
 class TimeChecker:
@@ -44,13 +47,14 @@ class TimeChecker:
         }
     }
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any]) -> None:
         """
         初始化时间检查器
         
         Args:
             config: 配置字典，可选
         """
+        self.config = config
         self.logger = logging.getLogger(__name__)
         self.tz = pytz.timezone('America/New_York')
         
@@ -62,6 +66,15 @@ class TimeChecker:
             hour=15,
             minute=60 - self.market_times['close_position_minutes']
         )
+        
+        # 市场状态记录
+        self.status_dir = Path('/home/options_trading/data/market_status')
+        self.status_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 交易日历缓存
+        self._trading_days_cache = None
+        self._last_cache_update = None
+        self._cache_duration = timedelta(hours=24)
 
     async def async_init(self) -> None:
         """
@@ -176,7 +189,7 @@ class TimeChecker:
         """
         return self.can_trade()
 
-    def can_trade(self) -> bool:
+    async def can_trade(self) -> bool:
         """
         检查当前是否可以交易
         
@@ -184,20 +197,35 @@ class TimeChecker:
             bool: 是否可以交易
         """
         try:
-            status = self.get_market_status()
-            can_trade = (
-                status['is_trading_day'] and 
-                status['session'] in ['regular', 'pre_market'] and
-                not status.get('should_close_positions', False)  # 不在平仓时间
-            )
+            current_time = datetime.now(self.tz)
             
-            if not can_trade:
-                self.logger.debug(f"当前不可交易: {status['current_time']}, 状态: {status['session']}")
+            # 检查是否是交易日
+            if not await self.is_trading_day(current_time):
+                self.logger.debug("当前不是交易日")
+                return False
+                
+            # 获取当前时间
+            current_time_only = current_time.time()
             
-            return can_trade
+            # 检查是否在交易时段
+            regular_start = self.market_times['regular']['open']
+            regular_end = self.market_times['regular']['close']
+            
+            if regular_start <= current_time_only <= regular_end:
+                return True
+                
+            # 检查是否允许盘前盘后交易
+            if self.config.get('allow_extended_hours', False):
+                pre_start = self.market_times['pre_market']['open']
+                after_end = self.market_times['post_market']['close']
+                
+                if pre_start <= current_time_only <= after_end:
+                    return True
+                    
+            return False
             
         except Exception as e:
-            self.logger.error(f"检查交易状态时出错: {str(e)}")
+            self.logger.error(f"检查交易时间时出错: {str(e)}")
             return False
 
     def _is_in_time_range(self, current_time: time, session: str) -> bool:
@@ -703,3 +731,44 @@ class TimeChecker:
         except Exception as e:
             self.logger.error(f"获取持仓天数时出错: {str(e)}")
             return 0
+
+    async def is_trading_day(self, date: datetime) -> bool:
+        """检查指定日期是否为交易日"""
+        try:
+            # 检查是否是周末
+            if date.weekday() in [5, 6]:
+                return False
+                
+            # 更新交易日历缓存
+            await self._update_trading_days_cache()
+            
+            # 检查是否是假期
+            date_str = date.strftime('%Y%m%d')
+            if self._trading_days_cache and date_str in self._trading_days_cache.get('holidays', []):
+                return False
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"检查交易日时出错: {str(e)}")
+            return False
+            
+    async def _update_trading_days_cache(self) -> None:
+        """更新交易日历缓存"""
+        try:
+            current_time = datetime.now(self.tz)
+            
+            # 检查是否需要更新缓存
+            if (self._trading_days_cache is None or 
+                self._last_cache_update is None or
+                current_time - self._last_cache_update > self._cache_duration):
+                
+                cache_file = self.status_dir / 'trading_days.json'
+                if cache_file.exists():
+                    with open(cache_file, 'r') as f:
+                        self._trading_days_cache = json.load(f)
+                        
+                self._last_cache_update = current_time
+                
+        except Exception as e:
+            self.logger.error(f"更新交易日历缓存时出错: {str(e)}")

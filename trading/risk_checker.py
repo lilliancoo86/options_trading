@@ -2,14 +2,17 @@
 风险检查模块
 负责检查持仓风险和市场风险，包括止盈止损管理
 """
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 import re
 import asyncio
 from trading.time_checker import TimeChecker
 import os
+import json
+from pathlib import Path
+import numpy as np
 
 class RiskChecker:
     # 默认风险限制配置
@@ -84,7 +87,7 @@ class RiskChecker:
         }
     }
 
-    def __init__(self, config: Dict[str, Any], option_strategy, time_checker):
+    def __init__(self, config: Dict[str, Any], option_strategy, time_checker) -> None:
         """
         初始化风险检查器
         
@@ -111,10 +114,20 @@ class RiskChecker:
         
         # 风险状态记录
         self.risk_status = {
-            'margin_ratio': 0.0,
-            'profit_loss': 0.0,
-            'volatility': 0.0,
+            'current_drawdown': 0.0,
+            'daily_loss': 0.0,
+            'position_values': {},
+            'greek_exposures': {
+                'delta': 0.0,
+                'gamma': 0.0,
+                'theta': 0.0,
+                'vega': 0.0
+            }
         }
+        
+        # 风险记录目录
+        self.risk_dir = Path('/home/options_trading/data/risk_records')
+        self.risk_dir.mkdir(parents=True, exist_ok=True)
 
     async def check_position_risk(self, position: Dict[str, Any], market_data: Dict[str, Any]) -> Tuple[bool, str, float]:
         """检查持仓风险"""
@@ -486,7 +499,7 @@ class RiskChecker:
             cost_basis = quantity * cost_price
             if cost_basis > 0:
                 profit_loss = (market_value - cost_basis) / cost_basis
-                self.risk_status['profit_loss'] = profit_loss
+                self.risk_status['daily_loss'] = profit_loss
             
             # 记录检查时间
             self.risk_status['last_check'] = datetime.now(self.tz)
@@ -519,7 +532,7 @@ class RiskChecker:
             cost_basis = volume * cost_price
             if cost_basis > 0:
                 profit_loss = (market_value - cost_basis) / cost_basis
-                self.risk_status['profit_loss'] = profit_loss
+                self.risk_status['daily_loss'] = profit_loss
             
             # 记录检查时间
             self.risk_status['last_check'] = datetime.now(self.tz)
@@ -749,3 +762,131 @@ class RiskChecker:
             except Exception as e:
                 self.logger.error(f"风险监控出错: {str(e)}")
                 await asyncio.sleep(60)
+
+    async def check_all_risks(self, positions: List[Dict[str, Any]]) -> Tuple[bool, str]:
+        """检查所有风险指标"""
+        try:
+            # 更新风险状态
+            await self._update_risk_status(positions)
+            
+            # 检查市场风险
+            market_safe, market_msg = await self._check_market_risks()
+            if not market_safe:
+                return False, f"市场风险: {market_msg}"
+                
+            # 检查期权风险
+            option_safe, option_msg = await self._check_option_risks(positions)
+            if not option_safe:
+                return False, f"期权风险: {option_msg}"
+                
+            # 检查组合风险
+            portfolio_safe, portfolio_msg = await self._check_portfolio_risks()
+            if not portfolio_safe:
+                return False, f"组合风险: {portfolio_msg}"
+                
+            return True, "风险检查通过"
+            
+        except Exception as e:
+            self.logger.error(f"检查风险时出错: {str(e)}")
+            return False, f"风险检查出错: {str(e)}"
+            
+    async def _update_risk_status(self, positions: List[Dict[str, Any]]) -> None:
+        """更新风险状态"""
+        try:
+            # 更新持仓市值
+            self.risk_status['position_values'] = {
+                pos['symbol']: float(pos.get('market_value', 0))
+                for pos in positions
+            }
+            
+            # 更新希腊字母敞口
+            total_greeks = {'delta': 0.0, 'gamma': 0.0, 'theta': 0.0, 'vega': 0.0}
+            for pos in positions:
+                for greek in total_greeks:
+                    total_greeks[greek] += float(pos.get(greek, 0))
+            self.risk_status['greek_exposures'] = total_greeks
+            
+            # 记录风险状态
+            await self._save_risk_status()
+            
+        except Exception as e:
+            self.logger.error(f"更新风险状态时出错: {str(e)}")
+            
+    async def _save_risk_status(self) -> None:
+        """保存风险状态到文件"""
+        try:
+            current_date = datetime.now(self.tz).strftime('%Y%m%d')
+            status_file = self.risk_dir / f"risk_status_{current_date}.json"
+            
+            with open(status_file, 'w') as f:
+                json.dump(self.risk_status, f, indent=4)
+                
+        except Exception as e:
+            self.logger.error(f"保存风险状态时出错: {str(e)}")
+            
+    async def _check_market_risks(self) -> Tuple[bool, str]:
+        """检查市场风险"""
+        try:
+            limits = self.risk_limits['market']
+            
+            # 检查回撤
+            if self.risk_status['current_drawdown'] > limits['max_drawdown']:
+                return False, f"回撤超过限制: {self.risk_status['current_drawdown']:.2%}"
+                
+            # 检查波动率
+            # 这里需要实现具体的波动率计算逻辑
+            
+            return True, ""
+            
+        except Exception as e:
+            self.logger.error(f"检查市场风险时出错: {str(e)}")
+            return False, str(e)
+            
+    async def _check_option_risks(self, positions: List[Dict[str, Any]]) -> Tuple[bool, str]:
+        """检查期权风险"""
+        try:
+            limits = self.risk_limits['option']
+            greeks = self.risk_status['greek_exposures']
+            
+            # 检查Theta
+            if greeks['theta'] < limits['max_theta']:
+                return False, f"Theta风险过高: {greeks['theta']}"
+                
+            # 检查Gamma
+            if abs(greeks['gamma']) > limits['max_gamma']:
+                return False, f"Gamma风险过高: {greeks['gamma']}"
+                
+            # 检查Vega
+            if abs(greeks['vega']) > limits['max_vega']:
+                return False, f"Vega风险过高: {greeks['vega']}"
+                
+            return True, ""
+            
+        except Exception as e:
+            self.logger.error(f"检查期权风险时出错: {str(e)}")
+            return False, str(e)
+            
+    async def _check_portfolio_risks(self) -> Tuple[bool, str]:
+        """检查组合风险"""
+        try:
+            limits = self.risk_limits['portfolio']
+            
+            # 检查保证金比例
+            margin_ratio = await self._calculate_margin_ratio()
+            if margin_ratio > limits['max_margin_ratio']:
+                return False, f"保证金比例过高: {margin_ratio:.2%}"
+                
+            # 检查持仓集中度
+            concentration = await self._calculate_concentration()
+            if concentration > limits['max_position_concentration']:
+                return False, f"持仓过于集中: {concentration:.2%}"
+                
+            # 检查日内亏损
+            if self.risk_status['daily_loss'] > limits['max_daily_loss']:
+                return False, f"日内亏损过大: {self.risk_status['daily_loss']}"
+                
+            return True, ""
+            
+        except Exception as e:
+            self.logger.error(f"检查组合风险时出错: {str(e)}")
+            return False, str(e)
