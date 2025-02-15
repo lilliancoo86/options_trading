@@ -93,7 +93,7 @@ LOGGING_CONFIG = {
             'enabled': True,
             'level': logging.DEBUG,
             'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            'filename': str(LOG_DIR / 'trading.log'),
+            'filename': str(LOG_DIR / 'trading_{current_date}.log'),
             'max_bytes': 10 * 1024 * 1024,  # 10MB
             'backup_count': 5
         }
@@ -150,8 +150,8 @@ CLEANUP_CONFIG = {
     
     # 存储限制
     'storage': {
-        'max_total_size': 50 * 1024 * 1024 * 1024,  # 最大总存储空间(50GB)
-        'max_backup_size': 20 * 1024 * 1024 * 1024,  # 最大备份空间(20GB)
+        'max_total_size': 5 * 1024 * 1024 * 1024,  # 最大总存储空间(50GB)
+        'max_backup_size': 2 * 1024 * 1024 * 1024,  # 最大备份空间(20GB)
         'warning_threshold': 0.8,  # 存储空间警告阈值(80%)
     }
 }
