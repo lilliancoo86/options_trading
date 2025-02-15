@@ -86,11 +86,15 @@ class DoomsdayOptionStrategy:
             if not self.symbols:
                 raise ValueError("未配置交易标的")
             
+            # 获取行情连接
+            quote_ctx = await self.data_manager._get_quote_ctx()
+            if not quote_ctx:
+                raise ValueError("无法获取行情连接")
+            
             # 修改订阅方式
             for symbol in self.symbols:
                 try:
-                    # 使用正确的订阅方法
-                    await self.data_manager.quote_ctx.subscribe(
+                    await quote_ctx.subscribe(
                         symbols=[symbol],
                         sub_types=[SubType.Quote, SubType.Trade, SubType.Depth],
                         is_first_push=True

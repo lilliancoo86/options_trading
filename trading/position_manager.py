@@ -146,29 +146,27 @@ class DoomsdayPositionManager:
             # 验证账户状态
             try:
                 trade_ctx = await self._get_trade_ctx()
-                # 修改账户余额查询方式
-                balances = await trade_ctx.account_balance()
-                if not balances:
+                if not trade_ctx:
+                    raise ValueError("交易连接未就绪")
+                    
+                # 获取账户余额
+                balance = await trade_ctx.account_balance()
+                if not balance:
                     raise ValueError("无法获取账户余额")
                 
-                # 遍历单个余额对象而不是列表
-                for balance in [balances]:  # 修改这里
-                    # 获取现金详情
-                    cash_info = balance.cash_infos[0] if balance.cash_infos else None
-                    
-                    # 构建余额信息...
-                    balance_info = (
-                        f"账户余额 ({balance.currency}):\n"
-                        f"  总资产: ${float(balance.net_assets):,.2f}\n"
-                        f"  初始保证金: ${float(balance.init_margin):,.2f}\n"
-                        f"  维持保证金: ${float(balance.maintenance_margin):,.2f}\n"
-                        f"  风险等级: {balance.risk_level}"
-                    )
-                    
-                    self.logger.info(balance_info)
+                # 构建余额信息
+                balance_info = (
+                    f"账户余额 ({balance.currency}):\n"
+                    f"  总资产: ${float(balance.net_assets):,.2f}\n"
+                    f"  初始保证金: ${float(balance.init_margin):,.2f}\n"
+                    f"  维持保证金: ${float(balance.maintenance_margin):,.2f}\n"
+                    f"  风险等级: {balance.risk_level}"
+                )
+                
+                self.logger.info(balance_info)
                 
                 # 保存账户余额
-                self.account_balances = balances
+                self.account_balances = balance
                 return True
                 
             except Exception as e:
@@ -1438,29 +1436,27 @@ class DoomsdayPositionManager:
             # 验证账户状态
             try:
                 trade_ctx = await self._get_trade_ctx()
-                # 修改账户余额查询方式
-                balances = await trade_ctx.account_balance()
-                if not balances:
+                if not trade_ctx:
+                    raise ValueError("交易连接未就绪")
+                    
+                # 获取账户余额
+                balance = await trade_ctx.account_balance()
+                if not balance:
                     raise ValueError("无法获取账户余额")
                 
-                # 遍历单个余额对象而不是列表
-                for balance in [balances]:  # 修改这里
-                    # 获取现金详情
-                    cash_info = balance.cash_infos[0] if balance.cash_infos else None
-                    
-                    # 构建余额信息...
-                    balance_info = (
-                        f"账户余额 ({balance.currency}):\n"
-                        f"  总资产: ${float(balance.net_assets):,.2f}\n"
-                        f"  初始保证金: ${float(balance.init_margin):,.2f}\n"
-                        f"  维持保证金: ${float(balance.maintenance_margin):,.2f}\n"
-                        f"  风险等级: {balance.risk_level}"
-                    )
-                    
-                    self.logger.info(balance_info)
+                # 构建余额信息
+                balance_info = (
+                    f"账户余额 ({balance.currency}):\n"
+                    f"  总资产: ${float(balance.net_assets):,.2f}\n"
+                    f"  初始保证金: ${float(balance.init_margin):,.2f}\n"
+                    f"  维持保证金: ${float(balance.maintenance_margin):,.2f}\n"
+                    f"  风险等级: {balance.risk_level}"
+                )
+                
+                self.logger.info(balance_info)
                 
                 # 保存账户余额
-                self.account_balances = balances
+                self.account_balances = balance
                 return True
                 
             except Exception as e:
