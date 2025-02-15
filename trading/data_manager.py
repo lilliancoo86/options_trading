@@ -187,7 +187,13 @@ class DataManager:
                         try:
                             # 尝试获取一个简单的行情数据来验证连接
                             if self.symbols:
-                                await self._quote_ctx.quote(symbols=[self.symbols[0]])
+                                # 修改这里：使用第一个标的进行验证
+                                symbol = self.symbols[0]
+                                await self._quote_ctx.subscribe(
+                                    symbols=[symbol],
+                                    sub_types=[SubType.Quote],
+                                    is_first_push=True
+                                )
                             self._last_quote_time = current_time
                             self.logger.info("成功创建新的行情连接")
                         except Exception as e:
