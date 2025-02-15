@@ -8,6 +8,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import pytz
+import os
+from dotenv import load_dotenv
 from longport.openapi import (
     Period, AdjustType, QuoteContext, Config, SubType, 
     TradeContext, OpenApiException, PushQuote
@@ -20,6 +22,9 @@ from config.config import API_CONFIG
 class DataManager:
     def __init__(self, config: Dict[str, Any]):
         """初始化数据管理器"""
+        # 加载环境变量
+        load_dotenv()
+        
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.tz = pytz.timezone('America/New_York')
