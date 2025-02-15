@@ -74,9 +74,30 @@ def setup_logging() -> logging.Logger:
 def load_config() -> Dict[str, Any]:
     """加载配置文件"""
     try:
-        config_file = CONFIG_DIR / 'config.yaml'
-        with open(config_file, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
+        # 加载Python配置模块
+        py_config = CONFIG_DIR / 'config.py'
+        
+        if not py_config.exists():
+            raise FileNotFoundError(f"未找到配置文件: {py_config}")
+            
+        # 导入配置模块
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("config", py_config)
+        config_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(config_module)
+        
+        # 构建配置字典
+        config = {
+            'TRADING_CONFIG': config_module.TRADING_CONFIG,
+            'API_CONFIG': config_module.API_CONFIG,
+            'LOGGING_CONFIG': config_module.LOGGING_CONFIG,
+            'DATA_CONFIG': config_module.DATA_CONFIG,
+            'CLEANUP_CONFIG': config_module.CLEANUP_CONFIG
+        }
+        
+        logger.info("已加载配置文件")
+        return config
+            
     except Exception as e:
         logger.error(f"加载配置文件时出错: {str(e)}")
         raise
