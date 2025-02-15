@@ -950,13 +950,15 @@ class DoomsdayPositionManager:
             symbol = position.get('symbol', '')
             quantity = int(float(position.get('quantity', 0)) * ratio
             
-            self.logger.info(
+            # 构建日志信息
+            log_message = (
                 f"准备平仓:\n"
                 f"  标的: {symbol}\n"
                 f"  数量: {quantity}\n"
                 f"  比例: {ratio:.1%}\n"
                 f"  原因: {reason}"
             )
+            self.logger.info(log_message)
             
             if not symbol or not quantity:
                 self.logger.error("持仓信息不完整")
@@ -973,13 +975,14 @@ class DoomsdayPositionManager:
             )
             
             if order_result:
-                self.logger.info(
+                success_message = (
                     f"平仓成功:\n"
                     f"  标的: {symbol}\n"
                     f"  数量: {quantity}\n"
                     f"  比例: {ratio:.1%}\n"
                     f"  原因: {reason}"
                 )
+                self.logger.info(success_message)
                 return True
                 
             return False
