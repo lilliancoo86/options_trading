@@ -1,0 +1,43 @@
+# API依赖
+longport==2.1.10
+aiohttp==3.8.5
+typing-extensions==4.7.1
+
+# 数据处理
+numpy==1.24.2
+pandas==1.5.3
+pandas-ta>=0.3.14b
+scipy>=1.7.0
+
+# 数据库
+pymysql==1.1.0
+SQLAlchemy==1.4.46
+cryptography==41.0.3
+
+# 时间处理
+pytz==2022.7.1
+python-dateutil==2.8.2
+
+# 网络请求和解析
+requests==2.31.0
+beautifulsoup4==4.12.2
+lxml==4.9.2
+
+# 日志和监控
+python-json-logger==2.0.7
+psutil==5.9.5
+
+# 环境变量
+python-dotenv==1.0.0
+
+# 工具包
+PyYAML==6.0.1
+ujson==5.7.0
+urllib3<2.0.0
+
+# 其他依赖
+tabulate==0.9.0
+
+# 添加 CentOS 7 特定依赖
+setuptools>=65.5.1
+wheel>=0.38.0 
