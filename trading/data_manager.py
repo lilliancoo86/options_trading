@@ -204,16 +204,22 @@ class DataManager:
                         # 等待连接建立
                         await asyncio.sleep(3)  # 等待连接建立
                         
-                        # 尝试打开连接
-                        await self._quote_ctx.connect()
-                        
                         # 验证连接是否成功
-                        if not self._quote_ctx:
-                            raise ValueError("创建行情连接失败")
-                        
-                        self.logger.info("已创建新的行情连接")
-                        self._last_quote_time = time.time()
-                        
+                        try:
+                            # 尝试获取一个简单的行情数据来验证连接
+                            await self._quote_ctx.quote(symbols=[self.symbols[0]])
+                            self.logger.info("行情连接验证成功")
+                            self._last_quote_time = time.time()
+                        except Exception as e:
+                            self.logger.error(f"行情连接验证失败: {str(e)}")
+                            if self._quote_ctx:
+                                try:
+                                    await self._quote_ctx.close()
+                                except:
+                                    pass
+                            self._quote_ctx = None
+                            raise
+                            
                     except Exception as e:
                         self.logger.error(f"创建行情连接时出错: {str(e)}")
                         if self._quote_ctx:
@@ -225,7 +231,7 @@ class DataManager:
                         raise
                 
                 elif time.time() - self._last_quote_time > self._quote_timeout:
-                    # 重新连接逻辑...
+                    # 重新连接逻辑
                     try:
                         # 关闭旧连接
                         if self._quote_ctx:
@@ -236,7 +242,10 @@ class DataManager:
                         
                         # 创建新连接
                         self._quote_ctx = QuoteContext(self.longport_config)
-                        await self._quote_ctx.connect()
+                        await asyncio.sleep(2)  # 等待连接建立
+                        
+                        # 验证新连接
+                        await self._quote_ctx.quote(symbols=[self.symbols[0]])
                         
                         self.logger.info("已重新建立行情连接")
                         self._last_quote_time = time.time()
