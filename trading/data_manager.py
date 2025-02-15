@@ -136,6 +136,311 @@ class DataManager:
             'volume_ma': 20
         })
 
+        # 行情连接管理配置
+        self._quote_config = {
+            'reconnect_interval': 1,    # 重连间隔（秒）
+            'max_retry_times': 3,       # 最大重试次数
+            'heartbeat_interval': 30,   # 心跳检测间隔（秒）
+            'quote_timeout': 60,        # 行情超时时间（秒）
+            'batch_size': 20,           # 批量订阅大小
+            'request_interval': 0.5     # 请求间隔（秒）
+        }
+        
+        # 行情连接状态
+        self._quote_state = {
+            'status': False,            # 连接状态
+            'last_active': 0,           # 最后活动时间
+            'error_count': 0,           # 错误计数
+            'last_error': None,         # 最后错误信息
+            'subscribed_symbols': set() # 已订阅的标的
+        }
+
+    def _init_directories(self):
+        """初始化所有必要的数据目录"""
+        try:
+            directories = [
+                self.base_dir,
+                self.market_data_dir,
+                self.options_data_dir,
+                self.historical_dir,
+                self.backup_dir,
+                self.kline_dir,
+                self.cache_dir,
+                self.logs_dir,
+                *self.options_data.values()
+            ]
+            
+            for directory in directories:
+                directory.mkdir(parents=True, exist_ok=True)
+                os.chmod(directory, 0o755)
+            
+            self.logger.info("数据目录初始化完成")
+            
+        except Exception as e:
+            self.logger.error(f"初始化数据目录时出错: {str(e)}")
+            raise
+
+    async def async_init(self):
+        """异步初始化"""
+        try:
+            # 初始化目录
+            self._init_directories()
+            
+            # 初始化时间检查器
+            from trading.time_checker import TimeChecker
+            self.time_checker = TimeChecker(self.config)
+            await self.time_checker.async_init()
+            
+            # 初始化数据清理器
+            from trading.data_cleaner import DataCleaner
+            self.data_cleaner = DataCleaner(self.config)
+            await self.data_cleaner.async_init()
+            
+            # 初始化行情连接
+            quote_ctx = await self.ensure_quote_ctx()
+            if not quote_ctx:
+                raise ConnectionError("初始化行情连接失败")
+            
+            # 启动数据更新任务
+            asyncio.create_task(self.start_data_update())
+            asyncio.create_task(self.data_cleaner.start_cleanup_task())
+            
+            self.logger.info("数据管理器初始化完成")
+            return self
+            
+        except Exception as e:
+            self.logger.error(f"数据管理器初始化失败: {str(e)}")
+            raise
+
+    async def ensure_quote_ctx(self) -> Optional[QuoteContext]:
+        """确保行情连接可用"""
+        try:
+            async with self._quote_ctx_lock:
+                current_time = time.time()
+                
+                # 检查现有连接是否需要重新建立
+                if (self._quote_ctx is not None and 
+                    current_time - self._quote_state['last_active'] < self._quote_config['quote_timeout']):
+                    return self._quote_ctx
+                
+                # 关闭现有连接
+                await self._close_quote_ctx()
+                
+                # 创建新连接
+                retry_count = 0
+                while retry_count < self._quote_config['max_retry_times']:
+                    try:
+                        self._quote_ctx = QuoteContext(self.longport_config)
+                        await asyncio.sleep(1)  # 等待连接建立
+                        
+                        # 验证连接
+                        if self.symbols:
+                            await self._quote_ctx.subscribe(
+                                symbols=[self.symbols[0]],
+                                sub_types=[SubType.Quote],
+                                is_first_push=True
+                            )
+                            
+                        self._quote_state.update({
+                            'status': True,
+                            'last_active': current_time,
+                            'error_count': 0,
+                            'last_error': None
+                        })
+                        
+                        self.logger.info("行情连接创建成功")
+                        return self._quote_ctx
+                        
+                    except Exception as e:
+                        retry_count += 1
+                        await self._close_quote_ctx()
+                        self.logger.warning(f"行情连接重试 {retry_count}/{self._quote_config['max_retry_times']}: {str(e)}")
+                        await asyncio.sleep(self._quote_config['reconnect_interval'])
+                
+                self._quote_state.update({
+                    'status': False,
+                    'last_error': "达到最大重试次数"
+                })
+                return None
+                
+        except Exception as e:
+            self._quote_state.update({
+                'status': False,
+                'last_error': str(e)
+            })
+            self.logger.error(f"确保行情连接时出错: {str(e)}")
+            return None
+
+    async def _close_quote_ctx(self) -> None:
+        """关闭行情连接"""
+        if self._quote_ctx:
+"""
+            try:
+                await self._quote_ctx.close()
+            except Exception as e:
+                self.logger.warning(f"关闭行情连接时出错: {str(e)}")
+            finally:
+                self._quote_ctx = None
+
+    def get_kline_path(self, symbol: str) -> Path:
+        """获取K线数据文件路径"""
+        return self.kline_dir / f"{symbol.replace('.', '_')}_daily.csv"
+数据管理模块
+负责历史数据的存储、加载和更新
+"""
+from typing import Dict, List, Any, Optional, Union, Tuple
+import logging
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+import pytz
+import os
+import json
+from pathlib import Path
+from longport.openapi import Period, AdjustType, QuoteContext, Config, SubType, TradeContext, OpenApiException
+import asyncio
+import time
+from scipy.stats import percentileofscore
+import traceback
+from config.config import API_CONFIG
+
+class DataManager:
+    def __init__(self, config: Dict[str, Any]):
+        """初始化数据管理器"""
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+        self.tz = pytz.timezone('America/New_York')
+        
+        # 使用 API_CONFIG
+        self.api_config = API_CONFIG
+        
+        # 添加 longport_config 属性
+        self.longport_config = Config(
+            app_key=os.getenv('LONGPORT_APP_KEY'),
+            app_secret=os.getenv('LONGPORT_APP_SECRET'),
+            access_token=os.getenv('LONGPORT_ACCESS_TOKEN'),
+            http_url=self.api_config['http_url'],
+            quote_ws_url=self.api_config['quote_ws_url'],
+            trade_ws_url=self.api_config['trade_ws_url']
+        )
+        
+        # 添加 time_checker 属性
+        self.time_checker = None  # 将在 async_init 中初始化
+        
+        # 从配置文件获取交易标的
+        self.symbols = config.get('symbols', [])
+        self.logger.info(f"初始化交易标的: {self.symbols}")
+        
+        # 优化连接管理相关的属性
+        self._quote_ctx_lock = asyncio.Lock()
+        self._trade_ctx_lock = asyncio.Lock()
+        self._quote_ctx: Optional[QuoteContext] = None
+        self._trade_ctx: Optional[TradeContext] = None
+        self._last_quote_time = 0
+        self._last_trade_time = 0
+        self._reconnect_interval = 1  # 重连间隔（秒）
+        self._max_retry_times = 3     # 最大重试次数
+        
+        # 添加连接状态监控
+        self._quote_status = False
+        self._trade_status = False
+        self._last_error = None
+        
+        # 初始化请求限制
+        self.request_times = []
+        self.request_limit = self.api_config.get('request_limit', {
+            'max_requests': 120,  # 每分钟最大请求数
+            'time_window': 60     # 时间窗口（秒）
+        })
+        
+        # 设置数据目录，添加默认值处理
+        self.base_dir = Path(config['DATA_CONFIG'].get('base_dir', '/home/options_trading/data'))
+        self.market_data_dir = Path(config['DATA_CONFIG'].get('market_data_dir', self.base_dir / 'market_data'))
+        self.options_data_dir = Path(config['DATA_CONFIG'].get('options_data_dir', self.base_dir / 'options_data'))
+        self.historical_dir = Path(config['DATA_CONFIG'].get('historical_dir', self.base_dir / 'historical'))
+        self.backup_dir = Path(config['DATA_CONFIG'].get('backup_dir', self.base_dir / 'backup'))
+        
+        # 添加 kline_dir 初始化
+        self.kline_dir = self.market_data_dir / 'klines'
+        self.cache_dir = self.market_data_dir / 'cache'
+        self.logs_dir = self.market_data_dir / 'logs'
+        
+        # 期权数据存储路径 - 移到这里
+        self.options_data = {
+            'chains': self.options_data_dir / 'chains',      # 期权链数据目录
+            'greeks': self.options_data_dir / 'greeks',      # 希腊字母数据目录  
+            'iv_history': self.options_data_dir / 'iv',      # 隐含波动率历史目录
+            'volume': self.options_data_dir / 'volume'       # 成交量数据目录
+        }
+        
+        # 创建必要的目录
+        self._init_directories()
+        
+        # 期权数据配置，添加默认值
+        self.options_config = config['DATA_CONFIG'].get('options_data', {
+            'greeks_update_interval': 300,
+            'chain_update_interval': 1800,
+            'iv_history_days': 30,
+            'volume_threshold': 100
+        })
+        
+        # 数据缓存
+        self.kline_cache = {}
+        self.last_update = {}
+        self.update_interval = config['DATA_CONFIG'].get('update_interval', 60)  # 更新间隔(秒)
+        
+        # 创建期权数据子目录
+        for directory in self.options_data.values():
+            directory.mkdir(parents=True, exist_ok=True)
+            os.chmod(directory, 0o755)
+
+        # 添加缓存字典
+        self._cache = {
+            'klines': {},      # K线数据缓存
+            'indicators': {},  # 技术指标缓存
+            'quotes': {},     # 实时报价缓存
+            'options': {}     # 期权数据缓存
+        }
+        
+        # 缓存配置
+        self.cache_config = {
+            'klines_ttl': 300,    # K线数据缓存时间(秒)
+            'quote_ttl': 10,      # 报价缓存时间(秒)
+            'option_ttl': 60,     # 期权数据缓存时间(秒)
+            'max_cache_size': 100  # 每个缓存最大条目数
+        }
+
+        # 添加技术指标参数
+        self.tech_params = config.get('tech_params', {
+            'ma_periods': [5, 10, 20],
+            'macd': {
+                'fast': 12,
+                'slow': 26,
+                'signal': 9
+            },
+            'rsi_period': 14,
+            'volume_ma': 20
+        })
+
+        # 行情连接管理配置
+        self._quote_config = {
+            'reconnect_interval': 1,    # 重连间隔（秒）
+            'max_retry_times': 3,       # 最大重试次数
+            'heartbeat_interval': 30,   # 心跳检测间隔（秒）
+            'quote_timeout': 60,        # 行情超时时间（秒）
+            'batch_size': 20,           # 批量订阅大小
+            'request_interval': 0.5     # 请求间隔（秒）
+        }
+        
+        # 行情连接状态
+        self._quote_state = {
+            'status': False,            # 连接状态
+            'last_active': 0,           # 最后活动时间
+            'error_count': 0,           # 错误计数
+            'last_error': None,         # 最后错误信息
+            'subscribed_symbols': set() # 已订阅的标的
+        }
+
     def _init_directories(self):
         """初始化所有必要的数据目录"""
         try:
@@ -1053,13 +1358,70 @@ class DataManager:
             if not sub_types:
                 sub_types = [SubType.Quote, SubType.Depth, SubType.Trade]
             
+            # 过滤已订阅的标的
+
+    async def load_klines(self, symbol: str) -> pd.DataFrame:
+        """加载K线数据"""
+        try:
+            file_path = self.get_kline_path(symbol)
+            if file_path.exists():
+                df = pd.read_csv(file_path)
+                if not df.empty:
+                    df['time'] = pd.to_datetime(df['time'])
+                    df.set_index('time', inplace=True)
+                    return df
+                else:
+                    self.logger.warning(f"{symbol} 的K线数据文件为空")
+            else:
+                self.logger.info(f"{symbol} 的K线数据文件不存在，尝试重新获取数据")
+                success = await self.update_klines(symbol)
+                if success:
+                    return await self.load_klines(symbol)
+            
+            return pd.DataFrame()
+            
+            new_symbols = [s for s in symbols if s not in self._quote_state['subscribed_symbols']]
+            if not new_symbols:
+                return True
+            
             # 批量订阅处理
-            batch_size = 20  # SDK建议的批量大小
-            for i in range(0, len(symbols), batch_size):
-                batch = symbols[i:i + batch_size]
+            batch_size = self._quote_config['batch_size']
+            for i in range(0, len(new_symbols), batch_size):
+        except Exception as e:
+            self.logger.error(f"加载K线数据出错 ({symbol}): {str(e)}")
+            return pd.DataFrame()
+
+    async def update_klines(self, symbol: str, period: Period = Period.Day) -> Optional[List[Dict]]:
+        """更新K线数据"""
+        try:
+            quote_ctx = await self.ensure_quote_ctx()
+            if not quote_ctx:
+                return None
+            
+            # 使用 history_candlesticks_by_offset 替代 history_candlesticks_by_date
+            candlesticks = await quote_ctx.history_candlesticks_by_offset(
+                symbol=symbol,
+                period=period,
+                batch = new_symbols[i:i + batch_size]
                 retry_count = 0
                 
-                while retry_count < self._max_retry_times:
+                while retry_count < self._quote_config['max_retry_times']:
+                adjust_type=AdjustType.Forward,    # 前复权
+                forward=True,                      # 向前获取
+                count=1000                         # 获取1000条数据
+            )
+            
+            if not candlesticks:
+                return None
+            
+            # 转换为字典列表
+            return [{
+                'timestamp': k.timestamp,
+                'open': k.open,
+                'high': k.high,
+                'low': k.low,
+                'close': k.close,
+                'volume': k.volume,
                     try:
                         quote_ctx = await self.ensure_quote_ctx()
                         if not quote_ctx:
@@ -1071,24 +1433,61 @@ class DataManager:
                             is_first_push=True
                         )
                         
+                        # 更新已订阅列表
+                        self._quote_state['subscribed_symbols'].update(batch)
+                'turnover': k.turnover
+            } for k in candlesticks]
+            
+        except Exception as e:
+            self.logger.error(f"获取 {symbol} K线数据时出错: {str(e)}")
+            return None
+
+    async def get_latest_klines(self, symbol: str, days: int = 30) -> pd.DataFrame:
+        """获取最新的K线数据"""
+        try:
+            # 先尝试从文件加载数据
+            df = await self.load_klines(symbol)
+            
+            if df.empty:
+                # 如果文件不存在，则从API获取数据
+                df = await self.get_klines(symbol)
+                if not df.empty:
+                    # 保存到文件
+                    file_path = self.get_kline_path(symbol)
+                    df.to_csv(file_path)
+            
+                        self._quote_state['last_active'] = time.time()
+                        
                         self.logger.info(f"成功订阅标的批次: {batch}")
-                        await asyncio.sleep(0.5)  # 控制请求频率
+                        await asyncio.sleep(self._quote_config['request_interval'])
                         break
                         
                     except OpenApiException as e:
                         if e.code == 429002:  # 请求频率限制
                             retry_count += 1
-                            await asyncio.sleep(2)  # 频率限制时等待更长时间
+                            await asyncio.sleep(2)
                             continue
-                        else:
-                            self.logger.error(f"订阅失败 ({e.code}): {str(e)}")
-                            return False
+                        self.logger.error(f"订阅失败 ({e.code}): {str(e)}")
+                        return False
                             
                     except Exception as e:
+            if df.empty:
+                return pd.DataFrame()
+            
+            # 返回指定天数的数据
+            return df.tail(days)
+            
+        except Exception as e:
+            self.logger.error(f"获取最新K线数据出错 ({symbol}): {str(e)}")
+            return pd.DataFrame()
+
+    async def get_klines(self, symbol: str) -> Optional[pd.DataFrame]:
+        """获取K线数据"""
+        try:
                         self.logger.error(f"订阅出错: {str(e)}")
                         return False
                         
-                if retry_count >= self._max_retry_times:
+                if retry_count >= self._quote_config['max_retry_times']:
                     self.logger.error(f"订阅批次 {batch} 达到最大重试次数")
                     return False
                 
