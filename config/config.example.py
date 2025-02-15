@@ -23,18 +23,26 @@ TRADING_CONFIG = {
     # 交易标的配置
     'symbols': [
         'TSLA.US',    # 特斯拉
-#        'MSFT.US',    # 微软
-#        'GOOGL.US',   # 谷歌
-#        'AMZN.US',    # 亚马逊
-#        'META.US',    # Meta(原Facebook)
-#        'NVDA.US',    # 英伟达
-#        'AAPL.US',    # 苹果
+        'MSFT.US',    # 微软
+        'GOOGL.US',   # 谷歌
+        'AMZN.US',    # 亚马逊
+        'META.US',    # Meta(原Facebook)
+        'NVDA.US',    # 英伟达
+        'AAPL.US',    # 苹果
+        'AMD.US',     # AMD
+        'INTC.US',    # 英特尔
+        'SMCI.US',    # Super Micro Computer
+        'NFLX.US',    # 奈飞
+        'PLTR.US',    # Palantir
+        'COIN.US',    # Coinbase
+        'OKLO.US',    # Oklo
+        'VST.US',     # Vistra
     ],
     
     # 交易参数
     'loop_interval': 60,          # 交易循环间隔(秒)
     'max_positions': 5,           # 最大持仓数量
-    'position_size': 100000,      # 单个持仓规模(美元)
+    'position_size': 1000,      # 单个持仓规模(美元)
     'stop_loss_pct': 0.02,       # 止损比例
     'take_profit_pct': 0.05,     # 止盈比例
     
@@ -87,7 +95,7 @@ LOGGING_CONFIG = {
         'console': {
             'enabled': True,
             'level': logging.INFO,
-            'format': '%(levelname)s: %(message)s'
+            'format': '%(levelname)s: %(message)s' 
         },
         'file': {
             'enabled': True,
@@ -150,8 +158,8 @@ CLEANUP_CONFIG = {
     
     # 存储限制
     'storage': {
-        'max_total_size': 5 * 1024 * 1024 * 1024,  # 最大总存储空间(50GB)
-        'max_backup_size': 2 * 1024 * 1024 * 1024,  # 最大备份空间(20GB)
+        'max_total_size': 5 * 1024 * 1024 * 1024,  # 最大总存储空间(5GB)
+        'max_backup_size': 2 * 1024 * 1024 * 1024,  # 最大备份空间(2GB)
         'warning_threshold': 0.8,  # 存储空间警告阈值(80%)
     }
 }
