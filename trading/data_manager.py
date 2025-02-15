@@ -206,11 +206,17 @@ class DataManager:
                         
                         # 验证连接是否成功
                         try:
-                            # 使用正确的参数格式调用 quote 方法
+                            # 使用正确的方式调用 quote 方法
                             test_symbol = self.symbols[0]
-                            await self._quote_ctx.quote([test_symbol])  # 修改这里：使用列表作为参数
-                            self.logger.info(f"行情连接验证成功 (测试标的: {test_symbol})")
-                            self._last_quote_time = time.time()
+                            quotes = await self._quote_ctx.quote([test_symbol])  # 获取行情数据
+                            
+                            # 验证返回的数据
+                            if quotes and len(quotes) > 0:
+                                self.logger.info(f"行情连接验证成功 (测试标的: {test_symbol})")
+                                self._last_quote_time = time.time()
+                            else:
+                                raise ValueError("未能获取有效的行情数据")
+                                
                         except Exception as e:
                             self.logger.error(f"行情连接验证失败: {str(e)}")
                             if self._quote_ctx:
@@ -247,10 +253,13 @@ class DataManager:
                         
                         # 验证新连接
                         test_symbol = self.symbols[0]
-                        await self._quote_ctx.quote([test_symbol])  # 同样修改这里
+                        quotes = await self._quote_ctx.quote([test_symbol])
                         
-                        self.logger.info("已重新建立行情连接")
-                        self._last_quote_time = time.time()
+                        if quotes and len(quotes) > 0:
+                            self.logger.info("已重新建立行情连接")
+                            self._last_quote_time = time.time()
+                        else:
+                            raise ValueError("未能获取有效的行情数据")
                         
                     except Exception as e:
                         self.logger.error(f"重新连接失败: {str(e)}")
