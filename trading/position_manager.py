@@ -685,7 +685,7 @@ class DoomsdayPositionManager:
                     await asyncio.sleep(1)
                     
                     # 使用 data_manager 的行情连接
-                    self._quote_ctx = await self.data_manager._get_quote_ctx()
+                    self._quote_ctx = await self.data_manager.ensure_quote_ctx()
                     if not self._quote_ctx:
                         raise ValueError("无法创建行情连接")
                         
@@ -932,7 +932,7 @@ class DoomsdayPositionManager:
         """平仓"""
         try:
             symbol = position.get('symbol', '')
-            quantity = int(float(position.get('quantity', 0)) * ratio)
+            quantity = int(float(position.get('quantity', 0)) * ratio
             
             # 构建日志信息
             log_message = (

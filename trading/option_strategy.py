@@ -87,7 +87,7 @@ class DoomsdayOptionStrategy:
                 raise ValueError("未配置交易标的")
             
             # 获取行情连接
-            quote_ctx = await self.data_manager._get_quote_ctx()
+            quote_ctx = await self.data_manager.ensure_quote_ctx()
             if not quote_ctx:
                 raise ValueError("无法获取行情连接")
             
