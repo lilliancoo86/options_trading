@@ -45,14 +45,20 @@ class DataManager:
         self.symbols = config.get('symbols', [])
         self.logger.info(f"初始化交易标的: {self.symbols}")
         
-        # 连接管理
+        # 优化连接管理相关的属性
         self._quote_ctx_lock = asyncio.Lock()
-        self._quote_ctx = None
-        self._trade_ctx = None
-        self._trade_ctx_lock = asyncio.Lock()  # 确保初始化
+        self._trade_ctx_lock = asyncio.Lock()
+        self._quote_ctx: Optional[QuoteContext] = None
+        self._trade_ctx: Optional[TradeContext] = None
         self._last_quote_time = 0
-        self._quote_timeout = self.api_config['quote_context']['timeout']
-        self._trade_timeout = 30  # 添加交易超时设置，单位为秒
+        self._last_trade_time = 0
+        self._reconnect_interval = 1  # 重连间隔（秒）
+        self._max_retry_times = 3     # 最大重试次数
+        
+        # 添加连接状态监控
+        self._quote_status = False
+        self._trade_status = False
+        self._last_error = None
         
         # 初始化请求限制
         self.request_times = []
@@ -190,85 +196,55 @@ class DataManager:
     async def ensure_quote_ctx(self) -> Optional[QuoteContext]:
         """确保行情连接可用"""
         try:
-            # 检查 symbols 是否为空
-            if not self.symbols:
-                self.logger.error("交易标的列表为空")
-                return None
-            
             async with self._quote_ctx_lock:
-                if self._quote_ctx is None:
-                    try:
-                        # 创建新的行情连接
-                        self._quote_ctx = QuoteContext(self.longport_config)
-                        
-                        # 等待连接建立
-                        await asyncio.sleep(3)  # 等待连接建立
-                        
-                        # 验证连接是否成功
+                if self._quote_ctx is None or time.time() - self._last_quote_time > self._quote_timeout:
+                    # 关闭现有连接
+                    if self._quote_ctx:
                         try:
-                            # 使用 subscribe 方法来验证连接
-                            test_symbol = self.symbols[0]
-                            await self._quote_ctx.subscribe(
-                                symbols=[test_symbol],
-                                sub_types=[SubType.Quote],
-                                is_first_push=True
-                            )
-                            self.logger.info(f"行情连接验证成功 (测试标的: {test_symbol})")
+                            await self._quote_ctx.close()
+                        except Exception as e:
+                            self.logger.warning(f"关闭旧连接时出错: {str(e)}")
+                        self._quote_ctx = None
+                    
+                    # 创建新连接
+                    retry_count = 0
+                    while retry_count < self._max_retry_times:
+                        try:
+                            self._quote_ctx = QuoteContext(self.longport_config)
+                            await asyncio.sleep(1)  # 等待连接建立
+                            
+                            # 验证连接 - 使用基础订阅测试
+                            if self.symbols:
+                                await self._quote_ctx.subscribe(
+                                    symbols=[self.symbols[0]],
+                                    sub_types=[SubType.Quote],
+                                    is_first_push=True
+                                )
+                                
                             self._last_quote_time = time.time()
+                            self._quote_status = True
+                            self.logger.info("行情连接创建成功")
+                            break
                             
                         except Exception as e:
-                            self.logger.error(f"行情连接验证失败: {str(e)}")
+                            retry_count += 1
+                            self.logger.warning(f"行情连接重试 {retry_count}/{self._max_retry_times}: {str(e)}")
                             if self._quote_ctx:
-                                try:
-                                    await self._quote_ctx.close()
-                                except:
-                                    pass
+                                await self._quote_ctx.close()
                             self._quote_ctx = None
-                            raise
-                            
-                    except Exception as e:
-                        self.logger.error(f"创建行情连接时出错: {str(e)}")
-                        if self._quote_ctx:
-                            try:
-                                await self._quote_ctx.close()
-                            except:
-                                pass
-                        self._quote_ctx = None
-                        raise
-                
-                elif time.time() - self._last_quote_time > self._quote_timeout:
-                    # 重新连接逻辑
-                    try:
-                        # 关闭旧连接
-                        if self._quote_ctx:
-                            try:
-                                await self._quote_ctx.close()
-                            except:
-                                pass
-                        
-                        # 创建新连接
-                        self._quote_ctx = QuoteContext(self.longport_config)
-                        await asyncio.sleep(2)  # 等待连接建立
-                        
-                        # 验证新连接
-                        test_symbol = self.symbols[0]
-                        await self._quote_ctx.subscribe(
-                            symbols=[test_symbol],
-                            sub_types=[SubType.Quote],
-                            is_first_push=True
-                        )
-                        
-                        self.logger.info("已重新建立行情连接")
-                        self._last_quote_time = time.time()
-                        
-                    except Exception as e:
-                        self.logger.error(f"重新连接失败: {str(e)}")
-                        self._quote_ctx = None
-                        raise
+                            await asyncio.sleep(self._reconnect_interval)
+                    
+                    if self._quote_ctx is None:
+                        self._quote_status = False
+                        self._last_error = "达到最大重试次数，无法建立行情连接"
+                        self.logger.error(self._last_error)
+                        return None
                 
                 return self._quote_ctx
                 
         except Exception as e:
+            self._quote_status = False
+            self._last_error = str(e)
             self.logger.error(f"确保行情连接时出错: {str(e)}")
             return None
 
@@ -1068,45 +1044,56 @@ class DataManager:
             self.logger.error(f"订阅标的时出错: {str(e)}")
             return False
 
-    async def subscribe_symbols(self, symbols: List[str]) -> bool:
+    async def subscribe_symbols(self, symbols: List[str], sub_types: Optional[List[SubType]] = None) -> bool:
         """订阅标的"""
         try:
             if not symbols:
                 return True
             
-            # 每次最多订阅20个标的
-            batch_size = 20
+            if not sub_types:
+                sub_types = [SubType.Quote, SubType.Depth, SubType.Trade]
+            
+            # 批量订阅处理
+            batch_size = 20  # SDK建议的批量大小
             for i in range(0, len(symbols), batch_size):
                 batch = symbols[i:i + batch_size]
-                try:
-                    quote_ctx = await self.ensure_quote_ctx()
-                    if not quote_ctx:
+                retry_count = 0
+                
+                while retry_count < self._max_retry_times:
+                    try:
+                        quote_ctx = await self.ensure_quote_ctx()
+                        if not quote_ctx:
+                            return False
+                            
+                        await quote_ctx.subscribe(
+                            symbols=batch,
+                            sub_types=sub_types,
+                            is_first_push=True
+                        )
+                        
+                        self.logger.info(f"成功订阅标的批次: {batch}")
+                        await asyncio.sleep(0.5)  # 控制请求频率
+                        break
+                        
+                    except OpenApiException as e:
+                        if e.code == 429002:  # 请求频率限制
+                            retry_count += 1
+                            await asyncio.sleep(2)  # 频率限制时等待更长时间
+                            continue
+                        else:
+                            self.logger.error(f"订阅失败 ({e.code}): {str(e)}")
+                            return False
+                            
+                    except Exception as e:
+                        self.logger.error(f"订阅出错: {str(e)}")
                         return False
                         
-                    # 使用正确的订阅方法和参数
-                    await quote_ctx.subscribe(
-                        symbols=batch,
-                        sub_types=[SubType.Quote, SubType.Depth, SubType.Trade],
-                        is_first_push=True
-                    )
-                    
-                    self.logger.info(f"成功订阅标的批次: {batch}")
-                    await asyncio.sleep(1)  # 添加延迟避免请求过快
-                    
-                except OpenApiException as e:
-                    if e.code == 429002:  # API请求频率限制
-                        self.logger.warning(f"API请求频率限制，等待后重试: {str(e)}")
-                        await asyncio.sleep(2)
-                        continue
-                    else:
-                        self.logger.error(f"订阅标的批次失败: {str(e)}")
-                        continue
-                except Exception as e:
-                    self.logger.error(f"订阅标的批次失败: {str(e)}")
-                    continue
+                if retry_count >= self._max_retry_times:
+                    self.logger.error(f"订阅批次 {batch} 达到最大重试次数")
+                    return False
                 
             return True
             
         except Exception as e:
-            self.logger.error(f"订阅标的时出错: {str(e)}")
+            self.logger.error(f"订阅处理时出错: {str(e)}")
             return False
