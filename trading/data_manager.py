@@ -208,7 +208,7 @@ class DataManager:
                         try:
                             # 使用正确的参数格式调用 quote 方法
                             test_symbol = self.symbols[0]
-                            await self._quote_ctx.quote(symbol=test_symbol)  # 修改这里：使用 symbol 而不是 symbols
+                            await self._quote_ctx.quote([test_symbol])  # 修改这里：使用列表作为参数
                             self.logger.info(f"行情连接验证成功 (测试标的: {test_symbol})")
                             self._last_quote_time = time.time()
                         except Exception as e:
@@ -247,7 +247,7 @@ class DataManager:
                         
                         # 验证新连接
                         test_symbol = self.symbols[0]
-                        await self._quote_ctx.quote(symbol=test_symbol)  # 同样修改这里
+                        await self._quote_ctx.quote([test_symbol])  # 同样修改这里
                         
                         self.logger.info("已重新建立行情连接")
                         self._last_quote_time = time.time()
