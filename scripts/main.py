@@ -112,17 +112,17 @@ async def initialize_components(config: Dict[str, Any]):
         data_cleaner = DataCleaner(config)
         await data_cleaner.async_init()
         
+        # 初始化时间检查器
+        time_checker = TimeChecker(config)
+        
         # 初始化策略
         strategy = DoomsdayOptionStrategy(config, data_manager)
         
-        # 初始化持仓管理器
+        # 初始化风险检查器 (现在有了必需的依赖)
+        risk_checker = RiskChecker(config, strategy, time_checker)
+        
+        # 初始化持仓管理器 (使用已初始化的组件)
         position_manager = DoomsdayPositionManager(config, data_manager)
-        
-        # 初始化风险检查器
-        risk_checker = RiskChecker(config)
-        
-        # 初始化时间检查器
-        time_checker = TimeChecker(config)
         
         return (data_manager, data_cleaner, strategy, 
                 position_manager, risk_checker, time_checker)
