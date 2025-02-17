@@ -74,32 +74,43 @@ def setup_logging() -> logging.Logger:
 def load_config() -> Dict[str, Any]:
     """加载配置文件"""
     try:
-        # 加载Python配置模块
-        py_config = CONFIG_DIR / 'config.py'
-        
-        if not py_config.exists():
-            raise FileNotFoundError(f"未找到配置文件: {py_config}")
-            
         # 导入配置模块
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("config", py_config)
-        config_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(config_module)
+        from config.config import TRADING_CONFIG, API_CONFIG, LOGGING_CONFIG
         
-        # 构建配置字典
-        config = {
-            'TRADING_CONFIG': config_module.TRADING_CONFIG,
-            'API_CONFIG': config_module.API_CONFIG,
-            'LOGGING_CONFIG': config_module.LOGGING_CONFIG,
-            'DATA_CONFIG': config_module.DATA_CONFIG,
-            'CLEANUP_CONFIG': config_module.CLEANUP_CONFIG
+        # 验证交易配置
+        if not isinstance(TRADING_CONFIG, dict):
+            raise ValueError("TRADING_CONFIG 必须是字典类型")
+            
+        if 'symbols' not in TRADING_CONFIG:
+            raise ValueError("TRADING_CONFIG 中缺少 symbols 配置")
+            
+        if not isinstance(TRADING_CONFIG['symbols'], list):
+            raise ValueError("symbols 必须是列表类型")
+            
+        if not TRADING_CONFIG['symbols']:
+            raise ValueError("symbols 列表不能为空")
+            
+        # 验证每个交易标的的格式
+        for symbol in TRADING_CONFIG['symbols']:
+            if not isinstance(symbol, str):
+                raise ValueError(f"交易标的必须是字符串类型: {symbol}")
+            if not symbol.endswith('.US'):
+                raise ValueError(f"交易标的格式错误，必须以 .US 结尾: {symbol}")
+        
+        logger.info(f"成功加载配置文件")
+        logger.info(f"已配置 {len(TRADING_CONFIG['symbols'])} 个交易标的: {TRADING_CONFIG['symbols']}")
+        
+        return {
+            'TRADING_CONFIG': TRADING_CONFIG,
+            'API_CONFIG': API_CONFIG,
+            'LOGGING_CONFIG': LOGGING_CONFIG
         }
         
-        logger.info("已加载配置文件")
-        return config
-            
+    except ImportError:
+        logger.error("无法导入配置文件，请确保已从 config.example.py 复制并创建 config.py")
+        raise
     except Exception as e:
-        logger.error(f"加载配置文件时出错: {str(e)}")
+        logger.error(f"加载配置时出错: {str(e)}")
         raise
 
 async def initialize_components(config: Dict[str, Any]) -> Tuple[DataManager, ...]:
@@ -109,8 +120,16 @@ async def initialize_components(config: Dict[str, Any]) -> Tuple[DataManager, ..
         if 'TRADING_CONFIG' not in config:
             raise ValueError("配置中缺少 TRADING_CONFIG")
             
+        trading_config = config['TRADING_CONFIG']
+        
+        # 确保交易配置中包含必要的字段
+        if 'symbols' not in trading_config:
+            raise ValueError("TRADING_CONFIG 中缺少 symbols 配置")
+            
+        logger.info(f"初始化组件，交易标的: {trading_config['symbols']}")
+        
         # 初始化数据管理器
-        data_manager = DataManager(config)  # 直接传入完整配置
+        data_manager = DataManager(trading_config)  # 直接传入 trading_config
         await data_manager.async_init()
         
         # 初始化数据清理器
@@ -121,31 +140,30 @@ async def initialize_components(config: Dict[str, Any]) -> Tuple[DataManager, ..
         
         # 初始化时间检查器
         logger.info("正在初始化时间检查器...")
-        time_checker = TimeChecker(config['TRADING_CONFIG'])
+        time_checker = TimeChecker(trading_config)
         await time_checker.async_init()
         logger.info("时间检查器初始化完成")
         
         # 初始化策略
         logger.info("正在初始化交易策略...")
-        strategy = DoomsdayOptionStrategy(config['TRADING_CONFIG'], data_manager)
+        strategy = DoomsdayOptionStrategy(trading_config, data_manager)
         await strategy.async_init()
         logger.info("交易策略初始化完成")
         
         # 初始化风险检查器
         logger.info("正在初始化风险检查器...")
-        risk_checker = RiskChecker(config['TRADING_CONFIG'], strategy, time_checker)
+        risk_checker = RiskChecker(trading_config, strategy, time_checker)
         await risk_checker.async_init()
         logger.info("风险检查器初始化完成")
         
         # 初始化持仓管理器
         logger.info("正在初始化持仓管理器...")
-        position_manager = DoomsdayPositionManager(config['TRADING_CONFIG'], data_manager)
+        position_manager = DoomsdayPositionManager(trading_config, data_manager)
         await position_manager.async_init()
         logger.info("持仓管理器初始化完成")
         
-        return (data_manager, data_cleaner, strategy, 
-                position_manager, risk_checker, time_checker)
-                
+        return data_manager, data_cleaner, strategy, position_manager, risk_checker, time_checker
+        
     except Exception as e:
         logger.error(f"初始化组件时出错: {str(e)}")
         raise

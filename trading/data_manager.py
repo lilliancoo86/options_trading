@@ -29,15 +29,30 @@ class DataManager:
         # 加载环境变量
         load_dotenv()
         
+        if not isinstance(config, dict):
+            raise ValueError("配置必须是字典类型")
+        
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.tz = pytz.timezone('America/New_York')
         
-        # 交易标的 - 移到日志输出之前
-        self.symbols = config.get('symbols', [])
+        # 交易标的配置处理
+        if 'symbols' not in config:
+            raise ValueError("配置中缺少 symbols 字段")
+        
+        if not isinstance(config['symbols'], list):
+            raise ValueError("symbols 必须是列表类型")
+        
+        self.symbols = config['symbols']
         if not self.symbols:
-            self.logger.warning("未在配置中找到交易标的，尝试从 TRADING_CONFIG 中获取")
-            self.symbols = config.get('TRADING_CONFIG', {}).get('symbols', [])
+            raise ValueError("交易标的列表不能为空")
+        
+        # 验证每个交易标的的格式
+        for symbol in self.symbols:
+            if not isinstance(symbol, str):
+                raise ValueError(f"交易标的必须是字符串类型: {symbol}")
+            if not symbol.endswith('.US'):
+                raise ValueError(f"交易标的格式错误，必须以 .US 结尾: {symbol}")
         
         # 数据存储路径配置
         self.data_dir = Path('/home/options_trading/data')
@@ -58,14 +73,14 @@ class DataManager:
         # API配置
         self.api_config = API_CONFIG
         
-        # 添加更详细的调试日志
-        self.logger.debug("初始化 DataManager:")
-        self.logger.debug(f"API配置: {self.api_config}")
-        self.logger.debug(f"环境变量状态:")
+        # 添加详细的初始化日志
+        self.logger.info(f"初始化 DataManager，已配置 {len(self.symbols)} 个交易标的")
+        self.logger.debug(f"交易标的列表: {self.symbols}")
+        self.logger.debug(f"API配置状态: {self.api_config is not None}")
+        self.logger.debug(f"环境变量检查:")
         self.logger.debug(f"  APP_KEY: {'已设置' if os.getenv('LONGPORT_APP_KEY') else '未设置'}")
         self.logger.debug(f"  APP_SECRET: {'已设置' if os.getenv('LONGPORT_APP_SECRET') else '未设置'}")
         self.logger.debug(f"  ACCESS_TOKEN: {'已设置' if os.getenv('LONGPORT_ACCESS_TOKEN') else '未设置'}")
-        self.logger.debug(f"交易标的: {self.symbols}")
         
         # 初始化 LongPort 配置
         self.longport_config = Config(
