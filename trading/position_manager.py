@@ -272,8 +272,8 @@ class DoomsdayPositionManager:
                 
             # 验证连接是否可用
             try:
-                # 使用 get_account_list() 方法获取账户列表
-                accounts = self._trade_ctx.get_account_list()
+                # 使用 account_list() 方法获取账户列表
+                accounts = self._trade_ctx.account_list()
                 if not accounts:
                     self.logger.error("交易连接验证失败：未能获取账户列表")
                     self._trade_ctx = None
@@ -298,8 +298,8 @@ class DoomsdayPositionManager:
             if not trade_ctx:
                 return False
             
-            # 使用 get_account_balance() 方法获取账户余额
-            balances = trade_ctx.get_account_balance()
+            # 使用 account_balance() 方法获取账户余额
+            balances = trade_ctx.account_balance()
             if not balances:
                 self.logger.error("获取账户余额失败")
                 return False
@@ -384,7 +384,7 @@ class DoomsdayPositionManager:
             
             try:
                 # 尝试获取账户列表验证连接
-                accounts = self._trade_ctx.get_account_list()  # 使用 get_account_list() 方法
+                accounts = self._trade_ctx.account_list()  # 使用 account_list() 方法
                 if not accounts:
                     self.logger.error("验证交易连接失败：未能获取账户列表")
                     return False
