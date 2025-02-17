@@ -304,12 +304,12 @@ class DoomsdayPositionManager:
                 self.logger.error("获取账户余额失败")
                 return False
             
-            # 更新账户信息
+            # 更新账户信息，使用正确的属性名
             self.account_info = {
-                'cash': float(balances[0].cash),
-                'margin': float(balances[0].margin),
-                'buying_power': float(balances[0].buying_power),
-                'equity': float(balances[0].equity)
+                'cash': float(balances[0].total_cash),  # 使用 total_cash 而不是 cash
+                'margin': float(balances[0].initial_margin),  # 使用 initial_margin 而不是 margin
+                'buying_power': float(balances[0].max_power),  # 使用 max_power 而不是 buying_power
+                'equity': float(balances[0].net_assets)  # 使用 net_assets 而不是 equity
             }
             
             self.logger.info(f"账户信息已更新: {self.account_info}")
@@ -326,8 +326,8 @@ class DoomsdayPositionManager:
             if not trade_ctx:
                 return False
             
-            # 使用同步方法获取持仓列表
-            positions = trade_ctx.position_list()  # 注意这里是方法调用，不是属性
+            # 使用 positions() 方法获取持仓列表
+            positions = trade_ctx.positions()  # 使用 positions() 而不是 position_list()
             
             # 更新持仓信息
             self.positions = {}
@@ -335,7 +335,7 @@ class DoomsdayPositionManager:
                 self.positions[pos.symbol] = {
                     'symbol': pos.symbol,
                     'quantity': pos.quantity,
-                    'cost_price': float(pos.cost_price),
+                    'cost_price': float(pos.avg_price),  # 使用 avg_price 而不是 cost_price
                     'current_price': float(pos.current_price),
                     'market_value': float(pos.market_value),
                     'unrealized_pl': float(pos.unrealized_pl)
