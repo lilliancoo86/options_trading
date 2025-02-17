@@ -425,7 +425,7 @@ class DoomsdayPositionManager:
             # 验证连接是否可用
             try:
                 # 使用同步方法获取账户列表
-                accounts = self._trade_ctx.account_list()
+                accounts = self._trade_ctx.account_list
                 if not accounts:
                     self.logger.error("交易连接验证失败：未能获取账户列表")
                     self._trade_ctx = None
@@ -451,7 +451,7 @@ class DoomsdayPositionManager:
                 return False
             
             # 使用同步方法获取账户余额
-            balances = trade_ctx.account_balance()
+            balances = trade_ctx.account_balance
             if not balances:
                 self.logger.error("获取账户余额失败")
                 return False
@@ -476,8 +476,23 @@ class DoomsdayPositionManager:
                 return []
             
             # 使用同步方法获取持仓
-            positions = trade_ctx.position_list()
-            return positions if positions else []
+            positions = trade_ctx.position_list
+            if not positions:
+                return []
+            
+            # 格式化持仓信息
+            formatted_positions = []
+            for pos in positions:
+                formatted_positions.append({
+                    'symbol': pos.symbol,
+                    'quantity': pos.quantity,
+                    'cost_price': pos.cost_price,
+                    'current_price': pos.current_price,
+                    'market_value': pos.market_value,
+                    'unrealized_pl': pos.unrealized_pl
+                })
+            
+            return formatted_positions
             
         except Exception as e:
             self.logger.error(f"获取持仓信息失败: {str(e)}")
