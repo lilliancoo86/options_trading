@@ -33,6 +33,12 @@ class DataManager:
         self.logger = logging.getLogger(__name__)
         self.tz = pytz.timezone('America/New_York')
         
+        # 交易标的 - 移到日志输出之前
+        self.symbols = config.get('symbols', [])
+        if not self.symbols:
+            self.logger.warning("未在配置中找到交易标的，尝试从 TRADING_CONFIG 中获取")
+            self.symbols = config.get('TRADING_CONFIG', {}).get('symbols', [])
+        
         # 数据存储路径配置
         self.data_dir = Path('/home/options_trading/data')
         self.market_data_dir = self.data_dir / 'market_data'
@@ -79,9 +85,6 @@ class DataManager:
         if missing_vars:
             raise ValueError(f"缺少必需的环境变量: {', '.join(missing_vars)}")
             
-        # 交易标的
-        self.symbols = config.get('symbols', [])
-        
         # 时间检查器
         self.time_checker = TimeChecker(config)
         

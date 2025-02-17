@@ -11,7 +11,7 @@ import json
 import yaml
 from datetime import datetime
 import pytz
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 import os
 from dotenv import load_dotenv
 
@@ -102,14 +102,16 @@ def load_config() -> Dict[str, Any]:
         logger.error(f"加载配置文件时出错: {str(e)}")
         raise
 
-async def initialize_components(config: Dict[str, Any]):
-    """初始化所有组件"""
+async def initialize_components(config: Dict[str, Any]) -> Tuple[DataManager, ...]:
+    """初始化交易系统组件"""
     try:
+        # 确保配置中包含必要的键
+        if 'TRADING_CONFIG' not in config:
+            raise ValueError("配置中缺少 TRADING_CONFIG")
+            
         # 初始化数据管理器
-        logger.info("正在初始化数据管理器...")
-        data_manager = DataManager(config['TRADING_CONFIG'])
+        data_manager = DataManager(config)  # 直接传入完整配置
         await data_manager.async_init()
-        logger.info("数据管理器初始化完成")
         
         # 初始化数据清理器
         logger.info("正在初始化数据清理器...")
