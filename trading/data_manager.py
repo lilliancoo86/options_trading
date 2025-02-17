@@ -398,7 +398,7 @@ class DataManager:
                     try:
                         # 创建新的行情连接
                         self.logger.info("正在创建新的行情连接...")
-                        self._quote_ctx = QuoteContext(self.longport_config)  # 直接实例化
+                        quote_ctx = QuoteContext(self.longport_config)
                         
                         # 验证连接是否可用
                         if self.symbols:
@@ -407,32 +407,28 @@ class DataManager:
                             
                             try:
                                 # 尝试获取基本行情数据来验证连接
-                                await self._quote_ctx.subscribe(
+                                await quote_ctx.subscribe(
                                     symbols=[test_symbol],
                                     sub_types=[SubType.Quote],
                                     is_first_push=True
                                 )
                                 self.logger.info("行情连接验证成功")
+                                self._quote_ctx = quote_ctx
                             except OpenApiException as e:
                                 self.logger.error(f"行情连接验证失败，API错误: {str(e)}")
-                                await self._quote_ctx.close()
                                 self._quote_ctx = None
                                 return None
                             except Exception as e:
                                 self.logger.error(f"行情连接验证时发生未知错误: {str(e)}")
-                                await self._quote_ctx.close()
                                 self._quote_ctx = None
                                 return None
                         else:
                             self.logger.warning("没有可用的交易标的进行连接验证")
-                            await self._quote_ctx.close()
                             self._quote_ctx = None
                             return None
                             
                     except Exception as e:
                         self.logger.error(f"创建行情连接时出错: {str(e)}")
-                        if self._quote_ctx is not None:
-                            await self._quote_ctx.close()
                         self._quote_ctx = None
                         return None
                     
@@ -440,8 +436,6 @@ class DataManager:
             
         except Exception as e:
             self.logger.error(f"确保行情连接时出错: {str(e)}")
-            if hasattr(self, '_quote_ctx') and self._quote_ctx is not None:
-                await self._quote_ctx.close()
             self._quote_ctx = None
             return None
 
