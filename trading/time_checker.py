@@ -772,3 +772,35 @@ class TimeChecker:
                 
         except Exception as e:
             self.logger.error(f"更新交易日历缓存时出错: {str(e)}")
+
+    async def check_market_time(self) -> bool:
+        """
+        检查当前是否在交易时间内
+        
+        Returns:
+            bool: 是否在交易时间内
+        """
+        try:
+            current_time = datetime.now(self.tz)
+            
+            # 检查是否是假期
+            if self.is_holiday(current_time):
+                self.logger.info(f"当前是假期: {current_time}")
+                return False
+            
+            # 获取当前时间的 time 对象
+            current_time_obj = current_time.time()
+            
+            # 检查是否在各个交易时段
+            for session, times in self.market_times.items():
+                if session in ['pre_market', 'regular', 'post_market']:
+                    if times['open'] <= current_time_obj < times['close']:
+                        self.logger.debug(f"当前在 {session} 交易时段")
+                        return True
+            
+            self.logger.info(f"当前不在交易时间: {current_time}")
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"检查交易时间时出错: {str(e)}")
+            return False  # 出错时返回 False 以确保安全
