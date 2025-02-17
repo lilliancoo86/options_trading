@@ -402,6 +402,9 @@ class DataManager:
                         self.logger.info("正在创建新的行情连接...")
                         quote_ctx = QuoteContext(self.longport_config)
                         
+                        # 设置回调函数
+                        quote_ctx.set_on_quote(self._on_quote)
+                        
                         # 验证连接是否可用
                         if self.symbols:
                             test_symbol = self.symbols[0]
@@ -474,7 +477,17 @@ class DataManager:
     def _on_quote(self, symbol: str, quote: PushQuote) -> None:
         """处理实时行情推送"""
         try:
+            # 更新实时报价
+            self._data_cache[symbol]['realtime_quote'] = {
+                'last_price': quote.last_done,
+                'volume': quote.volume,
+                'turnover': quote.turnover,
+                'timestamp': quote.timestamp
+            }
+            
+            # 创建异步任务处理更新
             asyncio.create_task(self._handle_quote_update(symbol, quote))
+            
         except Exception as e:
             self.logger.error(f"处理行情推送时出错: {str(e)}")
 
