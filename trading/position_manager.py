@@ -328,36 +328,39 @@ class DoomsdayPositionManager:
                 return False
             
             # 使用 stock_positions() 方法获取持仓列表
-            positions_response = trade_ctx.stock_positions()
-            if not positions_response:
-                self.logger.info("当前没有持仓")
-                self.positions = {}
-                return True
-            
-            # 更新持仓信息
-            self.positions = {}
             try:
-                # 获取持仓列表的属性
-                positions_list = getattr(positions_response, 'positions', [])
-                if not positions_list:
+                positions_response = trade_ctx.stock_positions()
+                if positions_response is None:
                     self.logger.info("当前没有持仓")
+                    self.positions = {}
                     return True
                 
-                for pos in positions_list:
-                    self.positions[pos.symbol] = {
-                        'symbol': pos.symbol,
-                        'quantity': float(pos.quantity),
-                        'cost_price': float(pos.avg_price),
-                        'current_price': float(pos.current_price),
-                        'market_value': float(pos.market_value),
-                        'unrealized_pl': float(pos.unrealized_pl)
-                    }
+                # 更新持仓信息
+                self.positions = {}
                 
-                self.logger.info(f"当前持仓数量: {len(self.positions)}")
+                # 直接遍历 positions_response
+                for pos in positions_response:
+                    if hasattr(pos, 'symbol') and pos.symbol:  # 确保持仓对象有 symbol 属性
+                        self.positions[pos.symbol] = {
+                            'symbol': pos.symbol,
+                            'quantity': float(pos.quantity) if hasattr(pos, 'quantity') else 0.0,
+                            'cost_price': float(pos.avg_price) if hasattr(pos, 'avg_price') else 0.0,
+                            'current_price': float(pos.current_price) if hasattr(pos, 'current_price') else 0.0,
+                            'market_value': float(pos.market_value) if hasattr(pos, 'market_value') else 0.0,
+                            'unrealized_pl': float(pos.unrealized_pl) if hasattr(pos, 'unrealized_pl') else 0.0
+                        }
+                
+                if self.positions:
+                    self.logger.info(f"当前持仓数量: {len(self.positions)}")
+                    for symbol, pos in self.positions.items():
+                        self.logger.info(f"持仓详情 - {symbol}: 数量={pos['quantity']}, 成本价={pos['cost_price']:.2f}")
+                else:
+                    self.logger.info("当前没有持仓")
+                
                 return True
-            
-            except AttributeError:
-                self.logger.error("持仓数据格式错误：无法访问 positions 属性")
+                
+            except AttributeError as e:
+                self.logger.error(f"持仓数据格式错误: {str(e)}")
                 return False
             
         except Exception as e:
