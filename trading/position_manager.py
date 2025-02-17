@@ -334,15 +334,12 @@ class DoomsdayPositionManager:
                 self.positions = {}
                 return True
             
-            # 使用 list() 方法获取持仓列表
-            positions = positions_response.list()  # 获取持仓列表
-            
             # 更新持仓信息
             self.positions = {}
-            for pos in positions:
+            for pos in positions_response:  # 直接遍历 positions_response
                 self.positions[pos.symbol] = {
                     'symbol': pos.symbol,
-                    'quantity': pos.quantity,
+                    'quantity': float(pos.quantity),  # 确保转换为 float
                     'cost_price': float(pos.average_price),
                     'current_price': float(pos.current_price),
                     'market_value': float(pos.market_value),
