@@ -677,52 +677,47 @@ class DataManager:
                     now = datetime.now(self.tz)
                     
                     try:
-                        # 使用 candlesticks 而不是 history_candlesticks
-                        klines = await quote_ctx.candlesticks(
+                        # 移除 await，因为 candlesticks 不是异步方法
+                        klines = quote_ctx.candlesticks(
                             symbol=symbol,
                             period=Period.Day,
                             count=30,  # 获取最近30天的数据
                             adjust_type=AdjustType.ForwardAdjust
                         )
                         
-                        if klines and hasattr(klines, 'candlesticks'):  # 检查响应格式
-                            bars = klines.candlesticks
-                            if bars:
-                                # 更新数据缓存
-                                df = pd.DataFrame([{
-                                    'timestamp': bar.timestamp,
-                                    'open': bar.open,
-                                    'high': bar.high,
-                                    'low': bar.low,
-                                    'close': bar.close,
-                                    'volume': bar.volume,
-                                    'turnover': bar.turnover
-                                } for bar in bars])
+                        if klines:  # 检查响应是否为空
+                            # 更新数据缓存
+                            df = pd.DataFrame([{
+                                'timestamp': bar.timestamp,
+                                'open': bar.open,
+                                'high': bar.high,
+                                'low': bar.low,
+                                'close': bar.close,
+                                'volume': bar.volume,
+                                'turnover': bar.turnover
+                            } for bar in klines])
+                            
+                            if not df.empty:
+                                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True).dt.tz_convert(self.tz)
+                                df.set_index('timestamp', inplace=True)
                                 
-                                if not df.empty:
-                                    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True).dt.tz_convert(self.tz)
-                                    df.set_index('timestamp', inplace=True)
-                                    
-                                    if symbol not in self._data_cache:
-                                        self._data_cache[symbol] = {}
-                                    
-                                    self._data_cache[symbol]['ohlcv'] = df
-                                    self._data_cache[symbol]['last_update'] = now
-                                    
-                                    self.logger.info(f"成功更新 {symbol} 的K线数据")
-                                    
-                                    # 保存到文件
-                                    await self._save_market_data(symbol, df)
-                                else:
-                                    self.logger.warning(f"{symbol} K线数据转换后为空")
-                                    success = False
+                                if symbol not in self._data_cache:
+                                    self._data_cache[symbol] = {}
+                                
+                                self._data_cache[symbol]['ohlcv'] = df
+                                self._data_cache[symbol]['last_update'] = now
+                                
+                                self.logger.info(f"成功更新 {symbol} 的K线数据")
+                                
+                                # 保存到文件
+                                await self._save_market_data(symbol, df)
                             else:
-                                self.logger.warning(f"获取 {symbol} 的K线数据为空")
+                                self.logger.warning(f"{symbol} K线数据转换后为空")
                                 success = False
                         else:
-                            self.logger.warning(f"获取 {symbol} 的K线数据响应格式错误")
+                            self.logger.warning(f"获取 {symbol} 的K线数据为空")
                             success = False
-                        
+                    
                     except OpenApiException as e:
                         self.logger.error(f"获取 {symbol} K线数据时发生API错误: {str(e)}")
                         success = False
