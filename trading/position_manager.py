@@ -263,52 +263,66 @@ class DoomsdayPositionManager:
             self.logger.error(f"获取交易连接时出错: {str(e)}")
             return None
 
-    async def _update_account_info(self) -> None:
+    async def _update_account_info(self) -> bool:
         """更新账户信息"""
         try:
-            trade_ctx = await self._get_trade_ctx()
+            trade_ctx = await self.ensure_trade_ctx()
             if not trade_ctx:
-                return
+                return False
             
-            # 获取账户余额
-            balance = await trade_ctx.account_balance()
-            if balance:
-                self.account_info = {
-                    'cash': float(balance.cash),
-                    'margin': float(balance.margin),
-                    'buying_power': float(balance.buying_power),
-                    'equity': float(balance.equity)
-                }
-                self.logger.info("账户信息更新成功")
+            # 使用 account_balance 属性获取账户余额
+            balances = trade_ctx.account_balance
+            if not balances:
+                self.logger.error("获取账户余额失败")
+                return False
+            
+            # 更新账户信息
+            self.account_info = {
+                'cash': float(balances.cash),
+                'margin': float(balances.margin),
+                'buying_power': float(balances.buying_power),
+                'equity': float(balances.equity)
+            }
+            
+            self.logger.info(f"账户信息已更新: {self.account_info}")
+            return True
             
         except Exception as e:
             self.logger.error(f"更新账户信息失败: {str(e)}")
+            return False
 
-    async def _update_positions(self) -> None:
+    async def _update_positions(self) -> bool:
         """更新持仓信息"""
         try:
-            trade_ctx = await self._get_trade_ctx()
+            trade_ctx = await self.ensure_trade_ctx()
             if not trade_ctx:
-                return
+                return False
             
-            # 获取当前持仓
-            positions = await trade_ctx.positions()
+            # 使用 positions 属性获取持仓列表
+            positions = trade_ctx.positions
+            if positions is None:
+                self.logger.warning("未获取到持仓信息")
+                self.positions = {}
+                return True
             
-            # 更新持仓字典
+            # 更新持仓信息
             self.positions = {}
             for pos in positions:
                 self.positions[pos.symbol] = {
                     'symbol': pos.symbol,
-                    'quantity': float(pos.quantity),
+                    'quantity': pos.quantity,
                     'cost_price': float(pos.cost_price),
+                    'current_price': float(pos.current_price),
                     'market_value': float(pos.market_value),
                     'unrealized_pl': float(pos.unrealized_pl)
                 }
             
-            self.logger.info("持仓信息更新成功")
+            self.logger.info(f"当前持仓数量: {len(self.positions)}")
+            return True
             
         except Exception as e:
             self.logger.error(f"更新持仓信息失败: {str(e)}")
+            return False
 
     async def _check_position_limits(self, symbol: str, quantity: int) -> Tuple[bool, str]:
         """检查持仓限制"""
@@ -424,7 +438,7 @@ class DoomsdayPositionManager:
                 
             # 验证连接是否可用
             try:
-                # 使用同步方法获取账户列表
+                # 使用 account_list 属性获取账户列表
                 accounts = self._trade_ctx.account_list
                 if not accounts:
                     self.logger.error("交易连接验证失败：未能获取账户列表")
@@ -443,56 +457,15 @@ class DoomsdayPositionManager:
             self._trade_ctx = None
             return None
 
-    async def update_account_info(self) -> bool:
-        """更新账户信息"""
-        try:
-            trade_ctx = await self.ensure_trade_ctx()
-            if not trade_ctx:
-                return False
-            
-            # 使用同步方法获取账户余额
-            balances = trade_ctx.account_balance
-            if not balances:
-                self.logger.error("获取账户余额失败")
-                return False
-            
-            self._account_info = {
-                'balances': balances,
-                'last_update': datetime.now(self.tz)
-            }
-            
-            self.logger.info(f"账户信息已更新: {balances}")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"更新账户信息失败: {str(e)}")
-            return False
-
     async def get_positions(self) -> List[Dict[str, Any]]:
         """获取当前持仓"""
         try:
-            trade_ctx = await self.ensure_trade_ctx()
-            if not trade_ctx:
+            # 先更新持仓信息
+            if not await self._update_positions():
                 return []
             
-            # 使用同步方法获取持仓
-            positions = trade_ctx.position_list
-            if not positions:
-                return []
-            
-            # 格式化持仓信息
-            formatted_positions = []
-            for pos in positions:
-                formatted_positions.append({
-                    'symbol': pos.symbol,
-                    'quantity': pos.quantity,
-                    'cost_price': pos.cost_price,
-                    'current_price': pos.current_price,
-                    'market_value': pos.market_value,
-                    'unrealized_pl': pos.unrealized_pl
-                })
-            
-            return formatted_positions
+            # 返回持仓列表
+            return list(self.positions.values())
             
         except Exception as e:
             self.logger.error(f"获取持仓信息失败: {str(e)}")
