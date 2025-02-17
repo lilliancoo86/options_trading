@@ -750,11 +750,14 @@ class DataManager:
             filename = f"{symbol}_{date_str}.csv"
             filepath = self.market_data_dir / filename
             
-            # 在保存之前转换时间戳为字符串，避免时区问题
+            # 在保存之前转换时间戳为字符串，使用统一的格式
             df_to_save = df.copy()
-            df_to_save.index = df_to_save.index.strftime('%Y-%m-%d %H:%M:%S%z')
+            df_to_save.index = df_to_save.index.strftime('%Y-%m-%d %H:%M:%S')  # 移除时区信息
             
-            # 保存数据
+            # 添加时区信息列
+            df_to_save['timezone'] = df_to_save.index.map(lambda x: self.tz.zone)
+            
+            # 保存数据，包含时区信息但不在索引中
             df_to_save.to_csv(filepath)
             self.logger.debug(f"已保存 {symbol} 的市场数据到 {filepath}")
             
