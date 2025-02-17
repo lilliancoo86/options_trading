@@ -407,15 +407,7 @@ class DoomsdayOptionStrategy:
             return False
 
     async def generate_signal(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """
-        生成交易信号
-        
-        Args:
-            symbol: 交易标的代码
-            
-        Returns:
-            Optional[Dict[str, Any]]: 交易信号字典，如果没有信号则返回 None
-        """
+        """生成交易信号"""
         try:
             # 获取股票趋势分析结果
             trend_signal = await self.analyze_stock_trend(symbol)
@@ -437,7 +429,7 @@ class DoomsdayOptionStrategy:
                 'timestamp': datetime.now(self.tz),
                 'signal_strength': abs(trend_signal['signal']),
                 'trend': trend_signal['trend'],
-                'strategy_type': 'momentum',  # 可以根据不同策略类型设置
+                'strategy_type': 'momentum',
                 'expiry': self._select_expiry(option_data),
                 'strike': self._select_strike(option_data, trend_signal)
             }
@@ -449,7 +441,18 @@ class DoomsdayOptionStrategy:
                 'max_hold_time': timedelta(days=self.strategy_params.get('max_hold_days', 3))
             })
             
-            self.logger.info(f"生成交易信号: {signal}")
+            # 使用更醒目的日志格式
+            self.logger.info(f"\n🎯 交易信号生成 - {symbol}:\n" + 
+                            f"    操作: {'📈 买入' if signal['action'] == 'buy' else '📉 卖出'}\n" +
+                            f"    数量: {signal['quantity']}\n" +
+                            f"    价格: ${signal['price']:.2f}\n" +
+                            f"    信号强度: {signal['signal_strength']:.2f}\n" +
+                            f"    趋势: {'上涨' if signal['trend'] == 'bullish' else '下跌'}\n" +
+                            f"    止损: ${signal['stop_loss']:.2f}\n" +
+                            f"    止盈: ${signal['take_profit']:.2f}\n" +
+                            f"    到期日: {signal['expiry']}\n" +
+                            f"    执行价: ${signal['strike']:.2f}")
+            
             return signal
             
         except Exception as e:

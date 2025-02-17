@@ -532,16 +532,35 @@ class DoomsdayPositionManager:
             if not position:
                 return
             
-            # 构建状态信息
+            # 计算关键指标
+            symbol = position.get('symbol', '')
+            quantity = position.get('quantity', 0)
+            cost_price = position.get('cost_price', 0)
+            market_value = position.get('market_value', 0)
+            unrealized_pl = position.get('unrealized_pl', 0)
+            
+            # 计算收益率
+            if cost_price and cost_price > 0:
+                pl_percentage = (unrealized_pl / (cost_price * quantity)) * 100
+            else:
+                pl_percentage = 0
+            
+            # 使用更醒目的日志格式
             status_info = (
-                f"持仓状态 - {position.get('symbol', 'Unknown')}:\n"
-                f"  数量: {position.get('quantity', 0)}\n"
-                f"  成本价: ${float(position.get('cost_price', 0)):.2f}\n"
-                f"  市值: ${float(position.get('market_value', 0)):.2f}\n"
-                f"  未实现盈亏: ${float(position.get('unrealized_pl', 0)):.2f}"
+                f"\n📊 持仓状态 - {symbol}:\n" +
+                f"    数量: {quantity:,.0f}\n" +
+                f"    成本价: ${cost_price:.2f}\n" +
+                f"    市值: ${market_value:.2f}\n" +
+                f"    未实现盈亏: ${unrealized_pl:.2f} ({pl_percentage:+.2f}%)\n" +
+                f"    持仓时间: {self._get_position_duration(position)}"
             )
             
-            # 使用单行日志记录
+            # 添加风险警告
+            if pl_percentage <= -10:
+                status_info += f"\n    ⚠️ 警告: 亏损已超过 10%"
+            elif pl_percentage >= 20:
+                status_info += f"\n    🎉 提示: 盈利已超过 20%"
+            
             self.logger.info(status_info)
             
         except Exception as e:
