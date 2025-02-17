@@ -334,9 +334,16 @@ class DoomsdayPositionManager:
                 self.positions = {}
                 return True
             
+            # 获取持仓列表
+            positions_list = positions_response.positions
+            if not positions_list:
+                self.logger.info("当前没有持仓")
+                self.positions = {}
+                return True
+            
             # 更新持仓信息
             self.positions = {}
-            for pos in positions_response:
+            for pos in positions_list:
                 self.positions[pos.symbol] = {
                     'symbol': pos.symbol,
                     'quantity': float(pos.quantity),
