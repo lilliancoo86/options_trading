@@ -337,21 +337,28 @@ class DoomsdayPositionManager:
             # 更新持仓信息
             self.positions = {}
             try:
-                for pos in positions_response:  # 直接遍历 positions_response
+                # 获取持仓列表的属性
+                positions_list = getattr(positions_response, 'positions', [])
+                if not positions_list:
+                    self.logger.info("当前没有持仓")
+                    return True
+                
+                for pos in positions_list:
                     self.positions[pos.symbol] = {
                         'symbol': pos.symbol,
                         'quantity': float(pos.quantity),
-                        'cost_price': float(pos.avg_price),  # 使用 avg_price 而不是 average_price
+                        'cost_price': float(pos.avg_price),
                         'current_price': float(pos.current_price),
                         'market_value': float(pos.market_value),
                         'unrealized_pl': float(pos.unrealized_pl)
                     }
-            except TypeError:
-                self.logger.error("持仓数据格式错误")
-                return False
+                
+                self.logger.info(f"当前持仓数量: {len(self.positions)}")
+                return True
             
-            self.logger.info(f"当前持仓数量: {len(self.positions)}")
-            return True
+            except AttributeError:
+                self.logger.error("持仓数据格式错误：无法访问 positions 属性")
+                return False
             
         except Exception as e:
             self.logger.error(f"更新持仓信息失败: {str(e)}")
