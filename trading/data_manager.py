@@ -403,7 +403,7 @@ class DataManager:
                         quote_ctx = QuoteContext(self.longport_config)
                         
                         # 设置回调函数
-                        quote_ctx.set_on_quote(self._on_quote)
+                        quote_ctx.set_on_quote(self.on_quote_update)
                         
                         # 验证连接是否可用
                         if self.symbols:
@@ -411,6 +411,9 @@ class DataManager:
                             self.logger.info(f"正在使用 {test_symbol} 验证行情连接...")
                             
                             try:
+                                # 先设置 self._quote_ctx，这样回调函数可以正常工作
+                                self._quote_ctx = quote_ctx
+                                
                                 # 尝试获取基本行情数据来验证连接
                                 await quote_ctx.subscribe(
                                     symbols=[test_symbol],
@@ -418,7 +421,6 @@ class DataManager:
                                     is_first_push=True
                                 )
                                 self.logger.info("行情连接验证成功")
-                                self._quote_ctx = quote_ctx
                             except OpenApiException as e:
                                 self.logger.error(f"行情连接验证失败，API错误: {str(e)}")
                                 self._quote_ctx = None
@@ -474,9 +476,20 @@ class DataManager:
             self.logger.error(f"订阅行情失败: {str(e)}")
             return False
 
-    def _on_quote(self, symbol: str, quote: PushQuote) -> None:
-        """处理实时行情推送"""
+    def on_quote_update(self, symbol: str, quote: PushQuote) -> None:
+        """处理实时行情推送的同步方法"""
         try:
+            # 创建异步任务处理更新
+            asyncio.create_task(self._handle_quote_update(symbol, quote))
+        except Exception as e:
+            self.logger.error(f"处理行情推送时出错: {str(e)}")
+
+    async def _handle_quote_update(self, symbol: str, quote: PushQuote) -> None:
+        """处理实时行情更新的异步方法"""
+        try:
+            if symbol not in self._data_cache:
+                return
+                
             # 更新实时报价
             self._data_cache[symbol]['realtime_quote'] = {
                 'last_price': quote.last_done,
@@ -485,11 +498,21 @@ class DataManager:
                 'timestamp': quote.timestamp
             }
             
-            # 创建异步任务处理更新
-            asyncio.create_task(self._handle_quote_update(symbol, quote))
+            # 如果是新的交易日，更新日K数据
+            current_date = datetime.fromtimestamp(
+                quote.timestamp, 
+                self.tz
+            ).date()
             
+            if (self._data_cache[symbol]['ohlcv'] is not None and 
+                not self._data_cache[symbol]['ohlcv'].empty):
+                last_date = self._data_cache[symbol]['ohlcv'].index[-1].date()
+                
+                if current_date > last_date:
+                    await self._update_symbol_data(symbol)
+                
         except Exception as e:
-            self.logger.error(f"处理行情推送时出错: {str(e)}")
+            self.logger.error(f"处理 {symbol} 实时行情更新时出错: {str(e)}")
 
     async def save_kline_data(self, symbol: str, kline_data: pd.DataFrame) -> bool:
         """保存K线数据到本地"""
