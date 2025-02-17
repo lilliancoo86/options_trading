@@ -63,23 +63,37 @@ class DataCleaner:
                 
                 # 解析ISO格式的时间戳
                 df.index = pd.to_datetime(df.index)
-                if '+00:00' in df.index[0]:  # 检查是否为UTC时间
-                    df.index = df.index.tz_localize('UTC').tz_convert(tz)
-                else:
-                    df.index = df.index.tz_localize(tz)
+                
+                # 检查时间戳格式
+                if isinstance(df.index[0], pd.Timestamp):
+                    timestamp_str = str(df.index[0])
+                    if '+00:00' in timestamp_str:  # 检查是否为UTC时间
+                        df.index = pd.to_datetime(df.index, utc=True).tz_convert(tz)
+                    else:
+                        # 如果不是UTC时间，先本地化再转换
+                        df.index = pd.to_datetime(df.index).tz_localize(tz, ambiguous='infer')
             else:
                 # 对于旧格式的文件，假设时间戳是本地时间
                 df.index = pd.to_datetime(df.index)
                 df.index = df.index.tz_localize(self.tz, ambiguous='infer')
             
-            # 处理数据...
+            # 确保所有时间戳都是时区感知的
+            if df.index.tz is None:
+                df.index = df.index.tz_localize(self.tz, ambiguous='infer')
+            
+            # 统一转换为UTC时间并格式化
+            df.index = df.index.tz_convert('UTC')
             
             # 保存处理后的数据
-            df.to_csv(file_path)
+            df_to_save = df.copy()
+            df_to_save.index = df_to_save.index.strftime('%Y-%m-%d %H:%M:%S+00:00')
+            df_to_save.to_csv(file_path)
+            
             self.logger.debug(f"成功处理文件: {file_path}")
             
         except Exception as e:
             self.logger.error(f"处理文件 {file_path} 时出错: {str(e)}")
+            raise  # 抛出异常以便上层处理
             
     async def cleanup(self) -> None:
         """执行数据清理"""
