@@ -197,46 +197,73 @@ async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
 
 async def run_trading_loop(
     config: Dict[str, Any],
-    data_manager,
-    data_cleaner,
-    strategy,
-    position_manager,
-    risk_checker,
-    time_checker
+    data_manager: DataManager,
+    data_cleaner: DataCleaner,
+    time_checker: TimeChecker,
+    risk_checker: RiskChecker,
+    position_manager: DoomsdayPositionManager,
+    strategy: DoomsdayOptionStrategy
 ) -> None:
-    """运行交易主循环"""
+    """运行交易循环"""
+    logger = logging.getLogger(__name__)
+    
     try:
         while True:
             try:
-                # 检查是否在交易时段
-                if not await time_checker.can_trade():
-                    await asyncio.sleep(60)
-                    continue
-                    
-                # 记录市场状态
                 logger.info("=== 开始新一轮交易循环 ===")
                 
+                # 确保我们有交易标的
+                if not hasattr(data_manager, 'symbols') or not data_manager.symbols:
+                    logger.error("没有可用的交易标的")
+                    await asyncio.sleep(10)
+                    continue
+                
                 # 更新市场数据
-                await data_manager.update_all_klines()
+                if not await data_manager.update_all_klines():
+                    logger.error("更新市场数据失败")
+                    await asyncio.sleep(10)
+                    continue
                 
                 # 执行数据清理
                 await data_cleaner.cleanup()
                 
-                # 获取交易信号
-                for symbol in config['symbols']:
-                    signal = await strategy.get_trading_signal(symbol)
-                    if signal and signal.get('should_trade', False):
+                # 检查交易时间
+                if not await time_checker.check_market_time():
+                    logger.info("当前不在交易时间")
+                    await asyncio.sleep(60)
+                    continue
+                
+                # 获取当前持仓
+                positions = await position_manager.get_positions()
+                
+                # 遍历每个交易标的
+                for symbol in data_manager.symbols:
+                    try:
+                        # 获取交易信号
+                        signal = await strategy.generate_signal(symbol)
+                        if not signal:
+                            continue
+                            
+                        # 检查风险
+                        if not await risk_checker.check_risk(symbol, signal):
+                            logger.warning(f"{symbol} 交易信号未通过风险检查")
+                            continue
+                            
                         # 执行交易
-                        if signal['action'] == 'open':
+                        if signal.get('action') == 'buy':
                             await position_manager.open_position(
                                 symbol,
-                                signal.get('quantity', 0)
+                                signal.get('quantity', 0),
+                                signal.get('price', 0)
                             )
-                        elif signal['action'] == 'close':
+                        elif signal.get('action') == 'sell':
                             await position_manager.close_position(
                                 symbol,
                                 signal.get('quantity', 0)
                             )
+                    except Exception as e:
+                        logger.error(f"处理交易标的 {symbol} 时出错: {str(e)}")
+                        continue
                 
                 # 更新持仓状态
                 positions = await position_manager.get_positions()
@@ -244,7 +271,7 @@ async def run_trading_loop(
                     await position_manager.log_position_status(position)
                     
                 # 等待下一个循环
-                await asyncio.sleep(config.get('loop_interval', 60))
+                await asyncio.sleep(config.get('TRADING_CONFIG', {}).get('loop_interval', 60))
                 
             except Exception as e:
                 logger.error(f"交易循环中出错: {str(e)}")
