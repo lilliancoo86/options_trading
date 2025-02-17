@@ -450,8 +450,19 @@ class DataManager:
         try:
             quote_ctx = await self.ensure_quote_ctx()
             if not quote_ctx:
+                self.logger.error("无法获取行情连接")
                 return False
                 
+            # 设置行情回调
+            def on_quote(symbol: str, event: PushQuote):
+                self.logger.debug(f"收到 {symbol} 的行情更新: {event}")
+                # 更新数据缓存
+                if symbol in self._data_cache:
+                    self._data_cache[symbol]['realtime_quote'] = event
+                    self._data_cache[symbol]['last_update'] = datetime.now(self.tz)
+            
+            quote_ctx.set_on_quote(on_quote)
+            
             # 批量订阅，避免频繁请求
             batch_size = self.api_config['request_limit']['quote']['max_symbols']
             for i in range(0, len(symbols), batch_size):
@@ -460,14 +471,17 @@ class DataManager:
                     # 使用同步方法进行订阅
                     quote_ctx.subscribe(
                         symbols=batch,
-                        sub_types=[SubType.Quote, SubType.Trade, SubType.Depth],
+                        sub_types=[SubType.Quote],
                         is_first_push=True
                     )
                     self.logger.info(f"成功订阅标的: {batch}")
                     # 订阅后等待一下，避免请求过快
                     await asyncio.sleep(0.5)
-                except Exception as e:
+                except OpenApiException as e:
                     self.logger.error(f"订阅标的失败 {batch}: {str(e)}")
+                    return False
+                except Exception as e:
+                    self.logger.error(f"订阅标的时发生未知错误 {batch}: {str(e)}")
                     return False
                     
             return True
