@@ -414,14 +414,15 @@ class DataManager:
                             self.logger.info(f"正在使用 {test_symbol} 验证行情连接...")
                             
                             try:
-                                # 尝试获取基本行情数据来验证连接
-                                await self._quote_ctx.subscribe(
-                                    symbols=[test_symbol],
-                                    sub_types=[SubType.Quote],
-                                    is_first_push=False
-                                )
-                                self.logger.info("行情连接验证成功")
-                                
+                                # 尝试使用同步方法获取行情数据来验证连接
+                                quote_data = self._quote_ctx.quote([test_symbol])
+                                if quote_data:
+                                    self.logger.info("行情连接验证成功")
+                                else:
+                                    self.logger.error("行情连接验证失败：未能获取行情数据")
+                                    self._quote_ctx = None
+                                    return None
+                                    
                             except OpenApiException as e:
                                 self.logger.error(f"行情连接验证失败，API错误: {str(e)}")
                                 self._quote_ctx = None
@@ -456,7 +457,8 @@ class DataManager:
             for i in range(0, len(symbols), batch_size):
                 batch = symbols[i:i + batch_size]
                 try:
-                    await quote_ctx.subscribe(
+                    # 使用同步方法进行订阅
+                    quote_ctx.subscribe(
                         symbols=batch,
                         sub_types=[SubType.Quote, SubType.Trade, SubType.Depth],
                         is_first_push=True
