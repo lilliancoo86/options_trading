@@ -330,11 +330,9 @@ class DoomsdayPositionManager:
             
             try:
                 # 获取所有持仓类型
-                # 获取股票持仓
                 stock_positions_resp = trade_ctx.stock_positions()
                 self.logger.debug(f"原始股票持仓响应: {stock_positions_resp}")
                 
-                # 获取期权持仓
                 fund_positions_resp = trade_ctx.fund_positions()
                 self.logger.debug(f"原始基金持仓响应: {fund_positions_resp}")
                 
@@ -349,13 +347,15 @@ class DoomsdayPositionManager:
                                 self.positions[pos.symbol] = {
                                     'symbol': pos.symbol,
                                     'symbol_name': pos.symbol_name,
+                                    'type': 'stock',
                                     'quantity': float(pos.quantity),
                                     'available_quantity': float(pos.available_quantity),
                                     'cost_price': float(pos.cost_price),
+                                    'current_price': float(pos.current_price) if hasattr(pos, 'current_price') else 0.0,
+                                    'market_value': float(pos.market_value) if hasattr(pos, 'market_value') else 0.0,
+                                    'unrealized_pl': float(pos.unrealized_pl) if hasattr(pos, 'unrealized_pl') else 0.0,
                                     'currency': pos.currency,
-                                    'market_value': float(pos.quantity) * float(pos.cost_price),
-                                    'position_type': 'stock',
-                                    'account_channel': channel.account_channel
+                                    'account': channel.account_channel
                                 }
                 
                 # 处理基金持仓
@@ -366,29 +366,60 @@ class DoomsdayPositionManager:
                                 self.positions[pos.symbol] = {
                                     'symbol': pos.symbol,
                                     'symbol_name': pos.symbol_name,
+                                    'type': 'fund',
                                     'quantity': float(pos.holding_units),
                                     'cost_price': float(pos.cost_net_asset_value),
                                     'current_price': float(pos.current_net_asset_value),
                                     'market_value': float(pos.holding_units) * float(pos.current_net_asset_value),
+                                    'unrealized_pl': float(pos.unrealized_pl) if hasattr(pos, 'unrealized_pl') else 0.0,
                                     'currency': pos.currency,
-                                    'position_type': 'fund',
-                                    'account_channel': channel.account_channel
+                                    'account': channel.account_channel
                                 }
                 
-                # 添加详细的日志
+                # 以表格形式展示持仓
                 if not self.positions:
                     self.logger.info("当前没有持仓")
                 else:
-                    self.logger.info(f"当前持仓数量: {len(self.positions)}")
-                    for symbol, pos in self.positions.items():
-                        self.logger.info(
-                            f"持仓详情 - {symbol} ({pos['symbol_name']}):\n"
-                            f"  类型: {pos['position_type']}\n"
-                            f"  账户: {pos['account_channel']}\n"
-                            f"  数量: {pos['quantity']}\n"
-                            f"  成本价: {pos['cost_price']} {pos['currency']}\n"
-                            f"  市值: {pos['market_value']} {pos['currency']}"
+                    # 构建表头
+                    header = (
+                        f"{'代码':<12} {'名称':<15} {'类型':<6} {'数量':<10} {'可用':<10} "
+                        f"{'成本价':<10} {'现价':<10} {'市值':<12} {'未实现盈亏':<12} {'账户':<10}"
+                    )
+                    separator = "-" * len(header)
+                    
+                    # 输出表格
+                    self.logger.info(f"\n当前持仓明细:")
+                    self.logger.info(separator)
+                    self.logger.info(header)
+                    self.logger.info(separator)
+                    
+                    # 输出持仓数据
+                    for pos in self.positions.values():
+                        row = (
+                            f"{pos['symbol']:<12} "
+                            f"{pos['symbol_name'][:15]:<15} "
+                            f"{pos['type']:<6} "
+                            f"{pos['quantity']:>10,.2f} "
+                            f"{pos.get('available_quantity', pos['quantity']):>10,.2f} "
+                            f"{pos['cost_price']:>10,.3f} "
+                            f"{pos['current_price']:>10,.3f} "
+                            f"{pos['market_value']:>12,.2f} "
+                            f"{pos['unrealized_pl']:>12,.2f} "
+                            f"{pos['account']:<10}"
                         )
+                        self.logger.info(row)
+                    
+                    self.logger.info(separator)
+                    
+                    # 输出汇总信息
+                    total_market_value = sum(pos['market_value'] for pos in self.positions.values())
+                    total_unrealized_pl = sum(pos['unrealized_pl'] for pos in self.positions.values())
+                    summary = (
+                        f"总持仓: {len(self.positions)} 个标的  "
+                        f"总市值: ${total_market_value:,.2f}  "
+                        f"总未实现盈亏: ${total_unrealized_pl:,.2f}"
+                    )
+                    self.logger.info(summary)
                 
                 return True
                 
