@@ -102,7 +102,8 @@ class DataManager:
                 access_token=self.api_config['access_token'],
                 http_url=self.api_config['http_url'],
                 quote_ws_url=self.api_config['quote_ws_url'],
-                trade_ws_url=self.api_config['trade_ws_url']
+                trade_ws_url=self.api_config['trade_ws_url'],
+                region='cn'
             )
             self.logger.info("LongPort配置初始化成功")
         except Exception as e:
@@ -404,17 +405,16 @@ class DataManager:
                         # 创建 QuoteContext 实例
                         self._quote_ctx = QuoteContext(self.longport_config)
                         
+                        # 打开连接
+                        await self._quote_ctx.connect()
+                        
                         # 验证连接是否可用
                         if self.symbols:
                             test_symbol = self.symbols[0]
                             self.logger.info(f"正在使用 {test_symbol} 验证行情连接...")
                             
                             try:
-                                # 设置回调函数
-                                self._quote_ctx.set_on_quote(self.on_quote_update)
-                                
                                 # 尝试获取基本行情数据来验证连接
-                                # 注意：这里直接使用 self._quote_ctx
                                 await self._quote_ctx.subscribe(
                                     symbols=[test_symbol],
                                     sub_types=[SubType.Quote],
@@ -424,19 +424,24 @@ class DataManager:
                                 
                             except OpenApiException as e:
                                 self.logger.error(f"行情连接验证失败，API错误: {str(e)}")
+                                await self._quote_ctx.close()
                                 self._quote_ctx = None
                                 return None
                             except Exception as e:
                                 self.logger.error(f"行情连接验证时发生未知错误: {str(e)}")
+                                await self._quote_ctx.close()
                                 self._quote_ctx = None
                                 return None
                         else:
                             self.logger.warning("没有可用的交易标的进行连接验证")
+                            await self._quote_ctx.close()
                             self._quote_ctx = None
                             return None
                             
                     except Exception as e:
                         self.logger.error(f"创建行情连接时出错: {str(e)}")
+                        if self._quote_ctx:
+                            await self._quote_ctx.close()
                         self._quote_ctx = None
                         return None
             
@@ -444,6 +449,8 @@ class DataManager:
             
         except Exception as e:
             self.logger.error(f"确保行情连接时出错: {str(e)}")
+            if hasattr(self, '_quote_ctx') and self._quote_ctx:
+                await self._quote_ctx.close()
             self._quote_ctx = None
             return None
 
