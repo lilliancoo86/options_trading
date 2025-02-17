@@ -405,3 +405,83 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"验证数据时出错: {str(e)}")
             return False
+
+    async def generate_signal(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        生成交易信号
+        
+        Args:
+            symbol: 交易标的代码
+            
+        Returns:
+            Optional[Dict[str, Any]]: 交易信号字典，如果没有信号则返回 None
+        """
+        try:
+            # 获取股票趋势分析结果
+            trend_signal = await self.analyze_stock_trend(symbol)
+            if not trend_signal:
+                return None
+            
+            # 获取期权市场数据
+            option_data = await self.data_manager.get_option_data(symbol)
+            if option_data is None:
+                self.logger.warning(f"无法获取 {symbol} 的期权数据")
+                return None
+            
+            # 生成交易信号
+            signal = {
+                'symbol': symbol,
+                'action': 'buy' if trend_signal['trend'] == 'bullish' else 'sell',
+                'quantity': self._calculate_position_size(trend_signal, option_data),
+                'price': option_data.get('last_price', 0),
+                'timestamp': datetime.now(self.tz),
+                'signal_strength': abs(trend_signal['signal']),
+                'trend': trend_signal['trend'],
+                'strategy_type': 'momentum',  # 可以根据不同策略类型设置
+                'expiry': self._select_expiry(option_data),
+                'strike': self._select_strike(option_data, trend_signal)
+            }
+            
+            # 添加风险控制参数
+            signal.update({
+                'stop_loss': self._calculate_stop_loss(signal),
+                'take_profit': self._calculate_take_profit(signal),
+                'max_hold_time': timedelta(days=self.strategy_params.get('max_hold_days', 3))
+            })
+            
+            self.logger.info(f"生成交易信号: {signal}")
+            return signal
+            
+        except Exception as e:
+            self.logger.error(f"生成 {symbol} 的交易信号时出错: {str(e)}")
+            return None
+
+    def _calculate_position_size(self, trend_signal: Dict[str, Any], 
+                               option_data: Dict[str, Any]) -> int:
+        """计算持仓规模"""
+        try:
+            # 获取账户规模
+            account_size = self.strategy_params.get('account_size', 100000)
+            max_position_size = self.strategy_params.get('max_position_size', 0.1)
+            
+            # 根据信号强度调整仓位
+            signal_strength = abs(trend_signal['signal'])
+            position_pct = max_position_size * signal_strength
+            
+            # 计算目标持仓金额
+            target_amount = account_size * position_pct
+            
+            # 根据期权价格计算数量
+            option_price = option_data.get('last_price', 0)
+            if option_price <= 0:
+                return 0
+            
+            quantity = int(target_amount / option_price)
+            
+            # 确保不超过最大持仓限制
+            max_contracts = self.strategy_params.get('max_contracts', 100)
+            return min(quantity, max_contracts)
+            
+        except Exception as e:
+            self.logger.error(f"计算持仓规模时出错: {str(e)}")
+            return 0
