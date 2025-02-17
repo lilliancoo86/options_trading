@@ -334,17 +334,25 @@ class DoomsdayPositionManager:
                 self.positions = {}
                 return True
             
+            # 获取持仓通道列表
+            position_channels = positions_response.channels
+            if not position_channels:
+                self.logger.info("当前没有持仓")
+                self.positions = {}
+                return True
+            
             # 更新持仓信息
             self.positions = {}
-            for pos in positions_response:  # 直接遍历 positions_response
-                self.positions[pos.symbol] = {
-                    'symbol': pos.symbol,
-                    'quantity': float(pos.quantity),  # 确保转换为 float
-                    'cost_price': float(pos.average_price),
-                    'current_price': float(pos.current_price),
-                    'market_value': float(pos.market_value),
-                    'unrealized_pl': float(pos.unrealized_pl)
-                }
+            for channel in position_channels:
+                for pos in channel.positions:
+                    self.positions[pos.symbol] = {
+                        'symbol': pos.symbol,
+                        'quantity': float(pos.quantity),
+                        'cost_price': float(pos.average_price),
+                        'current_price': float(pos.current_price),
+                        'market_value': float(pos.market_value),
+                        'unrealized_pl': float(pos.unrealized_pl)
+                    }
             
             self.logger.info(f"当前持仓数量: {len(self.positions)}")
             return True
