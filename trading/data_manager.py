@@ -37,25 +37,37 @@ class DataManager:
         self.tz = pytz.timezone('America/New_York')
         
         # 交易标的配置处理
-        if 'TRADING_CONFIG' in config and 'symbols' in config['TRADING_CONFIG']:
-            self.symbols = config['TRADING_CONFIG']['symbols']
-            self.logger.info(f"从 TRADING_CONFIG 中获取交易标的: {self.symbols}")
-        elif 'symbols' in config:
-            self.symbols = config['symbols']
-            self.logger.info(f"从配置中获取交易标的: {self.symbols}")
-        else:
-            raise ValueError("无法获取交易标的列表")
-        
-        # 验证交易标的
-        if not isinstance(self.symbols, list):
-            raise ValueError("交易标的必须是列表类型")
-        if not self.symbols:
-            raise ValueError("交易标的列表不能为空")
-        for symbol in self.symbols:
-            if not isinstance(symbol, str):
-                raise ValueError(f"交易标的必须是字符串类型: {symbol}")
-            if not symbol.endswith('.US'):
-                raise ValueError(f"交易标的格式错误，必须以 .US 结尾: {symbol}")
+        try:
+            if 'TRADING_CONFIG' in config and isinstance(config['TRADING_CONFIG'], dict):
+                trading_config = config['TRADING_CONFIG']
+                if 'symbols' in trading_config and isinstance(trading_config['symbols'], list):
+                    self.symbols = trading_config['symbols'].copy()  # 创建副本
+                    self.logger.info(f"从 TRADING_CONFIG 中获取交易标的: {self.symbols}")
+                else:
+                    raise ValueError("TRADING_CONFIG 中缺少有效的 symbols 配置")
+            elif 'symbols' in config and isinstance(config['symbols'], list):
+                self.symbols = config['symbols'].copy()  # 创建副本
+                self.logger.info(f"从配置中获取交易标的: {self.symbols}")
+            else:
+                raise ValueError("无法获取有效的交易标的列表")
+            
+            # 验证并清理交易标的
+            self.symbols = [
+                symbol.strip() for symbol in self.symbols 
+                if isinstance(symbol, str) and symbol.strip() and symbol.endswith('.US')
+            ]
+            
+            if not self.symbols:
+                raise ValueError("没有有效的交易标的")
+            
+            # 确保没有重复
+            self.symbols = list(dict.fromkeys(self.symbols))
+            
+            self.logger.info(f"已验证 {len(self.symbols)} 个有效交易标的")
+            
+        except Exception as e:
+            self.logger.error(f"初始化交易标的时出错: {str(e)}")
+            raise
         
         # 数据存储路径配置
         self.data_dir = Path('/home/options_trading/data')
@@ -752,12 +764,18 @@ class DataManager:
             
             # 在保存之前转换时间戳为字符串，使用统一的格式
             df_to_save = df.copy()
-            df_to_save.index = df_to_save.index.strftime('%Y-%m-%d %H:%M:%S')  # 移除时区信息
             
-            # 添加时区信息列
-            df_to_save['timezone'] = df_to_save.index.map(lambda x: self.tz.zone)
+            # 保存原始时区信息
+            timezone_info = df_to_save.index.tz.zone
             
-            # 保存数据，包含时区信息但不在索引中
+            # 转换为UTC时间并格式化为ISO格式字符串
+            df_to_save.index = df_to_save.index.tz_convert('UTC').strftime('%Y-%m-%d %H:%M:%S+00:00')
+            
+            # 添加元数据列
+            df_to_save['original_timezone'] = timezone_info
+            df_to_save['data_timestamp'] = datetime.now(pytz.UTC).isoformat()
+            
+            # 保存数据，包含时区信息
             df_to_save.to_csv(filepath)
             self.logger.debug(f"已保存 {symbol} 的市场数据到 {filepath}")
             
