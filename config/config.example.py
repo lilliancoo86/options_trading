@@ -144,35 +144,18 @@ LOGGING_CONFIG = {
     }
 }
 
-# 数据存储配置
+# 数据管理配置
 DATA_CONFIG = {
-    'base_dir': str(DATA_DIR),
-    'market_data_dir': str(DATA_DIR / 'market_data'),
-    'options_data_dir': str(DATA_DIR / 'options_data'),
-    'historical_dir': str(DATA_DIR / 'historical'),
-    'backup_dir': str(DATA_DIR / 'backup'),
-    
-    # 数据更新配置
-    'update_interval': int(os.getenv('DATA_UPDATE_INTERVAL', '60')),
-    'retention_days': int(os.getenv('DATA_RETENTION_DAYS', '365')),
-    'backup_enabled': os.getenv('DATA_BACKUP_ENABLED', 'true').lower() == 'true',
-    'compression': os.getenv('DATA_COMPRESSION', 'true').lower() == 'true',
-    
-    # 期权数据配置
-    'options_data': {
-        'greeks_update_interval': 300,   # 希腊字母更新间隔(秒)
-        'chain_update_interval': 1800,   # 期权链更新间隔(秒)
-        'iv_history_days': 30,          # 隐含波动率历史数据保留天数
-        'volume_threshold': 100         # 期权成交量阈值
+    'cleanup': {
+        'max_days': 30,  # 保留最近30天的数据
+        'backup_interval': 24,  # 每24小时备份一次
+        'cleanup_interval': 24,  # 每24小时清理一次
     },
-    
-    # 存储格式配置
     'storage': {
-        'format': 'parquet',            # 数据存储格式
-        'compression': 'snappy',        # 压缩方式
-        'partition_by': 'date',         # 分区方式
-        'max_klines_per_file': 1000,    # 每个K线文件最大记录数
-        'max_file_size': 100 * 1024 * 1024,  # 单个文件最大大小（100MB）
+        'market_data_dir': 'market_data',
+        'options_data_dir': 'options_data',
+        'historical_dir': 'historical',
+        'backup_dir': 'backup'
     }
 }
 

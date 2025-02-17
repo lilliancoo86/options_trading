@@ -176,7 +176,8 @@ class DataManager:
             # 订阅所有交易标的的行情
             for symbol in self.symbols:
                 try:
-                    await quote_ctx.subscribe(
+                    # 使用同步方法进行订阅
+                    quote_ctx.subscribe(
                         symbols=[symbol],
                         sub_types=[SubType.Quote, SubType.Trade, SubType.Depth],
                         is_first_push=True
@@ -189,7 +190,16 @@ class DataManager:
                 except Exception as e:
                     self.logger.error(f"订阅 {symbol} 行情时发生未知错误: {str(e)}")
                     continue
-                
+            
+            # 设置行情回调
+            def on_quote(symbol: str, event: PushQuote):
+                self.logger.debug(f"收到 {symbol} 的行情更新: {event}")
+                if symbol in self._data_cache:
+                    self._data_cache[symbol]['realtime_quote'] = event
+                    self._data_cache[symbol]['last_update'] = datetime.now(self.tz)
+            
+            quote_ctx.set_on_quote(on_quote)
+            
             self.logger.info("数据管理器初始化完成")
             
         except Exception as e:
