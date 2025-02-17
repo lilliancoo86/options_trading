@@ -197,36 +197,56 @@ async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
 
 async def run_trading_loop(
     config: Dict[str, Any],
-    data_manager,
-    data_cleaner,
-    strategy,
-    position_manager,
-    risk_checker,
-    time_checker
+    data_manager: DataManager,
+    data_cleaner: DataCleaner,
+    option_strategy: DoomsdayOptionStrategy,
+    position_manager: DoomsdayPositionManager,
+    risk_checker: RiskChecker,
+    time_checker: TimeChecker
 ) -> None:
-    """运行交易主循环"""
+    """运行交易循环"""
     try:
+        # 获取交易标的列表
+        if hasattr(data_manager, 'symbols') and data_manager.symbols:
+            symbols = data_manager.symbols
+        elif 'TRADING_CONFIG' in config and 'symbols' in config['TRADING_CONFIG']:
+            symbols = config['TRADING_CONFIG']['symbols']
+        else:
+            raise ValueError("无法获取交易标的列表")
+            
+        logger.info(f"开始交易循环，交易标的: {symbols}")
+        
         while True:
             try:
-                # 检查是否在交易时段
-                if not await time_checker.can_trade():
-                    await asyncio.sleep(60)
-                    continue
-                    
-                # 记录市场状态
                 logger.info("=== 开始新一轮交易循环 ===")
                 
-                # 更新市场数据
-                await data_manager.update_all_klines()
+                # 检查交易时间
+                if not await time_checker.is_trading_time():
+                    logger.info("当前不是交易时间，等待下一次检查")
+                    await asyncio.sleep(60)
+                    continue
                 
-                # 执行数据清理
+                # 更新市场数据
+                if not await data_manager.update_all_klines():
+                    logger.warning("更新市场数据失败，等待下一次更新")
+                    await asyncio.sleep(10)
+                    continue
+                
+                # 清理数据
                 await data_cleaner.cleanup()
                 
-                # 获取交易信号
-                for symbol in config['symbols']:
-                    signal = await strategy.get_trading_signal(symbol)
+                # 遍历每个交易标的
+                for symbol in symbols:
+                    # 检查风险
+                    if not await risk_checker.check_risk(symbol):
+                        logger.warning(f"{symbol} 风险检查未通过，跳过交易")
+                        continue
+                    
+                    # 获取交易信号
+                    signal = await option_strategy.generate_signal(symbol)
+                    
+                    # 执行交易
                     if signal and signal.get('should_trade', False):
-                        # 执行交易
                         if signal['action'] == 'open':
                             await position_manager.open_position(
                                 symbol,
@@ -242,12 +262,13 @@ async def run_trading_loop(
                 positions = await position_manager.get_positions()
                 for position in positions:
                     await position_manager.log_position_status(position)
-                    
+                
                 # 等待下一个循环
                 await asyncio.sleep(config.get('loop_interval', 60))
                 
             except Exception as e:
                 logger.error(f"交易循环中出错: {str(e)}")
+                logger.exception("详细错误信息：")  # 添加详细错误信息
                 await asyncio.sleep(10)
                 
     except KeyboardInterrupt:
