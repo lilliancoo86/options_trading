@@ -272,8 +272,8 @@ class DoomsdayPositionManager:
                 
             # 验证连接是否可用
             try:
-                # 使用 account_list() 方法获取账户列表
-                accounts = self._trade_ctx.account_list()
+                # 使用 accounts 属性获取账户列表
+                accounts = self._trade_ctx.accounts
                 if not accounts:
                     self.logger.error("交易连接验证失败：未能获取账户列表")
                     self._trade_ctx = None
@@ -384,7 +384,7 @@ class DoomsdayPositionManager:
             
             try:
                 # 尝试获取账户列表验证连接
-                accounts = self._trade_ctx.account_list()  # 使用 account_list() 方法
+                accounts = self._trade_ctx.accounts  # 使用 accounts 属性
                 if not accounts:
                     self.logger.error("验证交易连接失败：未能获取账户列表")
                     return False
