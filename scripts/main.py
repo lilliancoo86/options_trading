@@ -87,18 +87,32 @@ def load_config() -> Dict[str, Any]:
         if not isinstance(TRADING_CONFIG['symbols'], list):
             raise ValueError("symbols 必须是列表类型")
             
-        if not TRADING_CONFIG['symbols']:
-            raise ValueError("symbols 列表不能为空")
-            
-        # 验证每个交易标的的格式
-        for symbol in TRADING_CONFIG['symbols']:
-            if not isinstance(symbol, str):
-                raise ValueError(f"交易标的必须是字符串类型: {symbol}")
-            if not symbol.endswith('.US'):
-                raise ValueError(f"交易标的格式错误，必须以 .US 结尾: {symbol}")
+        # 打印完整的配置内容进行调试
+        logger.debug(f"原始 TRADING_CONFIG: {TRADING_CONFIG}")
+        logger.debug(f"原始 symbols 列表: {TRADING_CONFIG['symbols']}")
         
+        # 确保所有标的都是有效的格式
+        valid_symbols = [
+            symbol.strip() for symbol in TRADING_CONFIG['symbols']
+            if isinstance(symbol, str) and symbol.strip() and symbol.endswith('.US')
+        ]
+        
+        # 检查是否有无效的标的被过滤掉
+        if len(valid_symbols) != len(TRADING_CONFIG['symbols']):
+            logger.warning(f"部分交易标的格式无效，原始数量: {len(TRADING_CONFIG['symbols'])}, "
+                         f"有效数量: {len(valid_symbols)}")
+            
+        # 确保没有重复的标的
+        valid_symbols = list(dict.fromkeys(valid_symbols))
+        
+        # 更新配置中的标的列表
+        TRADING_CONFIG['symbols'] = valid_symbols
+        
+        if not valid_symbols:
+            raise ValueError("没有有效的交易标的")
+            
         logger.info(f"成功加载配置文件")
-        logger.info(f"已配置 {len(TRADING_CONFIG['symbols'])} 个交易标的: {TRADING_CONFIG['symbols']}")
+        logger.info(f"已配置 {len(valid_symbols)} 个交易标的: {valid_symbols}")
         
         return {
             'TRADING_CONFIG': TRADING_CONFIG,
@@ -111,6 +125,7 @@ def load_config() -> Dict[str, Any]:
         raise
     except Exception as e:
         logger.error(f"加载配置时出错: {str(e)}")
+        logger.exception("详细错误信息：")
         raise
 
 async def initialize_components(config: Dict[str, Any]) -> Tuple[DataManager, ...]:
@@ -122,14 +137,24 @@ async def initialize_components(config: Dict[str, Any]) -> Tuple[DataManager, ..
             
         trading_config = config['TRADING_CONFIG']
         
+        # 打印完整的配置内容进行调试
+        logger.debug(f"初始化组件时的完整配置: {trading_config}")
+        
         # 确保交易配置中包含必要的字段
         if 'symbols' not in trading_config:
             raise ValueError("TRADING_CONFIG 中缺少 symbols 配置")
             
-        logger.info(f"初始化组件，交易标的: {trading_config['symbols']}")
+        if not isinstance(trading_config['symbols'], list):
+            raise ValueError("symbols 必须是列表类型")
+            
+        if not trading_config['symbols']:
+            raise ValueError("交易标的列表不能为空")
+            
+        logger.info(f"初始化组件，交易标的数量: {len(trading_config['symbols'])}")
+        logger.info(f"交易标的列表: {trading_config['symbols']}")
         
         # 初始化数据管理器
-        data_manager = DataManager(trading_config)  # 直接传入 trading_config
+        data_manager = DataManager(trading_config)
         await data_manager.async_init()
         
         # 初始化数据清理器
