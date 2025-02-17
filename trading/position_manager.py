@@ -331,64 +331,78 @@ class DoomsdayPositionManager:
             try:
                 # 获取所有持仓类型
                 stock_positions_resp = trade_ctx.stock_positions()
-                self.logger.debug(f"原始股票持仓响应: {stock_positions_resp}")
-                
                 fund_positions_resp = trade_ctx.fund_positions()
-                self.logger.debug(f"原始基金持仓响应: {fund_positions_resp}")
                 
                 # 更新持仓信息
                 self.positions = {}
                 
-                # 处理股票持仓
+                # 处理股票和期权持仓
                 if hasattr(stock_positions_resp, 'channels'):
                     for channel in stock_positions_resp.channels:
                         if hasattr(channel, 'positions'):
                             for pos in channel.positions:
+                                symbol_parts = pos.symbol.split('.')
+                                symbol_name = pos.symbol_name if hasattr(pos, 'symbol_name') else symbol_parts[0]
+                                
                                 self.positions[pos.symbol] = {
                                     'symbol': pos.symbol,
-                                    'symbol_name': pos.symbol_name,
-                                    'type': 'stock',
+                                    'name': symbol_name,
+                                    'type': 'stock' if '250417' not in pos.symbol else 'option',
+                                    'account': channel.account_channel,
                                     'quantity': float(pos.quantity),
-                                    'available_quantity': float(pos.available_quantity),
                                     'cost_price': float(pos.cost_price),
                                     'current_price': float(pos.current_price) if hasattr(pos, 'current_price') else 0.0,
                                     'market_value': float(pos.market_value) if hasattr(pos, 'market_value') else 0.0,
-                                    'unrealized_pl': float(pos.unrealized_pl) if hasattr(pos, 'unrealized_pl') else 0.0,
-                                    'currency': pos.currency,
-                                    'account': channel.account_channel
-                                }
-                
-                # 处理基金持仓
-                if hasattr(fund_positions_resp, 'channels'):
-                    for channel in fund_positions_resp.channels:
-                        if hasattr(channel, 'positions'):
-                            for pos in channel.positions:
-                                self.positions[pos.symbol] = {
-                                    'symbol': pos.symbol,
-                                    'symbol_name': pos.symbol_name,
-                                    'type': 'fund',
-                                    'quantity': float(pos.holding_units),
-                                    'cost_price': float(pos.cost_net_asset_value),
-                                    'current_price': float(pos.current_net_asset_value),
-                                    'market_value': float(pos.holding_units) * float(pos.current_net_asset_value),
-                                    'unrealized_pl': float(pos.unrealized_pl) if hasattr(pos, 'unrealized_pl') else 0.0,
-                                    'currency': pos.currency,
-                                    'account': channel.account_channel
+                                    'currency': pos.currency if hasattr(pos, 'currency') else 'USD',
+                                    'unrealized_pl': float(pos.unrealized_pl) if hasattr(pos, 'unrealized_pl') else 0.0
                                 }
                 
                 # 以表格形式展示持仓
                 if not self.positions:
                     self.logger.info("当前没有持仓")
                 else:
-                    # 构建表头
+                    # 计算每列的最大宽度
+                    widths = {
+                        'symbol': max(len(str(pos['symbol'])) for pos in self.positions.values()),
+                        'name': max(len(str(pos['name'])) for pos in self.positions.values()),
+                        'type': max(len(str(pos['type'])) for pos in self.positions.values()),
+                        'account': max(len(str(pos['account'])) for pos in self.positions.values()),
+                        'quantity': max(len(f"{pos['quantity']:,.0f}") for pos in self.positions.values()),
+                        'cost_price': max(len(f"{pos['cost_price']:,.2f}") for pos in self.positions.values()),
+                        'market_value': max(len(f"{pos['market_value']:,.2f}") for pos in self.positions.values())
+                    }
+                    
+                    # 确保列标题的最小宽度
+                    min_widths = {
+                        'symbol': 12,
+                        'name': 15,
+                        'type': 8,
+                        'account': 15,
+                        'quantity': 10,
+                        'cost_price': 12,
+                        'market_value': 12
+                    }
+                    
+                    # 使用最大宽度
+                    for key in widths:
+                        widths[key] = max(widths[key], min_widths[key])
+                    
+                    # 构建表头和分隔线
                     header = (
-                        f"{'代码':<12} {'名称':<15} {'类型':<6} {'数量':<10} {'可用':<10} "
-                        f"{'成本价':<10} {'现价':<10} {'市值':<12} {'未实现盈亏':<12} {'账户':<10}"
+                        f"{'代码':<{widths['symbol']}} | "
+                        f"{'名称':<{widths['name']}} | "
+                        f"{'类型':<{widths['type']}} | "
+                        f"{'账户':<{widths['account']}} | "
+                        f"{'数量':>{widths['quantity']}} | "
+                        f"{'成本价':>{widths['cost_price']}} | "
+                        f"{'市值':>{widths['market_value']}} | "
+                        f"{'币种':<6}"
                     )
-                    separator = "-" * len(header)
+                    
+                    separator = '-' * len(header)
                     
                     # 输出表格
-                    self.logger.info(f"\n当前持仓明细:")
+                    self.logger.info("\n当前持仓明细:")
                     self.logger.info(separator)
                     self.logger.info(header)
                     self.logger.info(separator)
@@ -396,16 +410,14 @@ class DoomsdayPositionManager:
                     # 输出持仓数据
                     for pos in self.positions.values():
                         row = (
-                            f"{pos['symbol']:<12} "
-                            f"{pos['symbol_name'][:15]:<15} "
-                            f"{pos['type']:<6} "
-                            f"{pos['quantity']:>10,.2f} "
-                            f"{pos.get('available_quantity', pos['quantity']):>10,.2f} "
-                            f"{pos['cost_price']:>10,.3f} "
-                            f"{pos['current_price']:>10,.3f} "
-                            f"{pos['market_value']:>12,.2f} "
-                            f"{pos['unrealized_pl']:>12,.2f} "
-                            f"{pos['account']:<10}"
+                            f"{pos['symbol']:<{widths['symbol']}} | "
+                            f"{pos['name']:<{widths['name']}} | "
+                            f"{pos['type']:<{widths['type']}} | "
+                            f"{pos['account']:<{widths['account']}} | "
+                            f"{pos['quantity']:>{widths['quantity']},.0f} | "
+                            f"{pos['cost_price']:>{widths['cost_price']},.2f} | "
+                            f"{pos['market_value']:>{widths['market_value']},.2f} | "
+                            f"{pos['currency']:<6}"
                         )
                         self.logger.info(row)
                     
@@ -416,8 +428,8 @@ class DoomsdayPositionManager:
                     total_unrealized_pl = sum(pos['unrealized_pl'] for pos in self.positions.values())
                     summary = (
                         f"总持仓: {len(self.positions)} 个标的  "
-                        f"总市值: ${total_market_value:,.2f}  "
-                        f"总未实现盈亏: ${total_unrealized_pl:,.2f}"
+                        f"总市值: {total_market_value:,.2f} USD  "
+                        f"总未实现盈亏: {total_unrealized_pl:,.2f} USD"
                     )
                     self.logger.info(summary)
                 
@@ -425,8 +437,6 @@ class DoomsdayPositionManager:
                 
             except AttributeError as e:
                 self.logger.error(f"持仓数据结构错误: {str(e)}")
-                self.logger.debug(f"股票持仓响应类型: {type(stock_positions_resp)}")
-                self.logger.debug(f"基金持仓响应类型: {type(fund_positions_resp)}")
                 return False
             
         except Exception as e:

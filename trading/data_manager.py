@@ -220,7 +220,7 @@ class DataManager:
                     symbol=symbol,
                     period=Period.Day,
                     count=100,
-                    adjust_type=AdjustType.Forward
+                    adjust_type=AdjustType.ForwardAdjust
                 )
                     
                 # 转换为DataFrame
@@ -335,7 +335,7 @@ class DataManager:
                     symbol=symbol,
                     period=Period.Day,
                 count=1,
-                adjust_type=AdjustType.Forward
+                adjust_type=AdjustType.ForwardAdjust
             )
             
             if not bars:
@@ -680,7 +680,7 @@ class DataManager:
                         symbol=symbol,
                         period=Period.Day,
                         count=30,  # 获取最近30天的数据
-                        adjust_type=AdjustType.Forward
+                        adjust_type=AdjustType.ForwardAdjust
                     )
                     
                     if klines and hasattr(klines, 'candlesticks'):
