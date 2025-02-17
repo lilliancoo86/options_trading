@@ -332,59 +332,68 @@ class DoomsdayPositionManager:
                 # 获取所有持仓类型
                 # 获取股票持仓
                 stock_positions_resp = trade_ctx.stock_positions()
-                stock_positions = stock_positions_resp.positions if hasattr(stock_positions_resp, 'positions') else []
-                self.logger.debug(f"股票持仓响应数据: {stock_positions}")
+                self.logger.debug(f"原始股票持仓响应: {stock_positions_resp}")
                 
                 # 获取期权持仓
                 fund_positions_resp = trade_ctx.fund_positions()
-                fund_positions = fund_positions_resp.positions if hasattr(fund_positions_resp, 'positions') else []
-                self.logger.debug(f"基金持仓响应数据: {fund_positions}")
+                self.logger.debug(f"原始基金持仓响应: {fund_positions_resp}")
                 
                 # 更新持仓信息
                 self.positions = {}
                 
                 # 处理股票持仓
-                if stock_positions:
-                    for pos in stock_positions:
-                        self.positions[pos.symbol] = {
-                            'symbol': pos.symbol,
-                            'quantity': float(pos.quantity),
-                            'cost_price': float(pos.avg_price),
-                            'current_price': float(pos.current_price),
-                            'market_value': float(pos.market_value),
-                            'unrealized_pl': float(pos.unrealized_pl),
-                            'position_type': 'stock'
-                        }
+                if hasattr(stock_positions_resp, 'channels'):
+                    for channel in stock_positions_resp.channels:
+                        if hasattr(channel, 'positions'):
+                            for pos in channel.positions:
+                                self.positions[pos.symbol] = {
+                                    'symbol': pos.symbol,
+                                    'symbol_name': pos.symbol_name,
+                                    'quantity': float(pos.quantity),
+                                    'available_quantity': float(pos.available_quantity),
+                                    'cost_price': float(pos.cost_price),
+                                    'currency': pos.currency,
+                                    'market_value': float(pos.quantity) * float(pos.cost_price),
+                                    'position_type': 'stock',
+                                    'account_channel': channel.account_channel
+                                }
                 
-                # 处理期权/基金持仓
-                if fund_positions:
-                    for pos in fund_positions:
-                        self.positions[pos.symbol] = {
-                            'symbol': pos.symbol,
-                            'quantity': float(pos.quantity),
-                            'cost_price': float(pos.avg_price),
-                            'current_price': float(pos.current_price),
-                            'market_value': float(pos.market_value),
-                            'unrealized_pl': float(pos.unrealized_pl),
-                            'position_type': 'fund'
-                        }
+                # 处理基金持仓
+                if hasattr(fund_positions_resp, 'channels'):
+                    for channel in fund_positions_resp.channels:
+                        if hasattr(channel, 'positions'):
+                            for pos in channel.positions:
+                                self.positions[pos.symbol] = {
+                                    'symbol': pos.symbol,
+                                    'symbol_name': pos.symbol_name,
+                                    'quantity': float(pos.holding_units),
+                                    'cost_price': float(pos.cost_net_asset_value),
+                                    'current_price': float(pos.current_net_asset_value),
+                                    'market_value': float(pos.holding_units) * float(pos.current_net_asset_value),
+                                    'currency': pos.currency,
+                                    'position_type': 'fund',
+                                    'account_channel': channel.account_channel
+                                }
                 
+                # 添加详细的日志
                 if not self.positions:
                     self.logger.info("当前没有持仓")
                 else:
                     self.logger.info(f"当前持仓数量: {len(self.positions)}")
                     for symbol, pos in self.positions.items():
-                        self.logger.info(f"持仓详情 - {symbol}: 数量={pos['quantity']}, 市值=${pos['market_value']:.2f}")
-                
-                # 添加更详细的调试日志
-                self.logger.debug(f"原始股票持仓响应: {stock_positions_resp}")
-                self.logger.debug(f"原始基金持仓响应: {fund_positions_resp}")
+                        self.logger.info(
+                            f"持仓详情 - {symbol} ({pos['symbol_name']}):\n"
+                            f"  类型: {pos['position_type']}\n"
+                            f"  账户: {pos['account_channel']}\n"
+                            f"  数量: {pos['quantity']}\n"
+                            f"  成本价: {pos['cost_price']} {pos['currency']}\n"
+                            f"  市值: {pos['market_value']} {pos['currency']}"
+                        )
                 
                 return True
                 
             except AttributeError as e:
                 self.logger.error(f"持仓数据结构错误: {str(e)}")
-                # 添加更多调试信息
                 self.logger.debug(f"股票持仓响应类型: {type(stock_positions_resp)}")
                 self.logger.debug(f"基金持仓响应类型: {type(fund_positions_resp)}")
                 return False
