@@ -51,6 +51,19 @@ class DataManager:
         
         # API配置
         self.api_config = API_CONFIG
+        
+        # 确保所有必需的环境变量都存在
+        required_env_vars = [
+            'LONGPORT_APP_KEY',
+            'LONGPORT_APP_SECRET',
+            'LONGPORT_ACCESS_TOKEN'
+        ]
+        
+        missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+        if missing_vars:
+            raise ValueError(f"缺少必需的环境变量: {', '.join(missing_vars)}")
+            
+        # 初始化 LongPort 配置
         self.longport_config = Config(
             app_key=os.getenv('LONGPORT_APP_KEY'),
             app_secret=os.getenv('LONGPORT_APP_SECRET'),
@@ -302,65 +315,57 @@ class DataManager:
         """确保行情连接可用"""
         try:
             async with self._quote_ctx_lock:
-                current_time = time.time()
+                # 检查现有连接是否可用
+                if (self._quote_ctx and 
+                    time.time() - self._last_quote_time < self._quote_timeout):
+                    return self._quote_ctx
                 
-                if (self._quote_ctx is None or 
-                    current_time - self._last_quote_time > self._quote_timeout):
+                # 创建新连接
+                try:
+                    self.logger.info("正在创建新的行情连接...")
+                    self._quote_ctx = QuoteContext(self.longport_config)
+                    await self._quote_ctx.ensure_connected()  # 确保连接成功建立
+                    self._last_quote_time = time.time()
+                    self.logger.info("行情连接创建成功")
+                    return self._quote_ctx
                     
-                    if self._quote_ctx:
-                        try:
-                            await self._quote_ctx.close()
-                        except Exception as e:
-                            self.logger.warning(f"关闭旧连接时出错: {str(e)}")
+                except OpenApiException as e:
+                    self.logger.error(f"创建行情连接失败: {str(e)}")
+                    self._quote_ctx = None
+                    return None
                     
-                    try:
-                        await asyncio.sleep(1)
-                        self._quote_ctx = QuoteContext(self.longport_config)
-                        
-                        # 验证连接
-                        if self.symbols:
-                            await self._quote_ctx.subscribe(
-                                symbols=[self.symbols[0]],
-                                sub_types=[SubType.Quote],
-                                is_first_push=True
-                            )
-                        self._last_quote_time = current_time
-                        self.logger.info("成功创建新的行情连接")
-                    except Exception as e:
-                        self.logger.error(f"创建行情连接失败: {str(e)}")
-                        self._quote_ctx = None
-                        return None
-                
-                return self._quote_ctx
-            
         except Exception as e:
-            self.logger.error(f"确保行情连接时出错: {str(e)}")
+            self.logger.error(f"创建行情连接失败: {str(e)}")
             return None
 
     async def subscribe_symbols(self, symbols: List[str]) -> bool:
         """订阅行情"""
         try:
-            if not symbols:
-                return True
-            
             quote_ctx = await self.ensure_quote_ctx()
             if not quote_ctx:
                 return False
-            
-            try:
-                await quote_ctx.subscribe(
-                    symbols=symbols,
-                    sub_types=[SubType.Quote, SubType.Trade, SubType.Depth],
-                    is_first_push=True
-                )
-                self.logger.info(f"成功订阅标的: {', '.join(symbols)}")
-                return True
-            except OpenApiException as e:
-                self.logger.error(f"订阅行情失败: {str(e)}")
-                return False
+                
+            # 批量订阅，避免频繁请求
+            batch_size = self.api_config['request_limit']['quote']['max_symbols']
+            for i in range(0, len(symbols), batch_size):
+                batch = symbols[i:i + batch_size]
+                try:
+                    await quote_ctx.subscribe(
+                        symbols=batch,
+                        sub_types=[SubType.Quote, SubType.Trade, SubType.Depth],
+                        is_first_push=True
+                    )
+                    self.logger.info(f"成功订阅标的: {batch}")
+                except Exception as e:
+                    self.logger.error(f"订阅标的失败 {batch}: {str(e)}")
+                    return False
+                    
+                await asyncio.sleep(1)  # 避免请求过快
+                
+            return True
             
         except Exception as e:
-            self.logger.error(f"订阅标的时出错: {str(e)}")
+            self.logger.error(f"订阅行情失败: {str(e)}")
             return False
 
     async def save_kline_data(self, symbol: str, kline_data: pd.DataFrame) -> bool:
