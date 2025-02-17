@@ -147,6 +147,7 @@ def load_config() -> Dict[str, Any]:
         raise
 
 async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
+    """初始化所有组件"""
     components = {}
     try:
         # 初始化数据管理器
@@ -158,6 +159,7 @@ async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
         # 初始化数据清理器
         logger.info("正在初始化数据清理器...")
         data_cleaner = DataCleaner(config['DATA_CONFIG'])
+        await data_cleaner.async_init()
         components['data_cleaner'] = data_cleaner
         logger.info("数据清理器初始化完成")
         
@@ -170,14 +172,14 @@ async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
         
         # 初始化策略
         logger.info("正在初始化交易策略...")
-        strategy = DoomsdayOptionStrategy(config['TRADING_CONFIG'], data_manager)
-        await strategy.async_init()
-        components['strategy'] = strategy
+        option_strategy = DoomsdayOptionStrategy(config['TRADING_CONFIG'], data_manager)
+        await option_strategy.async_init()
+        components['option_strategy'] = option_strategy
         logger.info("交易策略初始化完成")
         
         # 初始化风险检查器
         logger.info("正在初始化风险检查器...")
-        risk_checker = RiskChecker(config['TRADING_CONFIG'], strategy, time_checker)
+        risk_checker = RiskChecker(config['TRADING_CONFIG'], option_strategy, time_checker)
         await risk_checker.async_init()
         components['risk_checker'] = risk_checker
         logger.info("风险检查器初始化完成")
