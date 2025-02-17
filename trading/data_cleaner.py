@@ -35,9 +35,13 @@ class DataCleaner:
             'cleanup_interval_hours': 12,  # 清理间隔(小时)
         }
         
-        # 上次清理时间记录
+        # 上次清理和备份时间记录
         self._last_cleanup = None
         self._last_backup = None
+        
+        # 备份状态文件
+        self.backup_status_file = self.data_dir / 'backup_status.json'
+        self._load_backup_status()
         
     async def async_init(self) -> None:
         """异步初始化"""
@@ -242,9 +246,57 @@ class DataCleaner:
         except Exception as e:
             self.logger.error(f"根据大小清理数据时出错: {str(e)}")
 
+    def _load_backup_status(self) -> None:
+        """加载备份状态"""
+        try:
+            if self.backup_status_file.exists():
+                with open(self.backup_status_file, 'r') as f:
+                    status = json.load(f)
+                    self._last_backup = datetime.fromisoformat(status.get('last_backup', ''))
+            else:
+                self._last_backup = None
+        except Exception as e:
+            self.logger.error(f"加载备份状态时出错: {str(e)}")
+            self._last_backup = None
+
+    def _save_backup_status(self) -> None:
+        """保存备份状态"""
+        try:
+            with open(self.backup_status_file, 'w') as f:
+                json.dump({
+                    'last_backup': self._last_backup.isoformat() if self._last_backup else None
+                }, f)
+        except Exception as e:
+            self.logger.error(f"保存备份状态时出错: {str(e)}")
+
+    async def _should_backup(self) -> bool:
+        """检查是否需要备份"""
+        try:
+            current_time = datetime.now(self.tz)
+            
+            # 如果没有上次备份记录，执行备份
+            if not self._last_backup:
+                return True
+                
+            # 计算距离上次备份的时间
+            backup_interval = timedelta(hours=self.cleanup_config['backup_interval_hours'])
+            time_since_last_backup = current_time - self._last_backup
+            
+            # 如果超过备份间隔，需要备份
+            return time_since_last_backup >= backup_interval
+            
+        except Exception as e:
+            self.logger.error(f"检查备份时间时出错: {str(e)}")
+            return False
+
     async def _backup_data(self) -> None:
         """备份数据"""
         try:
+            # 检查是否需要备份
+            if not await self._should_backup():
+                self.logger.debug("距离上次备份未超过24小时，跳过备份")
+                return
+                
             timestamp = datetime.now(self.tz).strftime('%Y%m%d_%H%M%S')
             backup_dir = self.backup_dir / f"backup_{timestamp}"
             
@@ -256,7 +308,11 @@ class DataCleaner:
                 dest_dir = backup_dir / src_dir.name
                 if src_dir.exists():
                     shutil.copytree(src_dir, dest_dir)
-                    
+            
+            # 更新备份时间
+            self._last_backup = datetime.now(self.tz)
+            self._save_backup_status()
+            
             self.logger.info(f"成功创建数据备份: {backup_dir}")
             
         except Exception as e:
