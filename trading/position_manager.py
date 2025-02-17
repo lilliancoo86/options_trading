@@ -268,13 +268,12 @@ class DoomsdayPositionManager:
         try:
             if not self._trade_ctx:
                 self._trade_ctx = TradeContext(self.longport_config)
-                # TradeContext 不需要显式连接，直接使用即可
                 self.logger.info("交易连接已建立")
                 
             # 验证连接是否可用
             try:
-                # 使用同步方法获取账户列表
-                accounts = self._trade_ctx.account_list()  # 注意这里是方法调用，不是属性
+                # 使用 get_account_list() 方法获取账户列表
+                accounts = self._trade_ctx.get_account_list()
                 if not accounts:
                     self.logger.error("交易连接验证失败：未能获取账户列表")
                     self._trade_ctx = None
@@ -299,8 +298,8 @@ class DoomsdayPositionManager:
             if not trade_ctx:
                 return False
             
-            # 使用同步方法获取账户余额
-            balances = trade_ctx.account_balance()  # 注意这里是方法调用，不是属性
+            # 使用 get_account_balance() 方法获取账户余额
+            balances = trade_ctx.get_account_balance()
             if not balances:
                 self.logger.error("获取账户余额失败")
                 return False
@@ -384,21 +383,19 @@ class DoomsdayPositionManager:
                 return False
             
             try:
-                # 尝试获取账户余额验证连接
-                balance = await self._trade_ctx.account_balance()
-                if not balance:
+                # 尝试获取账户列表验证连接
+                accounts = self._trade_ctx.get_account_list()  # 使用 get_account_list() 方法
+                if not accounts:
+                    self.logger.error("验证交易连接失败：未能获取账户列表")
                     return False
                     
+                self.logger.info("交易连接验证成功")
                 return True
                     
             except OpenApiException as e:
-                self.logger.error(f"验证交易连接失败: {str(e)}")
+                self.logger.error(f"验证交易连接失败，API错误: {str(e)}")
                 return False
                     
-            except Exception as e:
-                self.logger.error(f"验证连接时出错: {str(e)}")
-                return False
-            
         except Exception as e:
             self.logger.error(f"验证连接时出错: {str(e)}")
             return False
