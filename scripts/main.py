@@ -265,11 +265,6 @@ async def run_trading_loop(
                         logger.error(f"处理交易标的 {symbol} 时出错: {str(e)}")
                         continue
                 
-                # 更新持仓状态
-                positions = await position_manager.get_positions()
-                for position in positions:
-                    await position_manager.log_position_status(position)
-                    
                 # 等待下一个循环
                 await asyncio.sleep(config.get('TRADING_CONFIG', {}).get('loop_interval', 60))
                 
