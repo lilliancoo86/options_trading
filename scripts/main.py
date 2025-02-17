@@ -106,23 +106,40 @@ async def initialize_components(config: Dict[str, Any]):
     """初始化所有组件"""
     try:
         # 初始化数据管理器
+        logger.info("正在初始化数据管理器...")
         data_manager = DataManager(config)
+        await data_manager.async_init()  # 添加异步初始化调用
+        logger.info("数据管理器初始化完成")
         
         # 初始化数据清理器
+        logger.info("正在初始化数据清理器...")
         data_cleaner = DataCleaner(config)
         await data_cleaner.async_init()
+        logger.info("数据清理器初始化完成")
         
         # 初始化时间检查器
+        logger.info("正在初始化时间检查器...")
         time_checker = TimeChecker(config)
+        await time_checker.async_init()  # 添加异步初始化调用
+        logger.info("时间检查器初始化完成")
         
         # 初始化策略
+        logger.info("正在初始化交易策略...")
         strategy = DoomsdayOptionStrategy(config, data_manager)
+        await strategy.async_init()  # 添加异步初始化调用
+        logger.info("交易策略初始化完成")
         
-        # 初始化风险检查器 (现在有了必需的依赖)
+        # 初始化风险检查器
+        logger.info("正在初始化风险检查器...")
         risk_checker = RiskChecker(config, strategy, time_checker)
+        await risk_checker.async_init()  # 添加异步初始化调用
+        logger.info("风险检查器初始化完成")
         
-        # 初始化持仓管理器 (使用已初始化的组件)
+        # 初始化持仓管理器
+        logger.info("正在初始化持仓管理器...")
         position_manager = DoomsdayPositionManager(config, data_manager)
+        await position_manager.async_init()  # 添加异步初始化调用
+        logger.info("持仓管理器初始化完成")
         
         return (data_manager, data_cleaner, strategy, 
                 position_manager, risk_checker, time_checker)
