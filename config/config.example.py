@@ -88,22 +88,58 @@ API_CONFIG = {
 
 # 日志配置
 LOGGING_CONFIG = {
-    'level': logging.INFO,
-    'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    'date_format': '%Y-%m-%d %H:%M:%S',
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'detailed': {
+            'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            'datefmt': '%Y-%m-%d %H:%M:%S'
+        },
+        'simple': {
+            'format': '%(levelname)s: %(message)s'
+        }
+    },
     'handlers': {
         'console': {
-            'enabled': True,
-            'level': logging.INFO,
-            'format': '%(levelname)s: %(message)s' 
+            'class': 'logging.StreamHandler',
+            'level': 'INFO',
+            'formatter': 'simple',
+            'stream': 'ext://sys.stdout'
         },
         'file': {
-            'enabled': True,
-            'level': logging.DEBUG,
-            'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'level': 'DEBUG',  # 确保能记录DEBUG级别的日志
+            'formatter': 'detailed',
             'filename': str(LOG_DIR / 'trading_{current_date}.log'),
-            'max_bytes': 10 * 1024 * 1024,  # 10MB
-            'backup_count': 5
+            'maxBytes': 10 * 1024 * 1024,  # 10MB
+            'backupCount': 5,
+            'encoding': 'utf-8'
+        },
+        'error_file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'level': 'ERROR',
+            'formatter': 'detailed',
+            'filename': str(LOG_DIR / 'error_{current_date}.log'),
+            'maxBytes': 10 * 1024 * 1024,  # 10MB
+            'backupCount': 5,
+            'encoding': 'utf-8'
+        }
+    },
+    'loggers': {
+        '': {  # root logger
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': True
+        },
+        'trading': {  # trading package logger
+            'handlers': ['console', 'file', 'error_file'],
+            'level': 'DEBUG',  # 设置为DEBUG以记录所有日志
+            'propagate': False
+        },
+        'trading.data_manager': {  # data_manager module logger
+            'handlers': ['console', 'file', 'error_file'],
+            'level': 'DEBUG',  # 特别设置data_manager的日志级别为DEBUG
+            'propagate': False
         }
     }
 }

@@ -52,6 +52,18 @@ class DataManager:
         # API配置
         self.api_config = API_CONFIG
         
+        # 添加调试日志
+        self.logger.debug(f"API配置: {self.api_config}")
+        self.logger.debug(f"环境变量: APP_KEY={os.getenv('LONGPORT_APP_KEY', '已设置')}, "
+                         f"ACCESS_TOKEN={os.getenv('LONGPORT_ACCESS_TOKEN', '已设置')}")
+        
+        # 初始化 LongPort 配置
+        self.longport_config = Config(
+            app_key=self.api_config['app_key'],
+            app_secret=self.api_config['app_secret'],
+            access_token=self.api_config['access_token']
+        )
+        
         # 确保所有必需的环境变量都存在
         required_env_vars = [
             'LONGPORT_APP_KEY',
@@ -325,14 +337,7 @@ class DataManager:
                     self.logger.info("正在创建新的行情连接...")
                     
                     # 创建配置
-                    self._quote_ctx = QuoteContext(Config(
-                        app_key=os.getenv('LONGPORT_APP_KEY'),
-                        app_secret=os.getenv('LONGPORT_APP_SECRET'),
-                        access_token=os.getenv('LONGPORT_ACCESS_TOKEN'),
-                        http_url=self.api_config['http_url'],
-                        quote_ws_url=self.api_config['quote_ws_url'],
-                        trade_ws_url=self.api_config['trade_ws_url']
-                    ))
+                    self._quote_ctx = QuoteContext(self.longport_config)
                     
                     # 设置回调函数
                     self._quote_ctx.set_on_quote(self._on_quote)
