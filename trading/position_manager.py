@@ -327,24 +327,28 @@ class DoomsdayPositionManager:
             if not trade_ctx:
                 return False
             
-            # 使用 stock_positions().list() 方法获取持仓列表
-            positions_list = trade_ctx.stock_positions().list()
-            if not positions_list:
+            # 使用 stock_positions() 方法获取持仓列表
+            positions_response = trade_ctx.stock_positions()
+            if not positions_response:
                 self.logger.info("当前没有持仓")
                 self.positions = {}
                 return True
             
             # 更新持仓信息
             self.positions = {}
-            for pos in positions_list:
-                self.positions[pos.symbol] = {
-                    'symbol': pos.symbol,
-                    'quantity': float(pos.quantity),
-                    'cost_price': float(pos.avg_price),  # 使用 avg_price 而不是 average_price
-                    'current_price': float(pos.current_price),
-                    'market_value': float(pos.market_value),
-                    'unrealized_pl': float(pos.unrealized_pl)
-                }
+            try:
+                for pos in positions_response:  # 直接遍历 positions_response
+                    self.positions[pos.symbol] = {
+                        'symbol': pos.symbol,
+                        'quantity': float(pos.quantity),
+                        'cost_price': float(pos.avg_price),  # 使用 avg_price 而不是 average_price
+                        'current_price': float(pos.current_price),
+                        'market_value': float(pos.market_value),
+                        'unrealized_pl': float(pos.unrealized_pl)
+                    }
+            except TypeError:
+                self.logger.error("持仓数据格式错误")
+                return False
             
             self.logger.info(f"当前持仓数量: {len(self.positions)}")
             return True
