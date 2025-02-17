@@ -79,8 +79,7 @@ class DataManager:
         
         required_api_keys = [
             'app_key', 'app_secret', 'access_token',
-            'http_url', 'quote_ws_url', 'trade_ws_url',
-            'region'
+            'http_url', 'quote_ws_url', 'trade_ws_url'
         ]
         missing_keys = [key for key in required_api_keys if not self.api_config.get(key)]
         if missing_keys:
@@ -103,8 +102,7 @@ class DataManager:
                 access_token=self.api_config['access_token'],
                 http_url=self.api_config['http_url'],
                 quote_ws_url=self.api_config['quote_ws_url'],
-                trade_ws_url=self.api_config['trade_ws_url'],
-                region=self.api_config['region']
+                trade_ws_url=self.api_config['trade_ws_url']
             )
             self.logger.info("LongPort配置初始化成功")
         except Exception as e:
