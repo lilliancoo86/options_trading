@@ -210,43 +210,45 @@ class DataManager:
         """初始化历史数据"""
         for symbol in self.symbols:
             try:
-                # 获取历史K线数据
                 quote_ctx = await self.ensure_quote_ctx()
                 if not quote_ctx:
                     continue
                     
                 # 获取最近100个交易日的数据
-                bars = await quote_ctx.history_candlesticks(
+                klines = await quote_ctx.candlesticks(
                     symbol=symbol,
                     period=Period.Day,
                     count=100,
                     adjust_type=AdjustType.ForwardAdjust
                 )
                     
-                # 转换为DataFrame
-                df = pd.DataFrame([{
-                    'timestamp': bar.timestamp,
-                    'open': bar.open,
-                    'high': bar.high,
-                    'low': bar.low,
-                    'close': bar.close,
-                    'volume': bar.volume,
-                    'turnover': bar.turnover
-                } for bar in bars])
+                if klines and hasattr(klines, 'candlesticks'):
+                    bars = klines.candlesticks
+                    if bars:
+                        # 转换为DataFrame
+                        df = pd.DataFrame([{
+                            'timestamp': bar.timestamp,
+                            'open': bar.open,
+                            'high': bar.high,
+                            'low': bar.low,
+                            'close': bar.close,
+                            'volume': bar.volume,
+                            'turnover': bar.turnover
+                        } for bar in bars])
+                        
+                        if not df.empty:
+                            df.set_index('timestamp', inplace=True)
+                            df.sort_index(inplace=True)
+                            
+                            # 计算技术指标
+                            tech_df = self._calculate_technical_indicators(df)
                 
-                if not df.empty:
-                    df.set_index('timestamp', inplace=True)
-                    df.sort_index(inplace=True)
-                    
-                    # 计算技术指标
-                    tech_df = self._calculate_technical_indicators(df)
-            
-            # 更新缓存
-                    self._data_cache[symbol]['ohlcv'] = df
-                    self._data_cache[symbol]['technical_indicators'] = tech_df
-                    self._data_cache[symbol]['last_update'] = datetime.now(self.tz)
-                    
-                await asyncio.sleep(0.5)  # 避免请求过快
+                        # 更新缓存
+                            self._data_cache[symbol]['ohlcv'] = df
+                            self._data_cache[symbol]['technical_indicators'] = tech_df
+                            self._data_cache[symbol]['last_update'] = datetime.now(self.tz)
+                            
+                        await asyncio.sleep(0.5)  # 避免请求过快
                 
             except Exception as e:
                 self.logger.error(f"初始化 {symbol} 历史数据时出错: {str(e)}")
@@ -331,42 +333,42 @@ class DataManager:
                 return
                 
             # 获取最新K线
-            bars = await quote_ctx.history_candlesticks(
-                    symbol=symbol,
-                    period=Period.Day,
+            klines = await quote_ctx.candlesticks(
+                symbol=symbol,
+                period=Period.Day,
                 count=1,
                 adjust_type=AdjustType.ForwardAdjust
             )
             
-            if not bars:
-                return
-                
-            latest_bar = bars[0]
-            
-            # 更新OHLCV数据
-            new_data = pd.DataFrame([{
-                'timestamp': latest_bar.timestamp,
-                'open': latest_bar.open,
-                'high': latest_bar.high,
-                'low': latest_bar.low,
-                'close': latest_bar.close,
-                'volume': latest_bar.volume,
-                'turnover': latest_bar.turnover
-            }]).set_index('timestamp')
-            
-            # 更新缓存
-            self._data_cache[symbol]['ohlcv'] = pd.concat([
-                self._data_cache[symbol]['ohlcv'].iloc[:-1], 
-                new_data
-            ])
-            
-            # 重新计算技术指标
-            tech_df = self._calculate_technical_indicators(
-                self._data_cache[symbol]['ohlcv']
-            )
-            self._data_cache[symbol]['technical_indicators'] = tech_df
-            self._data_cache[symbol]['last_update'] = datetime.now(self.tz)
-            
+            if klines and hasattr(klines, 'candlesticks'):
+                bars = klines.candlesticks
+                if bars:
+                    latest_bar = bars[0]
+                    
+                    # 更新OHLCV数据
+                    new_data = pd.DataFrame([{
+                        'timestamp': latest_bar.timestamp,
+                        'open': latest_bar.open,
+                        'high': latest_bar.high,
+                        'low': latest_bar.low,
+                        'close': latest_bar.close,
+                        'volume': latest_bar.volume,
+                        'turnover': latest_bar.turnover
+                    }]).set_index('timestamp')
+                    
+                    # 更新缓存
+                    self._data_cache[symbol]['ohlcv'] = pd.concat([
+                        self._data_cache[symbol]['ohlcv'].iloc[:-1], 
+                        new_data
+                    ])
+                    
+                    # 重新计算技术指标
+                    tech_df = self._calculate_technical_indicators(
+                        self._data_cache[symbol]['ohlcv']
+                    )
+                    self._data_cache[symbol]['technical_indicators'] = tech_df
+                    self._data_cache[symbol]['last_update'] = datetime.now(self.tz)
+                    
         except Exception as e:
             self.logger.error(f"更新 {symbol} 数据时出错: {str(e)}")
 
@@ -675,45 +677,50 @@ class DataManager:
                     now = datetime.now(self.tz)
                     
                     try:
-                        # 使用 history_candlesticks 替代 candlesticks
-                        klines = await quote_ctx.history_candlesticks(
+                        # 使用 candlesticks 而不是 history_candlesticks
+                        klines = await quote_ctx.candlesticks(
                             symbol=symbol,
                             period=Period.Day,
                             count=30,  # 获取最近30天的数据
                             adjust_type=AdjustType.ForwardAdjust
                         )
                         
-                        if klines:  # 直接检查 klines 是否为空
-                            # 更新数据缓存
-                            df = pd.DataFrame([{
-                                'timestamp': bar.timestamp,
-                                'open': bar.open,
-                                'high': bar.high,
-                                'low': bar.low,
-                                'close': bar.close,
-                                'volume': bar.volume,
-                                'turnover': bar.turnover
-                            } for bar in klines])
-                            
-                            if not df.empty:
-                                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True).dt.tz_convert(self.tz)
-                                df.set_index('timestamp', inplace=True)
+                        if klines and hasattr(klines, 'candlesticks'):  # 检查响应格式
+                            bars = klines.candlesticks
+                            if bars:
+                                # 更新数据缓存
+                                df = pd.DataFrame([{
+                                    'timestamp': bar.timestamp,
+                                    'open': bar.open,
+                                    'high': bar.high,
+                                    'low': bar.low,
+                                    'close': bar.close,
+                                    'volume': bar.volume,
+                                    'turnover': bar.turnover
+                                } for bar in bars])
                                 
-                                if symbol not in self._data_cache:
-                                    self._data_cache[symbol] = {}
-                                
-                                self._data_cache[symbol]['ohlcv'] = df
-                                self._data_cache[symbol]['last_update'] = now
-                                
-                                self.logger.info(f"成功更新 {symbol} 的K线数据")
-                                
-                                # 保存到文件
-                                await self._save_market_data(symbol, df)
+                                if not df.empty:
+                                    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True).dt.tz_convert(self.tz)
+                                    df.set_index('timestamp', inplace=True)
+                                    
+                                    if symbol not in self._data_cache:
+                                        self._data_cache[symbol] = {}
+                                    
+                                    self._data_cache[symbol]['ohlcv'] = df
+                                    self._data_cache[symbol]['last_update'] = now
+                                    
+                                    self.logger.info(f"成功更新 {symbol} 的K线数据")
+                                    
+                                    # 保存到文件
+                                    await self._save_market_data(symbol, df)
+                                else:
+                                    self.logger.warning(f"{symbol} K线数据转换后为空")
+                                    success = False
                             else:
-                                self.logger.warning(f"{symbol} K线数据转换后为空")
+                                self.logger.warning(f"获取 {symbol} 的K线数据为空")
                                 success = False
                         else:
-                            self.logger.warning(f"获取 {symbol} 的K线数据为空")
+                            self.logger.warning(f"获取 {symbol} 的K线数据响应格式错误")
                             success = False
                         
                     except OpenApiException as e:
@@ -721,7 +728,7 @@ class DataManager:
                         success = False
                     
                     # 避免请求过快
-                    await asyncio.sleep(1.0)  # 增加延迟时间
+                    await asyncio.sleep(1.0)
                     
                 except Exception as e:
                     self.logger.error(f"更新 {symbol} K线数据时出错: {str(e)}")
