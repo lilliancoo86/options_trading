@@ -328,14 +328,7 @@ class DoomsdayPositionManager:
                 return False
             
             # 使用 stock_positions() 方法获取持仓列表
-            positions_response = trade_ctx.stock_positions()
-            if not positions_response:
-                self.logger.info("当前没有持仓")
-                self.positions = {}
-                return True
-            
-            # 获取持仓列表
-            positions_list = positions_response.positions
+            positions_list = trade_ctx.stock_positions()
             if not positions_list:
                 self.logger.info("当前没有持仓")
                 self.positions = {}
