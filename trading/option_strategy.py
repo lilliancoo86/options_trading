@@ -75,17 +75,17 @@ class DoomsdayOptionStrategy:
             # 订阅行情
             for symbol in self.symbols:
                 try:
-                    await quote_ctx.subscribe(
+                    # 使用同步方法进行订阅
+                    quote_ctx.subscribe(
                         symbols=[symbol],
                         sub_types=[SubType.Quote, SubType.Trade, SubType.Depth],
                         is_first_push=True
                     )
                     self.logger.info(f"成功订阅 {symbol} 的行情数据")
+                    await asyncio.sleep(0.1)  # 避免请求过快
                 except Exception as e:
                     self.logger.error(f"订阅{symbol}失败: {str(e)}")
                     continue
-                
-                await asyncio.sleep(0.1)  # 避免请求过快
             
             self.logger.info("期权策略初始化完成")
             

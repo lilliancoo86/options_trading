@@ -412,3 +412,73 @@ class DoomsdayPositionManager:
             
         except Exception as e:
             self.logger.error(f"更新持仓记录时出错: {str(e)}")
+
+    async def ensure_trade_ctx(self) -> Optional[TradeContext]:
+        """确保交易连接可用"""
+        try:
+            if not self._trade_ctx:
+                config = Config.from_env()
+                self._trade_ctx = TradeContext(config)
+                await self._trade_ctx.connect()  # 使用异步连接方法
+                self.logger.info("交易连接已建立")
+                
+            # 验证连接是否可用
+            try:
+                # 使用同步方法获取账户列表
+                accounts = self._trade_ctx.account_list()
+                if not accounts:
+                    self.logger.error("交易连接验证失败：未能获取账户列表")
+                    self._trade_ctx = None
+                    return None
+                self.logger.info("交易连接验证成功")
+            except OpenApiException as e:
+                self.logger.error(f"交易连接验证失败，API错误: {str(e)}")
+                self._trade_ctx = None
+                return None
+                
+            return self._trade_ctx
+            
+        except Exception as e:
+            self.logger.error(f"确保交易连接时出错: {str(e)}")
+            self._trade_ctx = None
+            return None
+
+    async def update_account_info(self) -> bool:
+        """更新账户信息"""
+        try:
+            trade_ctx = await self.ensure_trade_ctx()
+            if not trade_ctx:
+                return False
+            
+            # 使用同步方法获取账户余额
+            balances = trade_ctx.account_balance()
+            if not balances:
+                self.logger.error("获取账户余额失败")
+                return False
+            
+            self._account_info = {
+                'balances': balances,
+                'last_update': datetime.now(self.tz)
+            }
+            
+            self.logger.info(f"账户信息已更新: {balances}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"更新账户信息失败: {str(e)}")
+            return False
+
+    async def get_positions(self) -> List[Dict[str, Any]]:
+        """获取当前持仓"""
+        try:
+            trade_ctx = await self.ensure_trade_ctx()
+            if not trade_ctx:
+                return []
+            
+            # 使用同步方法获取持仓
+            positions = trade_ctx.position_list()
+            return positions if positions else []
+            
+        except Exception as e:
+            self.logger.error(f"获取持仓信息失败: {str(e)}")
+            return []
