@@ -328,14 +328,16 @@ class DoomsdayPositionManager:
             if not trade_ctx:
                 return False
             
-            # 获取所有持仓类型
             try:
+                # 获取所有持仓类型
                 # 获取股票持仓
-                stock_positions = trade_ctx.stock_positions()
+                stock_positions_resp = trade_ctx.stock_positions()
+                stock_positions = stock_positions_resp.positions if hasattr(stock_positions_resp, 'positions') else []
                 self.logger.debug(f"股票持仓响应数据: {stock_positions}")
                 
                 # 获取期权持仓
-                fund_positions = trade_ctx.fund_positions()
+                fund_positions_resp = trade_ctx.fund_positions()
+                fund_positions = fund_positions_resp.positions if hasattr(fund_positions_resp, 'positions') else []
                 self.logger.debug(f"基金持仓响应数据: {fund_positions}")
                 
                 # 更新持仓信息
@@ -373,14 +375,18 @@ class DoomsdayPositionManager:
                     self.logger.info(f"当前持仓数量: {len(self.positions)}")
                     for symbol, pos in self.positions.items():
                         self.logger.info(f"持仓详情 - {symbol}: 数量={pos['quantity']}, 市值=${pos['market_value']:.2f}")
-                        
-                self.logger.debug(f"原始股票持仓数据: {stock_positions}")
-                self.logger.debug(f"原始基金持仓数据: {fund_positions}")
+                
+                # 添加更详细的调试日志
+                self.logger.debug(f"原始股票持仓响应: {stock_positions_resp}")
+                self.logger.debug(f"原始基金持仓响应: {fund_positions_resp}")
                 
                 return True
                 
             except AttributeError as e:
                 self.logger.error(f"持仓数据结构错误: {str(e)}")
+                # 添加更多调试信息
+                self.logger.debug(f"股票持仓响应类型: {type(stock_positions_resp)}")
+                self.logger.debug(f"基金持仓响应类型: {type(fund_positions_resp)}")
                 return False
             
         except Exception as e:
