@@ -658,3 +658,85 @@ class DataManager:
         except Exception as e:
             self.logger.error(f"移动历史数据时出错: {str(e)}")
             return False
+
+    async def update_all_klines(self) -> bool:
+        """更新所有交易标的的K线数据"""
+        try:
+            success = True
+            for symbol in self.symbols:
+                try:
+                    # 获取行情连接
+                    quote_ctx = await self.ensure_quote_ctx()
+                    if not quote_ctx:
+                        self.logger.error(f"无法获取行情连接，跳过更新 {symbol} 的K线数据")
+                        success = False
+                        continue
+                    
+                    # 获取当前时间
+                    now = datetime.now(self.tz)
+                    
+                    # 获取日K数据
+                    klines = quote_ctx.candlesticks(
+                        symbol=symbol,
+                        period=Period.Day,
+                        count=30,  # 获取最近30天的数据
+                        adjust_type=AdjustType.Forward
+                    )
+                    
+                    if klines and hasattr(klines, 'candlesticks'):
+                        # 更新数据缓存
+                        df = pd.DataFrame(
+                            klines.candlesticks,
+                            columns=['timestamp', 'open', 'close', 'high', 'low', 'volume', 'turnover']
+                        )
+                        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True).dt.tz_convert(self.tz)
+                        df.set_index('timestamp', inplace=True)
+                        
+                        if symbol not in self._data_cache:
+                            self._data_cache[symbol] = {}
+                        
+                        self._data_cache[symbol]['ohlcv'] = df
+                        self._data_cache[symbol]['last_update'] = now
+                        
+                        self.logger.debug(f"成功更新 {symbol} 的K线数据")
+                        
+                        # 保存到文件
+                        await self._save_market_data(symbol, df)
+                    else:
+                        self.logger.warning(f"获取 {symbol} 的K线数据为空")
+                        success = False
+                    
+                    # 避免请求过快
+                    await asyncio.sleep(0.5)
+                    
+                except OpenApiException as e:
+                    self.logger.error(f"获取 {symbol} K线数据时发生API错误: {str(e)}")
+                    success = False
+                except Exception as e:
+                    self.logger.error(f"更新 {symbol} K线数据时出错: {str(e)}")
+                    success = False
+            
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"更新所有K线数据时出错: {str(e)}")
+            return False
+
+    async def _save_market_data(self, symbol: str, df: pd.DataFrame) -> None:
+        """保存市场数据到文件"""
+        try:
+            # 生成文件名
+            date_str = datetime.now(self.tz).strftime(self.date_fmt)
+            filename = f"{symbol}_{date_str}.csv"
+            filepath = self.market_data_dir / filename
+            
+            # 保存数据
+            df.to_csv(filepath)
+            self.logger.debug(f"已保存 {symbol} 的市场数据到 {filepath}")
+            
+            # 创建备份
+            backup_path = self.backup_dir / filename
+            shutil.copy2(filepath, backup_path)
+            
+        except Exception as e:
+            self.logger.error(f"保存 {symbol} 的市场数据时出错: {str(e)}")
