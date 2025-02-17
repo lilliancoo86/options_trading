@@ -32,10 +32,19 @@ class DoomsdayPositionManager:
         
         # 确保配置中包含必要的字段
         if 'symbols' not in config:
-            self.logger.warning("配置中缺少 symbols 字段，使用数据管理器中的 symbols")
-            self.symbols = self.data_manager.symbols
+            if hasattr(self.data_manager, 'symbols'):
+                self.symbols = self.data_manager.symbols
+                self.logger.info(f"使用数据管理器中的交易标的: {self.symbols}")
+            elif 'TRADING_CONFIG' in config and 'symbols' in config['TRADING_CONFIG']:
+                self.symbols = config['TRADING_CONFIG']['symbols']
+                self.logger.info(f"从 TRADING_CONFIG 中获取交易标的: {self.symbols}")
+            else:
+                raise ValueError("无法获取交易标的列表")
         else:
             self.symbols = config['symbols']
+        
+        if not self.symbols:
+            raise ValueError("交易标的列表不能为空")
         
         # 加载环境变量
         load_dotenv()
