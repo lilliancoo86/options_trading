@@ -197,52 +197,34 @@ async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
 
 async def run_trading_loop(
     config: Dict[str, Any],
-    data_manager: DataManager,
-    data_cleaner: DataCleaner,
-    option_strategy: DoomsdayOptionStrategy,
-    position_manager: DoomsdayPositionManager,
-    risk_checker: RiskChecker,
-    time_checker: TimeChecker
+    data_manager,
+    data_cleaner,
+    strategy,
+    position_manager,
+    risk_checker,
+    time_checker
 ) -> None:
-    """运行交易循环"""
+    """运行交易主循环"""
     try:
         while True:
             try:
-                logger.info("=== 开始新一轮交易循环 ===")
-                
-                # 检查交易时间
-                if not await time_checker.is_trading_time():
-                    logger.info("当前不是交易时间，等待下一次检查")
+                # 检查是否在交易时段
+                if not await time_checker.can_trade():
                     await asyncio.sleep(60)
                     continue
-                
-                # 获取交易标的列表
-                if not hasattr(data_manager, 'symbols') or not data_manager.symbols:
-                    logger.error("无法获取交易标的列表")
-                    await asyncio.sleep(10)
-                    continue
                     
-                symbols = data_manager.symbols.copy()  # 创建副本
+                # 记录市场状态
+                logger.info("=== 开始新一轮交易循环 ===")
                 
                 # 更新市场数据
-                if not await data_manager.update_all_klines():
-                    logger.error("更新市场数据失败")
-                    await asyncio.sleep(10)
-                    continue
+                await data_manager.update_all_klines()
                 
-                # 清理数据
+                # 执行数据清理
                 await data_cleaner.cleanup()
                 
-                # 遍历每个交易标的
-                for symbol in symbols:
-                    # 检查风险
-                    if not await risk_checker.check_risk(symbol):
-                        logger.warning(f"{symbol} 风险检查未通过，跳过")
-                        continue
-                    
-                    # 获取交易信号
-                    signal = await option_strategy.generate_signal(symbol)
-                    
+                # 获取交易信号
+                for symbol in config['symbols']:
+                    signal = await strategy.get_trading_signal(symbol)
                     if signal and signal.get('should_trade', False):
                         # 执行交易
                         if signal['action'] == 'open':
