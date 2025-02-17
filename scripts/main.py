@@ -188,47 +188,60 @@ async def run_trading_loop(
     data_manager,
     data_cleaner,
     strategy,
-    position_manager
+    position_manager,
+    risk_checker,
+    time_checker
 ) -> None:
-    """运行交易循环"""
+    """运行交易主循环"""
     try:
         while True:
             try:
+                # 检查是否在交易时段
+                if not await time_checker.can_trade():
+                    await asyncio.sleep(60)
+                    continue
+                    
+                # 记录市场状态
                 logger.info("=== 开始新一轮交易循环 ===")
                 
-                # 确保 symbols 列表可用
-                if not hasattr(position_manager, 'symbols') or not position_manager.symbols:
-                    position_manager.symbols = data_manager.symbols.copy()
-                    logger.info(f"已从数据管理器更新交易标的列表: {position_manager.symbols}")
-                
                 # 更新市场数据
-                if not await data_manager.update_all_klines():
-                    logger.warning("更新市场数据失败，等待下一轮循环")
-                    await asyncio.sleep(10)
-                    continue
+                await data_manager.update_all_klines()
                 
-                # 清理数据
-                await data_cleaner.clean_data()
+                # 执行数据清理
+                await data_cleaner.cleanup()
+                
+                # 获取交易信号
+                for symbol in config['symbols']:
+                    signal = await strategy.get_trading_signal(symbol)
+                    if signal and signal.get('should_trade', False):
+                        # 执行交易
+                        if signal['action'] == 'open':
+                            await position_manager.open_position(
+                                symbol,
+                                signal.get('quantity', 0)
+                            )
+                        elif signal['action'] == 'close':
+                            await position_manager.close_position(
+                                symbol,
+                                signal.get('quantity', 0)
+                            )
                 
                 # 更新持仓状态
                 positions = await position_manager.get_positions()
-                if positions is not None:  # 添加空值检查
-                    for position in positions:
-                        await position_manager.log_position_status(position)
-                
+                for position in positions:
+                    await position_manager.log_position_status(position)
+                    
                 # 等待下一个循环
                 await asyncio.sleep(config.get('loop_interval', 60))
                 
             except Exception as e:
                 logger.error(f"交易循环中出错: {str(e)}")
-                logger.debug("错误详情:", exc_info=True)  # 添加详细错误信息
-                await asyncio.sleep(10)  # 出错后等待一段时间再继续
+                await asyncio.sleep(10)
                 
-    except asyncio.CancelledError:
-        logger.info("交易循环被取消")
+    except KeyboardInterrupt:
+        logger.info("收到终止信号，正在关闭交易系统...")
     except Exception as e:
-        logger.error(f"交易循环发生致命错误: {str(e)}")
-        logger.exception("详细错误信息：")
+        logger.error(f"交易系统运行时出错: {str(e)}")
         raise
 
 async def main():

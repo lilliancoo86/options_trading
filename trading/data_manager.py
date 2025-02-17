@@ -755,29 +755,27 @@ class DataManager:
         try:
             # 确保时间戳是时区感知的
             if df.index.tz is None:
-                df.index = df.index.tz_localize('UTC')
+                df.index = df.index.tz_localize('UTC').tz_convert(self.tz)
             
-            # 统一转换为UTC时间
-            df.index = df.index.tz_convert('UTC')
-            
-            # 生成文件名
-            date_str = datetime.now(pytz.UTC).strftime(self.date_fmt)
+            # 生成文件名 - 使用时区感知的时间
+            date_str = datetime.now(self.tz).strftime(self.date_fmt)
             filename = f"{symbol}_{date_str}.csv"
             filepath = self.market_data_dir / filename
             
-            # 准备保存的数据
+            # 在保存之前转换时间戳为字符串，使用统一的格式
             df_to_save = df.copy()
             
-            # 将时间戳转换为ISO格式字符串（不包含时区信息）
-            df_to_save.index = df_to_save.index.strftime('%Y-%m-%d %H:%M:%S')
+            # 保存原始时区信息
+            timezone_info = df_to_save.index.tz.zone
             
-            # 添加时区列（固定为UTC）
-            df_to_save['timezone'] = 'UTC'
+            # 转换为UTC时间并格式化为ISO格式字符串
+            df_to_save.index = df_to_save.index.tz_convert('UTC').strftime('%Y-%m-%d %H:%M:%S+00:00')
             
-            # 添加处理时间戳
-            df_to_save['processed_at'] = datetime.now(pytz.UTC).strftime('%Y-%m-%d %H:%M:%S')
+            # 添加元数据列
+            df_to_save['original_timezone'] = timezone_info
+            df_to_save['data_timestamp'] = datetime.now(pytz.UTC).isoformat()
             
-            # 保存数据
+            # 保存数据，包含时区信息
             df_to_save.to_csv(filepath)
             self.logger.debug(f"已保存 {symbol} 的市场数据到 {filepath}")
             
