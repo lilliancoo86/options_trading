@@ -148,9 +148,21 @@ class DataManager:
         try:
             # 初始化行情连接
             self.logger.info("正在初始化行情连接...")
-            quote_ctx = await self.ensure_quote_ctx()
-            if not quote_ctx:
-                self.logger.error("初始化行情连接失败")
+            
+            # 重试机制
+            max_retries = self.api_config.get('quote_context', {}).get('max_retry', 3)
+            retry_interval = self.api_config.get('quote_context', {}).get('reconnect_interval', 3)
+            
+            for attempt in range(max_retries):
+                quote_ctx = await self.ensure_quote_ctx()
+                if quote_ctx is not None:
+                    break
+                
+                if attempt < max_retries - 1:
+                    self.logger.warning(f"行情连接失败，{retry_interval}秒后进行第{attempt + 2}次尝试...")
+                    await asyncio.sleep(retry_interval)
+            
+            if quote_ctx is None:
                 raise ConnectionError("初始化行情连接失败")
             
             # 订阅所有交易标的的行情
@@ -163,8 +175,11 @@ class DataManager:
                     )
                     self.logger.info(f"成功订阅 {symbol} 的行情数据")
                     await asyncio.sleep(0.1)  # 避免请求过快
+                except OpenApiException as e:
+                    self.logger.error(f"订阅 {symbol} 行情失败，API错误: {str(e)}")
+                    continue
                 except Exception as e:
-                    self.logger.error(f"订阅 {symbol} 行情失败: {str(e)}")
+                    self.logger.error(f"订阅 {symbol} 行情时发生未知错误: {str(e)}")
                     continue
                 
             self.logger.info("数据管理器初始化完成")
@@ -367,41 +382,62 @@ class DataManager:
     async def ensure_quote_ctx(self) -> Optional[QuoteContext]:
         """确保行情连接可用"""
         try:
-            if not hasattr(self, '_quote_ctx') or self._quote_ctx is None:
-                # 确保配置正确
-                if not self.longport_config:
-                    self.logger.error("LongPort配置未初始化")
-                    return None
+            async with self._quote_ctx_lock:  # 使用锁来防止并发问题
+                if not hasattr(self, '_quote_ctx') or self._quote_ctx is None:
+                    # 确保配置正确
+                    if not hasattr(self, 'longport_config'):
+                        self.logger.error("LongPort配置未初始化")
+                        return None
+
+                    try:
+                        # 创建新的行情连接
+                        self.logger.info("正在创建新的行情连接...")
+                        quote_ctx = QuoteContext(self.longport_config)
+                        
+                        # 等待连接建立
+                        await asyncio.sleep(1)
+                        
+                        # 验证连接是否可用
+                        if self.symbols:
+                            test_symbol = self.symbols[0]
+                            self.logger.info(f"正在使用 {test_symbol} 验证行情连接...")
+                            
+                            # 尝试获取基本行情数据来验证连接
+                            try:
+                                await quote_ctx.subscribe(
+                                    symbols=[test_symbol],
+                                    sub_types=[SubType.Quote],
+                                    is_first_push=True
+                                )
+                                self.logger.info("行情连接验证成功")
+                                self._quote_ctx = quote_ctx
+                            except OpenApiException as e:
+                                self.logger.error(f"行情连接验证失败，API错误: {str(e)}")
+                                await quote_ctx.close()  # 关闭失败的连接
+                                return None
+                            except Exception as e:
+                                self.logger.error(f"行情连接验证时发生未知错误: {str(e)}")
+                                await quote_ctx.close()  # 关闭失败的连接
+                                return None
+                        else:
+                            self.logger.warning("没有可用的交易标的进行连接验证")
+                            await quote_ctx.close()
+                            return None
+                            
+                    except Exception as e:
+                        self.logger.error(f"创建行情连接时出错: {str(e)}")
+                        return None
                     
-                # 创建新的行情连接
-                self.logger.info("正在创建新的行情连接...")
-                self._quote_ctx = QuoteContext(self.longport_config)
-                
-                # 等待连接建立
-                await asyncio.sleep(1)
-                
-                # 验证连接
-                try:
-                    # 尝试获取一个简单的行情数据来验证连接
-                    if self.symbols:
-                        await self._quote_ctx.subscribe(
-                            symbols=[self.symbols[0]],
-                            sub_types=[SubType.Quote],
-                            is_first_push=True
-                        )
-                        self.logger.info("行情连接验证成功")
-                    else:
-                        self.logger.warning("没有可用的交易标的进行连接验证")
-                except Exception as e:
-                    self.logger.error(f"行情连接验证失败: {str(e)}")
-                    self._quote_ctx = None
-                    return None
-                    
-            return self._quote_ctx
+                return self._quote_ctx
             
         except Exception as e:
             self.logger.error(f"确保行情连接时出错: {str(e)}")
-            self._quote_ctx = None
+            if hasattr(self, '_quote_ctx') and self._quote_ctx is not None:
+                try:
+                    await self._quote_ctx.close()
+                except:
+                    pass
+                self._quote_ctx = None
             return None
 
     async def subscribe_symbols(self, symbols: List[str]) -> bool:
