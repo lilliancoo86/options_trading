@@ -145,9 +145,9 @@ class DataManager:
         self._quote_ctx_lock = asyncio.Lock()
         self._quote_ctx = None
         self._last_quote_time = 0
-        self._quote_timeout = self.api_config.get('quote_context', {}).get('timeout', 30)
-        self._reconnect_interval = self.api_config.get('quote_context', {}).get('reconnect_interval', 3)
-        self._max_retry = self.api_config.get('quote_context', {}).get('max_retry', 3)
+        self._quote_timeout = self.api_config['quote_context']['timeout']
+        self._reconnect_interval = self.api_config['quote_context']['reconnect_interval']
+        self._max_retry = self.api_config['quote_context']['max_retry']
         
         # 请求限制
         self.request_limit = self.api_config['request_limit']
