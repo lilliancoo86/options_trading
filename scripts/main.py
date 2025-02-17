@@ -31,6 +31,12 @@ from trading.position_manager import DoomsdayPositionManager
 from trading.risk_checker import RiskChecker
 from trading.time_checker import TimeChecker
 
+# 修改配置导入
+try:
+    from config.config import CONFIG
+except ImportError:
+    from config.config_example import CONFIG
+
 def setup_logging() -> logging.Logger:
     """配置日志系统"""
     try:
@@ -74,39 +80,25 @@ def setup_logging() -> logging.Logger:
 def load_config() -> Dict[str, Any]:
     """加载配置文件"""
     try:
-        # 导入配置模块
-        from config.config import TRADING_CONFIG, API_CONFIG, LOGGING_CONFIG
-        
-        # 验证交易配置
-        if not isinstance(TRADING_CONFIG, dict):
-            raise ValueError("TRADING_CONFIG 必须是字典类型")
-            
-        if 'symbols' not in TRADING_CONFIG:
-            raise ValueError("TRADING_CONFIG 中缺少 symbols 配置")
-            
-        if not isinstance(TRADING_CONFIG['symbols'], list):
-            raise ValueError("symbols 必须是列表类型")
-            
         # 打印完整的配置内容进行调试
-        logger.debug(f"原始 TRADING_CONFIG: {TRADING_CONFIG}")
-        logger.debug(f"原始 symbols 列表: {TRADING_CONFIG['symbols']}")
+        logger.debug(f"原始 CONFIG: {CONFIG}")
         
         # 确保所有标的都是有效的格式
         valid_symbols = [
-            symbol.strip() for symbol in TRADING_CONFIG['symbols']
+            symbol.strip() for symbol in CONFIG['symbols']
             if isinstance(symbol, str) and symbol.strip() and symbol.endswith('.US')
         ]
         
         # 检查是否有无效的标的被过滤掉
-        if len(valid_symbols) != len(TRADING_CONFIG['symbols']):
-            logger.warning(f"部分交易标的格式无效，原始数量: {len(TRADING_CONFIG['symbols'])}, "
+        if len(valid_symbols) != len(CONFIG['symbols']):
+            logger.warning(f"部分交易标的格式无效，原始数量: {len(CONFIG['symbols'])}, "
                          f"有效数量: {len(valid_symbols)}")
             
         # 确保没有重复的标的
         valid_symbols = list(dict.fromkeys(valid_symbols))
         
         # 更新配置中的标的列表
-        TRADING_CONFIG['symbols'] = valid_symbols
+        CONFIG['symbols'] = valid_symbols
         
         if not valid_symbols:
             raise ValueError("没有有效的交易标的")
@@ -114,80 +106,56 @@ def load_config() -> Dict[str, Any]:
         logger.info(f"成功加载配置文件")
         logger.info(f"已配置 {len(valid_symbols)} 个交易标的: {valid_symbols}")
         
-        return {
-            'TRADING_CONFIG': TRADING_CONFIG,
-            'API_CONFIG': API_CONFIG,
-            'LOGGING_CONFIG': LOGGING_CONFIG
-        }
+        return CONFIG
         
-    except ImportError:
-        logger.error("无法导入配置文件，请确保已从 config.example.py 复制并创建 config.py")
-        raise
     except Exception as e:
         logger.error(f"加载配置时出错: {str(e)}")
         logger.exception("详细错误信息：")
         raise
 
-async def initialize_components(config: Dict[str, Any]) -> Tuple[DataManager, ...]:
-    """初始化交易系统组件"""
+async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
+    """初始化所有组件"""
+    components = {}
     try:
-        # 确保配置中包含必要的键
-        if 'TRADING_CONFIG' not in config:
-            raise ValueError("配置中缺少 TRADING_CONFIG")
-            
-        trading_config = config['TRADING_CONFIG']
-        
-        # 打印完整的配置内容进行调试
-        logger.debug(f"初始化组件时的完整配置: {trading_config}")
-        
-        # 确保交易配置中包含必要的字段
-        if 'symbols' not in trading_config:
-            raise ValueError("TRADING_CONFIG 中缺少 symbols 配置")
-            
-        if not isinstance(trading_config['symbols'], list):
-            raise ValueError("symbols 必须是列表类型")
-            
-        if not trading_config['symbols']:
-            raise ValueError("交易标的列表不能为空")
-            
-        logger.info(f"初始化组件，交易标的数量: {len(trading_config['symbols'])}")
-        logger.info(f"交易标的列表: {trading_config['symbols']}")
-        
         # 初始化数据管理器
-        data_manager = DataManager(trading_config)
+        data_manager = DataManager(config['TRADING_CONFIG'])
         await data_manager.async_init()
+        components['data_manager'] = data_manager
         
         # 初始化数据清理器
         logger.info("正在初始化数据清理器...")
         data_cleaner = DataCleaner(config['DATA_CONFIG'])
-        await data_cleaner.async_init()
-        logger.info("数据清理器初始化完成")
+        components['data_cleaner'] = data_cleaner
         
         # 初始化时间检查器
         logger.info("正在初始化时间检查器...")
-        time_checker = TimeChecker(trading_config)
+        time_checker = TimeChecker(config['TRADING_CONFIG'])
         await time_checker.async_init()
+        components['time_checker'] = time_checker
         logger.info("时间检查器初始化完成")
         
         # 初始化策略
         logger.info("正在初始化交易策略...")
-        strategy = DoomsdayOptionStrategy(trading_config, data_manager)
+        strategy = DoomsdayOptionStrategy(config['TRADING_CONFIG'], components['data_manager'])
         await strategy.async_init()
+        components['strategy'] = strategy
         logger.info("交易策略初始化完成")
         
         # 初始化风险检查器
         logger.info("正在初始化风险检查器...")
-        risk_checker = RiskChecker(trading_config, strategy, time_checker)
+        risk_checker = RiskChecker(config['TRADING_CONFIG'], components['strategy'], components['time_checker'])
         await risk_checker.async_init()
+        components['risk_checker'] = risk_checker
         logger.info("风险检查器初始化完成")
         
         # 初始化持仓管理器
         logger.info("正在初始化持仓管理器...")
-        position_manager = DoomsdayPositionManager(trading_config, data_manager)
+        position_manager = DoomsdayPositionManager(config['TRADING_CONFIG'], components['data_manager'])
         await position_manager.async_init()
+        components['position_manager'] = position_manager
         logger.info("持仓管理器初始化完成")
         
-        return data_manager, data_cleaner, strategy, position_manager, risk_checker, time_checker
+        return components
         
     except Exception as e:
         logger.error(f"初始化组件时出错: {str(e)}")
@@ -255,7 +223,7 @@ async def run_trading_loop(
         raise
 
 async def main():
-    """主程序入口"""
+    """主函数"""
     try:
         # 加载环境变量
         load_dotenv()
@@ -272,7 +240,7 @@ async def main():
         components = await initialize_components(config)
         
         # 运行交易循环
-        await run_trading_loop(config, *components)
+        await run_trading_loop(config, **components)
         
     except Exception as e:
         logger.error(f"程序运行时出错: {str(e)}")
