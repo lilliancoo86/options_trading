@@ -14,12 +14,11 @@ import pytz
 from typing import Dict, Any, Tuple
 import os
 from dotenv import load_dotenv
-from config.config import CONFIG
-
-# 设置基础路径
-BASE_DIR = Path('/home/options_trading')
-LOG_DIR = BASE_DIR / 'logs'
-CONFIG_DIR = BASE_DIR / 'config'
+from config.config import (
+    TRADING_CONFIG, API_CONFIG, LOGGING_CONFIG,
+    DATA_CONFIG, CLEANUP_CONFIG, BASE_DIR,
+    DATA_DIR, LOG_DIR, CONFIG_DIR
+)
 
 # 添加项目路径到Python路径
 sys.path.append(str(BASE_DIR))
@@ -31,6 +30,19 @@ from trading.option_strategy import DoomsdayOptionStrategy
 from trading.position_manager import DoomsdayPositionManager
 from trading.risk_checker import RiskChecker
 from trading.time_checker import TimeChecker
+
+# 创建统一的配置字典
+CONFIG = {
+    'BASE_DIR': BASE_DIR,
+    'DATA_DIR': DATA_DIR,
+    'LOG_DIR': LOG_DIR,
+    'CONFIG_DIR': CONFIG_DIR,
+    'TRADING_CONFIG': TRADING_CONFIG,
+    'API_CONFIG': API_CONFIG,
+    'LOGGING_CONFIG': LOGGING_CONFIG,
+    'DATA_CONFIG': DATA_CONFIG,
+    'CLEANUP_CONFIG': CLEANUP_CONFIG
+}
 
 def setup_logging() -> logging.Logger:
     """配置日志系统"""
@@ -75,9 +87,6 @@ def setup_logging() -> logging.Logger:
 def load_config() -> Dict[str, Any]:
     """加载配置文件"""
     try:
-        # 导入配置模块
-        from config.config import TRADING_CONFIG, API_CONFIG, LOGGING_CONFIG
-        
         # 验证交易配置
         if not isinstance(TRADING_CONFIG, dict):
             raise ValueError("TRADING_CONFIG 必须是字典类型")
@@ -115,11 +124,7 @@ def load_config() -> Dict[str, Any]:
         logger.info(f"成功加载配置文件")
         logger.info(f"已配置 {len(valid_symbols)} 个交易标的: {valid_symbols}")
         
-        return {
-            'TRADING_CONFIG': TRADING_CONFIG,
-            'API_CONFIG': API_CONFIG,
-            'LOGGING_CONFIG': LOGGING_CONFIG
-        }
+        return CONFIG
         
     except ImportError:
         logger.error("无法导入配置文件，请确保已从 config.example.py 复制并创建 config.py")
