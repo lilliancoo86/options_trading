@@ -741,13 +741,21 @@ class DataManager:
     async def _save_market_data(self, symbol: str, df: pd.DataFrame) -> None:
         """保存市场数据到文件"""
         try:
-            # 生成文件名
+            # 确保时间戳是时区感知的
+            if df.index.tz is None:
+                df.index = df.index.tz_localize('UTC').tz_convert(self.tz)
+            
+            # 生成文件名 - 使用时区感知的时间
             date_str = datetime.now(self.tz).strftime(self.date_fmt)
             filename = f"{symbol}_{date_str}.csv"
             filepath = self.market_data_dir / filename
             
+            # 在保存之前转换时间戳为字符串，避免时区问题
+            df_to_save = df.copy()
+            df_to_save.index = df_to_save.index.strftime('%Y-%m-%d %H:%M:%S%z')
+            
             # 保存数据
-            df.to_csv(filepath)
+            df_to_save.to_csv(filepath)
             self.logger.debug(f"已保存 {symbol} 的市场数据到 {filepath}")
             
             # 创建备份

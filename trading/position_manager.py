@@ -31,28 +31,32 @@ class DoomsdayPositionManager:
         self.tz = pytz.timezone('America/New_York')
         
         # 确保配置中包含必要的字段
-        if hasattr(self.data_manager, 'symbols') and self.data_manager.symbols:
-            self.symbols = self.data_manager.symbols
-            self.logger.info(f"使用数据管理器中的交易标的: {self.symbols}")
-        elif 'TRADING_CONFIG' in config and 'symbols' in config['TRADING_CONFIG']:
-            self.symbols = config['TRADING_CONFIG']['symbols']
-            self.logger.info(f"从 TRADING_CONFIG 中获取交易标的: {self.symbols}")
-        elif 'symbols' in config:
-            self.symbols = config['symbols']
-            self.logger.info(f"从配置中获取交易标的: {self.symbols}")
-        else:
-            raise ValueError("无法获取交易标的列表")
-        
-        # 验证交易标的
-        if not isinstance(self.symbols, list):
-            raise ValueError("交易标的必须是列表类型")
-        if not self.symbols:
-            raise ValueError("交易标的列表不能为空")
-        for symbol in self.symbols:
-            if not isinstance(symbol, str):
-                raise ValueError(f"交易标的必须是字符串类型: {symbol}")
-            if not symbol.endswith('.US'):
-                raise ValueError(f"交易标的格式错误，必须以 .US 结尾: {symbol}")
+        try:
+            if hasattr(self.data_manager, 'symbols') and self.data_manager.symbols:
+                self.symbols = self.data_manager.symbols.copy()  # 创建副本避免引用问题
+                self.logger.info(f"使用数据管理器中的交易标的: {self.symbols}")
+            elif 'TRADING_CONFIG' in config and 'symbols' in config['TRADING_CONFIG']:
+                self.symbols = config['TRADING_CONFIG']['symbols'].copy()
+                self.logger.info(f"从 TRADING_CONFIG 中获取交易标的: {self.symbols}")
+            elif 'symbols' in config:
+                self.symbols = config['symbols'].copy()
+                self.logger.info(f"从配置中获取交易标的: {self.symbols}")
+            else:
+                raise ValueError("无法获取交易标的列表")
+            
+            # 验证交易标的
+            if not isinstance(self.symbols, list):
+                raise ValueError("交易标的必须是列表类型")
+            if not self.symbols:
+                raise ValueError("交易标的列表不能为空")
+            for symbol in self.symbols:
+                if not isinstance(symbol, str):
+                    raise ValueError(f"交易标的必须是字符串类型: {symbol}")
+                if not symbol.endswith('.US'):
+                    raise ValueError(f"交易标的格式错误，必须以 .US 结尾: {symbol}")
+        except Exception as e:
+            self.logger.error(f"初始化交易标的时出错: {str(e)}")
+            raise
         
         # 加载环境变量
         load_dotenv()
