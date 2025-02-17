@@ -37,22 +37,20 @@ class DataManager:
         self.tz = pytz.timezone('America/New_York')
         
         # 交易标的配置处理
-        if 'symbols' not in config:
-            if 'TRADING_CONFIG' in config and 'symbols' in config['TRADING_CONFIG']:
-                self.symbols = config['TRADING_CONFIG']['symbols']
-                self.logger.info(f"从 TRADING_CONFIG 中获取交易标的: {self.symbols}")
-            else:
-                raise ValueError("配置中缺少 symbols 字段")
-        else:
+        if 'TRADING_CONFIG' in config and 'symbols' in config['TRADING_CONFIG']:
+            self.symbols = config['TRADING_CONFIG']['symbols']
+            self.logger.info(f"从 TRADING_CONFIG 中获取交易标的: {self.symbols}")
+        elif 'symbols' in config:
             self.symbols = config['symbols']
+            self.logger.info(f"从配置中获取交易标的: {self.symbols}")
+        else:
+            raise ValueError("无法获取交易标的列表")
         
+        # 验证交易标的
         if not isinstance(self.symbols, list):
-            raise ValueError("symbols 必须是列表类型")
-        
+            raise ValueError("交易标的必须是列表类型")
         if not self.symbols:
             raise ValueError("交易标的列表不能为空")
-        
-        # 验证每个交易标的的格式
         for symbol in self.symbols:
             if not isinstance(symbol, str):
                 raise ValueError(f"交易标的必须是字符串类型: {symbol}")
