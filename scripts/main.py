@@ -287,7 +287,7 @@ async def main():
         # 设置日志系统
         global logger
         logger = setup_logging()
-        logger.info("🔔 **提示**: 开始初始化doomsday系统...")
+        logger.info("**提示**: 开始初始化doomsday系统...")
         
         # 加载配置
         config = load_config()
