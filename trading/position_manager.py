@@ -279,6 +279,7 @@ class DoomsdayPositionManager:
                     self._trade_ctx = None
                     return None
                 self.logger.info("交易连接验证成功")
+                self.logger.debug(f"账户余额详情: {balances}")
             except OpenApiException as e:
                 self.logger.error(f"交易连接验证失败，API错误: {str(e)}")
                 self._trade_ctx = None
@@ -327,41 +328,55 @@ class DoomsdayPositionManager:
             if not trade_ctx:
                 return False
             
-            # 使用 stock_positions() 方法获取持仓列表
+            # 获取所有持仓类型
             try:
-                positions_response = trade_ctx.stock_positions()
-                self.logger.debug(f"持仓响应数据: {positions_response}")  # 添加调试日志
+                # 获取股票持仓
+                stock_positions = trade_ctx.stock_positions()
+                self.logger.debug(f"股票持仓响应数据: {stock_positions}")
+                
+                # 获取期权持仓
+                fund_positions = trade_ctx.fund_positions()
+                self.logger.debug(f"基金持仓响应数据: {fund_positions}")
                 
                 # 更新持仓信息
                 self.positions = {}
                 
-                # 检查响应对象的类型和属性
-                if hasattr(positions_response, '__iter__'):  # 如果是可迭代对象
-                    for pos in positions_response:
+                # 处理股票持仓
+                if stock_positions:
+                    for pos in stock_positions:
                         self.positions[pos.symbol] = {
                             'symbol': pos.symbol,
                             'quantity': float(pos.quantity),
                             'cost_price': float(pos.avg_price),
                             'current_price': float(pos.current_price),
                             'market_value': float(pos.market_value),
-                            'unrealized_pl': float(pos.unrealized_pl)
+                            'unrealized_pl': float(pos.unrealized_pl),
+                            'position_type': 'stock'
                         }
-                elif hasattr(positions_response, 'positions'):  # 如果有 positions 属性
-                    for pos in positions_response.positions:
+                
+                # 处理期权/基金持仓
+                if fund_positions:
+                    for pos in fund_positions:
                         self.positions[pos.symbol] = {
                             'symbol': pos.symbol,
                             'quantity': float(pos.quantity),
                             'cost_price': float(pos.avg_price),
                             'current_price': float(pos.current_price),
                             'market_value': float(pos.market_value),
-                            'unrealized_pl': float(pos.unrealized_pl)
+                            'unrealized_pl': float(pos.unrealized_pl),
+                            'position_type': 'fund'
                         }
                 
                 if not self.positions:
                     self.logger.info("当前没有持仓")
                 else:
                     self.logger.info(f"当前持仓数量: {len(self.positions)}")
-                    
+                    for symbol, pos in self.positions.items():
+                        self.logger.info(f"持仓详情 - {symbol}: 数量={pos['quantity']}, 市值=${pos['market_value']:.2f}")
+                        
+                self.logger.debug(f"原始股票持仓数据: {stock_positions}")
+                self.logger.debug(f"原始基金持仓数据: {fund_positions}")
+                
                 return True
                 
             except AttributeError as e:
