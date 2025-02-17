@@ -49,30 +49,65 @@ class DataCleaner:
             self.logger.error(f"数据清理器初始化失败: {str(e)}")
             raise
             
+    async def _process_market_data_file(self, file_path: Path) -> None:
+        """处理单个市场数据文件"""
+        try:
+            # 读取CSV文件
+            df = pd.read_csv(file_path, index_col=0)
+            
+            # 检查是否存在时区信息列
+            if 'original_timezone' in df.columns:
+                # 使用文件中保存的时区信息
+                timezone_info = df['original_timezone'].iloc[0]
+                tz = pytz.timezone(timezone_info)
+                
+                # 解析ISO格式的时间戳
+                df.index = pd.to_datetime(df.index)
+                if '+00:00' in df.index[0]:  # 检查是否为UTC时间
+                    df.index = df.index.tz_localize('UTC').tz_convert(tz)
+                else:
+                    df.index = df.index.tz_localize(tz)
+            else:
+                # 对于旧格式的文件，假设时间戳是本地时间
+                df.index = pd.to_datetime(df.index)
+                df.index = df.index.tz_localize(self.tz, ambiguous='infer')
+            
+            # 处理数据...
+            
+            # 保存处理后的数据
+            df.to_csv(file_path)
+            self.logger.debug(f"成功处理文件: {file_path}")
+            
+        except Exception as e:
+            self.logger.error(f"处理文件 {file_path} 时出错: {str(e)}")
+            
     async def cleanup(self) -> None:
         """执行数据清理"""
         try:
             current_time = datetime.now(self.tz)
             
-            # 检查是否需要执行清理
+            # 检查是否需要清理
             if (self._last_cleanup and 
                 (current_time - self._last_cleanup).total_seconds() < 
                 self.cleanup_config['cleanup_interval_hours'] * 3600):
                 return
-                
-            # 1. 清理过期数据
-            await self._cleanup_expired_data()
             
-            # 2. 检查存储空间
-            await self._check_storage_usage()
+            # 创建备份
+            backup_time = current_time.strftime('%Y%m%d_%H%M%S')
+            backup_dir = self.backup_dir / f"backup_{backup_time}"
+            backup_dir.mkdir(parents=True, exist_ok=True)
             
-            # 3. 执行数据备份
-            if (not self._last_backup or 
-                (current_time - self._last_backup).total_seconds() >= 
-                self.cleanup_config['backup_interval_hours'] * 3600):
-                await self._backup_data()
-                self._last_backup = current_time
-                
+            # 处理市场数据文件
+            for file_path in self.market_data_dir.glob('*.csv'):
+                try:
+                    await self._process_market_data_file(file_path)
+                    # 创建备份
+                    shutil.copy2(file_path, backup_dir / file_path.name)
+                except Exception as e:
+                    self.logger.error(f"处理文件 {file_path} 时出错: {str(e)}")
+                    continue
+            
+            self.logger.info(f"成功创建数据备份: {backup_dir}")
             self._last_cleanup = current_time
             self.logger.info("数据清理完成")
             
