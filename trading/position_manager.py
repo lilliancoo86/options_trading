@@ -272,10 +272,10 @@ class DoomsdayPositionManager:
                 
             # 验证连接是否可用
             try:
-                # 使用 get_trade_context() 方法获取交易上下文
-                trade_context = self._trade_ctx.get_trade_context()
-                if not trade_context:
-                    self.logger.error("交易连接验证失败：未能获取交易上下文")
+                # 尝试获取账户余额来验证连接
+                balances = self._trade_ctx.account_balance()
+                if not balances:
+                    self.logger.error("交易连接验证失败：未能获取账户余额")
                     self._trade_ctx = None
                     return None
                 self.logger.info("交易连接验证成功")
@@ -383,10 +383,10 @@ class DoomsdayPositionManager:
                 return False
             
             try:
-                # 尝试获取账户列表验证连接
-                trade_context = self._trade_ctx.get_trade_context()  # 使用 get_trade_context() 方法
-                if not trade_context:
-                    self.logger.error("验证交易连接失败：未能获取交易上下文")
+                # 尝试获取账户余额来验证连接
+                balances = self._trade_ctx.account_balance()
+                if not balances:
+                    self.logger.error("验证交易连接失败：未能获取账户余额")
                     return False
                     
                 self.logger.info("交易连接验证成功")
