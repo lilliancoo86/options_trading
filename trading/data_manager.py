@@ -63,16 +63,6 @@ class DataManager:
         if missing_vars:
             raise ValueError(f"缺少必需的环境变量: {', '.join(missing_vars)}")
             
-        # 初始化 LongPort 配置
-        self.longport_config = Config(
-            app_key=os.getenv('LONGPORT_APP_KEY'),
-            app_secret=os.getenv('LONGPORT_APP_SECRET'),
-            access_token=os.getenv('LONGPORT_ACCESS_TOKEN'),
-            http_url=self.api_config['http_url'],
-            quote_ws_url=self.api_config['quote_ws_url'],
-            trade_ws_url=self.api_config['trade_ws_url']
-        )
-        
         # 交易标的
         self.symbols = config.get('symbols', [])
         
@@ -321,7 +311,7 @@ class DataManager:
                     try:
                         # 测试连接是否真正可用
                         await self._quote_ctx.subscribe(
-                            symbols=[self.symbols[0]],  # 使用第一个标的测试
+                            symbols=[self.symbols[0]],
                             sub_types=[SubType.Quote],
                             is_first_push=False
                         )
@@ -334,14 +324,15 @@ class DataManager:
                 try:
                     self.logger.info("正在创建新的行情连接...")
                     
-                    # 使用 Config.from_env() 创建配置
-                    config = Config.from_env()
-                    config.http_url = self.api_config['http_url']
-                    config.quote_ws_url = self.api_config['quote_ws_url']
-                    config.trade_ws_url = self.api_config['trade_ws_url']
-                    
-                    # 创建新的 QuoteContext
-                    self._quote_ctx = QuoteContext(config)
+                    # 创建配置
+                    self._quote_ctx = QuoteContext(Config(
+                        app_key=os.getenv('LONGPORT_APP_KEY'),
+                        app_secret=os.getenv('LONGPORT_APP_SECRET'),
+                        access_token=os.getenv('LONGPORT_ACCESS_TOKEN'),
+                        http_url=self.api_config['http_url'],
+                        quote_ws_url=self.api_config['quote_ws_url'],
+                        trade_ws_url=self.api_config['trade_ws_url']
+                    ))
                     
                     # 设置回调函数
                     self._quote_ctx.set_on_quote(self._on_quote)
