@@ -38,12 +38,17 @@ class DataManager:
         
         # 交易标的配置处理
         if 'symbols' not in config:
-            raise ValueError("配置中缺少 symbols 字段")
+            if 'TRADING_CONFIG' in config and 'symbols' in config['TRADING_CONFIG']:
+                self.symbols = config['TRADING_CONFIG']['symbols']
+                self.logger.info(f"从 TRADING_CONFIG 中获取交易标的: {self.symbols}")
+            else:
+                raise ValueError("配置中缺少 symbols 字段")
+        else:
+            self.symbols = config['symbols']
         
-        if not isinstance(config['symbols'], list):
+        if not isinstance(self.symbols, list):
             raise ValueError("symbols 必须是列表类型")
         
-        self.symbols = config['symbols']
         if not self.symbols:
             raise ValueError("交易标的列表不能为空")
         
