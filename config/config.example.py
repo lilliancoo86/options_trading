@@ -23,20 +23,20 @@ TRADING_CONFIG = {
     # 交易标的配置
     'symbols': [
         'TSLA.US',    # 特斯拉
-        'MSFT.US',    # 微软
-        'GOOGL.US',   # 谷歌
-        'AMZN.US',    # 亚马逊
-        'META.US',    # Meta(原Facebook)
-        'NVDA.US',    # 英伟达
-        'AAPL.US',    # 苹果
-        'AMD.US',     # AMD
-        'INTC.US',    # 英特尔
-        'SMCI.US',    # Super Micro Computer
-        'NFLX.US',    # 奈飞
-        'PLTR.US',    # Palantir
-        'COIN.US',    # Coinbase
-        'OKLO.US',    # Oklo
-        'VST.US',     # Vistra
+#        'MSFT.US',    # 微软
+#        'GOOGL.US',   # 谷歌
+#        'AMZN.US',    # 亚马逊
+#        'META.US',    # Meta(原Facebook)
+#        'NVDA.US',    # 英伟达
+#        'AAPL.US',    # 苹果
+#        'AMD.US',     # AMD
+#        'INTC.US',    # 英特尔
+#        'SMCI.US',    # Super Micro Computer
+#        'NFLX.US',    # 奈飞
+#        'PLTR.US',    # Palantir
+#        'COIN.US',    # Coinbase
+#        'OKLO.US',    # Oklo
+#       'VST.US',     # Vistra
     ],
     
     # 交易参数
