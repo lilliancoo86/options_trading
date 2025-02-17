@@ -97,11 +97,7 @@ def load_config() -> Dict[str, Any]:
         if not isinstance(TRADING_CONFIG['symbols'], list):
             raise ValueError("symbols 必须是列表类型")
             
-        # 打印完整的配置内容进行调试
-        logger.debug(f"原始 TRADING_CONFIG: {TRADING_CONFIG}")
-        logger.debug(f"原始 symbols 列表: {TRADING_CONFIG['symbols']}")
-        
-        # 确保所有标的都是有效的格式
+        # 验证并清理交易标的
         valid_symbols = [
             symbol.strip() for symbol in TRADING_CONFIG['symbols']
             if isinstance(symbol, str) and symbol.strip() and symbol.endswith('.US')
@@ -115,16 +111,32 @@ def load_config() -> Dict[str, Any]:
         # 确保没有重复的标的
         valid_symbols = list(dict.fromkeys(valid_symbols))
         
-        # 更新配置中的标的列表
-        TRADING_CONFIG['symbols'] = valid_symbols
-        
         if not valid_symbols:
             raise ValueError("没有有效的交易标的")
             
+        # 更新配置中的标的列表
+        TRADING_CONFIG['symbols'] = valid_symbols
+        
+        # 创建一个新的配置字典，避免引用问题
+        config = {
+            'BASE_DIR': BASE_DIR,
+            'DATA_DIR': DATA_DIR,
+            'LOG_DIR': LOG_DIR,
+            'CONFIG_DIR': CONFIG_DIR,
+            'TRADING_CONFIG': {
+                'symbols': valid_symbols.copy(),  # 创建副本
+                **{k: v for k, v in TRADING_CONFIG.items() if k != 'symbols'}
+            },
+            'API_CONFIG': API_CONFIG.copy() if isinstance(API_CONFIG, dict) else {},
+            'LOGGING_CONFIG': LOGGING_CONFIG.copy() if isinstance(LOGGING_CONFIG, dict) else {},
+            'DATA_CONFIG': DATA_CONFIG.copy() if isinstance(DATA_CONFIG, dict) else {},
+            'CLEANUP_CONFIG': CLEANUP_CONFIG.copy() if isinstance(CLEANUP_CONFIG, dict) else {}
+        }
+        
         logger.info(f"成功加载配置文件")
         logger.info(f"已配置 {len(valid_symbols)} 个交易标的: {valid_symbols}")
         
-        return CONFIG
+        return config
         
     except ImportError:
         logger.error("无法导入配置文件，请确保已从 config.example.py 复制并创建 config.py")
