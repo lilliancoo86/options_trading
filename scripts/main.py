@@ -210,7 +210,7 @@ async def run_trading_loop(
     try:
         while True:
             try:
-                logger.info("=== 开始新一轮交易循环 ===")
+                logger.info("\n=== 开始新一轮交易循环 ===")
                 
                 # 确保我们有交易标的
                 if not hasattr(data_manager, 'symbols') or not data_manager.symbols:
@@ -246,10 +246,9 @@ async def run_trading_loop(
                             
                         # 检查风险
                         if not await risk_checker.check_risk(symbol, signal):
-                            logger.warning(f"{symbol} 交易信号未通过风险检查")
-                            continue
+                            continue  # 移除重复的警告日志
                             
-                        # 执行交易
+                        # 执行交易 - 不需要额外的日志，因为相关模块已经有详细日志
                         if signal.get('action') == 'buy':
                             await position_manager.open_position(
                                 symbol,
