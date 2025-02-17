@@ -77,7 +77,10 @@ class DataManager:
         if not self.api_config:
             raise ValueError("API_CONFIG 未配置")
         
-        required_api_keys = ['app_key', 'app_secret', 'access_token']
+        required_api_keys = [
+            'app_key', 'app_secret', 'access_token',
+            'http_url', 'quote_ws_url', 'trade_ws_url'
+        ]
         missing_keys = [key for key in required_api_keys if not self.api_config.get(key)]
         if missing_keys:
             raise ValueError(f"API_CONFIG 缺少必要的配置项: {missing_keys}")
@@ -96,7 +99,10 @@ class DataManager:
             self.longport_config = Config(
                 app_key=self.api_config['app_key'],
                 app_secret=self.api_config['app_secret'],
-                access_token=self.api_config['access_token']
+                access_token=self.api_config['access_token'],
+                http_url=self.api_config['http_url'],
+                quote_ws_url=self.api_config['quote_ws_url'],
+                trade_ws_url=self.api_config['trade_ws_url']
             )
             self.logger.info("LongPort配置初始化成功")
         except Exception as e:
@@ -392,40 +398,45 @@ class DataManager:
                     try:
                         # 创建新的行情连接
                         self.logger.info("正在创建新的行情连接...")
-                        quote_ctx = QuoteContext(self.longport_config)
-                        
-                        # 等待连接建立
-                        await asyncio.sleep(1)
+                        self._quote_ctx = await QuoteContext.create(self.longport_config)
                         
                         # 验证连接是否可用
                         if self.symbols:
                             test_symbol = self.symbols[0]
                             self.logger.info(f"正在使用 {test_symbol} 验证行情连接...")
                             
-                            # 尝试获取基本行情数据来验证连接
                             try:
-                                await quote_ctx.subscribe(
+                                # 尝试获取基本行情数据来验证连接
+                                await self._quote_ctx.subscribe(
                                     symbols=[test_symbol],
                                     sub_types=[SubType.Quote],
                                     is_first_push=True
                                 )
                                 self.logger.info("行情连接验证成功")
-                                self._quote_ctx = quote_ctx
                             except OpenApiException as e:
                                 self.logger.error(f"行情连接验证失败，API错误: {str(e)}")
-                                await quote_ctx.close()  # 关闭失败的连接
+                                if hasattr(self._quote_ctx, 'close'):
+                                    await self._quote_ctx.close()
+                                self._quote_ctx = None
                                 return None
                             except Exception as e:
                                 self.logger.error(f"行情连接验证时发生未知错误: {str(e)}")
-                                await quote_ctx.close()  # 关闭失败的连接
+                                if hasattr(self._quote_ctx, 'close'):
+                                    await self._quote_ctx.close()
+                                self._quote_ctx = None
                                 return None
                         else:
                             self.logger.warning("没有可用的交易标的进行连接验证")
-                            await quote_ctx.close()
+                            if hasattr(self._quote_ctx, 'close'):
+                                await self._quote_ctx.close()
+                            self._quote_ctx = None
                             return None
                             
                     except Exception as e:
                         self.logger.error(f"创建行情连接时出错: {str(e)}")
+                        if hasattr(self._quote_ctx, 'close'):
+                            await self._quote_ctx.close()
+                        self._quote_ctx = None
                         return None
                     
                 return self._quote_ctx
@@ -433,11 +444,9 @@ class DataManager:
         except Exception as e:
             self.logger.error(f"确保行情连接时出错: {str(e)}")
             if hasattr(self, '_quote_ctx') and self._quote_ctx is not None:
-                try:
+                if hasattr(self._quote_ctx, 'close'):
                     await self._quote_ctx.close()
-                except:
-                    pass
-                self._quote_ctx = None
+            self._quote_ctx = None
             return None
 
     async def subscribe_symbols(self, symbols: List[str]) -> bool:
