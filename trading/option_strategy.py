@@ -26,6 +26,12 @@ class DoomsdayOptionStrategy:
         
         # 交易标的
         self.symbols = config.get('symbols', [])
+        if not self.symbols:
+            self.logger.warning("未在配置中找到交易标的，尝试从 TRADING_CONFIG 中获取")
+            self.symbols = config.get('TRADING_CONFIG', {}).get('symbols', [])
+        
+        # 记录配置的交易标的
+        self.logger.info(f"已配置的交易标的: {self.symbols}")
         
         # 策略参数
         self.strategy_params = config.get('strategy_params', {
