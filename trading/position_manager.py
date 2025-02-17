@@ -22,10 +22,20 @@ from trading.time_checker import TimeChecker
 class DoomsdayPositionManager:
     def __init__(self, config: Dict[str, Any], data_manager):
         """初始化持仓管理器"""
+        if not isinstance(config, dict):
+            raise ValueError("配置必须是字典类型")
+        
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.data_manager = data_manager
         self.tz = pytz.timezone('America/New_York')
+        
+        # 确保配置中包含必要的字段
+        if 'symbols' not in config:
+            self.logger.warning("配置中缺少 symbols 字段，使用数据管理器中的 symbols")
+            self.symbols = self.data_manager.symbols
+        else:
+            self.symbols = config['symbols']
         
         # 加载环境变量
         load_dotenv()

@@ -665,7 +665,6 @@ class DataManager:
             success = True
             for symbol in self.symbols:
                 try:
-                    # 获取行情连接
                     quote_ctx = await self.ensure_quote_ctx()
                     if not quote_ctx:
                         self.logger.error(f"无法获取行情连接，跳过更新 {symbol} 的K线数据")
@@ -675,43 +674,55 @@ class DataManager:
                     # 获取当前时间
                     now = datetime.now(self.tz)
                     
-                    # 获取日K数据
-                    klines = quote_ctx.candlesticks(
-                        symbol=symbol,
-                        period=Period.Day,
-                        count=30,  # 获取最近30天的数据
-                        adjust_type=AdjustType.ForwardAdjust
-                    )
-                    
-                    if klines and hasattr(klines, 'candlesticks'):
-                        # 更新数据缓存
-                        df = pd.DataFrame(
-                            klines.candlesticks,
-                            columns=['timestamp', 'open', 'close', 'high', 'low', 'volume', 'turnover']
+                    try:
+                        # 使用 history_candlesticks 替代 candlesticks
+                        klines = await quote_ctx.history_candlesticks(
+                            symbol=symbol,
+                            period=Period.Day,
+                            count=30,  # 获取最近30天的数据
+                            adjust_type=AdjustType.ForwardAdjust
                         )
-                        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True).dt.tz_convert(self.tz)
-                        df.set_index('timestamp', inplace=True)
                         
-                        if symbol not in self._data_cache:
-                            self._data_cache[symbol] = {}
+                        if klines:  # 直接检查 klines 是否为空
+                            # 更新数据缓存
+                            df = pd.DataFrame([{
+                                'timestamp': bar.timestamp,
+                                'open': bar.open,
+                                'high': bar.high,
+                                'low': bar.low,
+                                'close': bar.close,
+                                'volume': bar.volume,
+                                'turnover': bar.turnover
+                            } for bar in klines])
+                            
+                            if not df.empty:
+                                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True).dt.tz_convert(self.tz)
+                                df.set_index('timestamp', inplace=True)
+                                
+                                if symbol not in self._data_cache:
+                                    self._data_cache[symbol] = {}
+                                
+                                self._data_cache[symbol]['ohlcv'] = df
+                                self._data_cache[symbol]['last_update'] = now
+                                
+                                self.logger.info(f"成功更新 {symbol} 的K线数据")
+                                
+                                # 保存到文件
+                                await self._save_market_data(symbol, df)
+                            else:
+                                self.logger.warning(f"{symbol} K线数据转换后为空")
+                                success = False
+                        else:
+                            self.logger.warning(f"获取 {symbol} 的K线数据为空")
+                            success = False
                         
-                        self._data_cache[symbol]['ohlcv'] = df
-                        self._data_cache[symbol]['last_update'] = now
-                        
-                        self.logger.debug(f"成功更新 {symbol} 的K线数据")
-                        
-                        # 保存到文件
-                        await self._save_market_data(symbol, df)
-                    else:
-                        self.logger.warning(f"获取 {symbol} 的K线数据为空")
+                    except OpenApiException as e:
+                        self.logger.error(f"获取 {symbol} K线数据时发生API错误: {str(e)}")
                         success = False
                     
                     # 避免请求过快
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(1.0)  # 增加延迟时间
                     
-                except OpenApiException as e:
-                    self.logger.error(f"获取 {symbol} K线数据时发生API错误: {str(e)}")
-                    success = False
                 except Exception as e:
                     self.logger.error(f"更新 {symbol} K线数据时出错: {str(e)}")
                     success = False
