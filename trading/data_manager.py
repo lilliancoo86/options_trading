@@ -52,10 +52,14 @@ class DataManager:
         # API配置
         self.api_config = API_CONFIG
         
-        # 添加调试日志
+        # 添加更详细的调试日志
+        self.logger.debug("初始化 DataManager:")
         self.logger.debug(f"API配置: {self.api_config}")
-        self.logger.debug(f"环境变量: APP_KEY={os.getenv('LONGPORT_APP_KEY', '已设置')}, "
-                         f"ACCESS_TOKEN={os.getenv('LONGPORT_ACCESS_TOKEN', '已设置')}")
+        self.logger.debug(f"环境变量状态:")
+        self.logger.debug(f"  APP_KEY: {'已设置' if os.getenv('LONGPORT_APP_KEY') else '未设置'}")
+        self.logger.debug(f"  APP_SECRET: {'已设置' if os.getenv('LONGPORT_APP_SECRET') else '未设置'}")
+        self.logger.debug(f"  ACCESS_TOKEN: {'已设置' if os.getenv('LONGPORT_ACCESS_TOKEN') else '未设置'}")
+        self.logger.debug(f"交易标的: {self.symbols}")
         
         # 初始化 LongPort 配置
         self.longport_config = Config(
@@ -322,22 +326,31 @@ class DataManager:
                     time.time() - self._last_quote_time < self._quote_timeout):
                     try:
                         # 测试连接是否真正可用
-                        await self._quote_ctx.subscribe(
-                            symbols=[self.symbols[0]],
-                            sub_types=[SubType.Quote],
-                            is_first_push=False
-                        )
-                        return self._quote_ctx
+                        if hasattr(self._quote_ctx, 'subscribe'):
+                            await self._quote_ctx.subscribe(
+                                symbols=[self.symbols[0]],
+                                sub_types=[SubType.Quote],
+                                is_first_push=False
+                            )
+                            return self._quote_ctx
                     except Exception:
                         self.logger.warning("现有连接不可用，将创建新连接")
+                        if self._quote_ctx:
+                            try:
+                                await self._quote_ctx.close()
+                            except:
+                                pass
                         self._quote_ctx = None
                 
                 # 创建新连接
                 try:
                     self.logger.info("正在创建新的行情连接...")
                     
-                    # 创建配置
+                    # 创建 QuoteContext 实例
                     self._quote_ctx = QuoteContext(self.longport_config)
+                    
+                    if not self._quote_ctx:
+                        raise ValueError("创建 QuoteContext 失败")
                     
                     # 设置回调函数
                     self._quote_ctx.set_on_quote(self._on_quote)
@@ -359,7 +372,10 @@ class DataManager:
                 except OpenApiException as e:
                     self.logger.error(f"创建行情连接失败: {str(e)}")
                     if self._quote_ctx:
-                        await self._quote_ctx.close()
+                        try:
+                            await self._quote_ctx.close()
+                        except:
+                            pass
                     self._quote_ctx = None
                     return None
                 
