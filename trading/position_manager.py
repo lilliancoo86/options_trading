@@ -263,6 +263,35 @@ class DoomsdayPositionManager:
             self.logger.error(f"获取交易连接时出错: {str(e)}")
             return None
 
+    async def ensure_trade_ctx(self) -> Optional[TradeContext]:
+        """确保交易连接可用"""
+        try:
+            if not self._trade_ctx:
+                self._trade_ctx = TradeContext(self.longport_config)
+                # TradeContext 不需要显式连接，直接使用即可
+                self.logger.info("交易连接已建立")
+                
+            # 验证连接是否可用
+            try:
+                # 使用同步方法获取账户列表
+                accounts = self._trade_ctx.account_list()  # 注意这里是方法调用，不是属性
+                if not accounts:
+                    self.logger.error("交易连接验证失败：未能获取账户列表")
+                    self._trade_ctx = None
+                    return None
+                self.logger.info("交易连接验证成功")
+            except OpenApiException as e:
+                self.logger.error(f"交易连接验证失败，API错误: {str(e)}")
+                self._trade_ctx = None
+                return None
+                
+            return self._trade_ctx
+            
+        except Exception as e:
+            self.logger.error(f"确保交易连接时出错: {str(e)}")
+            self._trade_ctx = None
+            return None
+
     async def _update_account_info(self) -> bool:
         """更新账户信息"""
         try:
@@ -270,18 +299,18 @@ class DoomsdayPositionManager:
             if not trade_ctx:
                 return False
             
-            # 使用 account_balance 属性获取账户余额
-            balances = trade_ctx.account_balance
+            # 使用同步方法获取账户余额
+            balances = trade_ctx.account_balance()  # 注意这里是方法调用，不是属性
             if not balances:
                 self.logger.error("获取账户余额失败")
                 return False
             
             # 更新账户信息
             self.account_info = {
-                'cash': float(balances.cash),
-                'margin': float(balances.margin),
-                'buying_power': float(balances.buying_power),
-                'equity': float(balances.equity)
+                'cash': float(balances[0].cash),
+                'margin': float(balances[0].margin),
+                'buying_power': float(balances[0].buying_power),
+                'equity': float(balances[0].equity)
             }
             
             self.logger.info(f"账户信息已更新: {self.account_info}")
@@ -298,12 +327,8 @@ class DoomsdayPositionManager:
             if not trade_ctx:
                 return False
             
-            # 使用 positions 属性获取持仓列表
-            positions = trade_ctx.positions
-            if positions is None:
-                self.logger.warning("未获取到持仓信息")
-                self.positions = {}
-                return True
+            # 使用同步方法获取持仓列表
+            positions = trade_ctx.position_list()  # 注意这里是方法调用，不是属性
             
             # 更新持仓信息
             self.positions = {}
@@ -426,36 +451,6 @@ class DoomsdayPositionManager:
             
         except Exception as e:
             self.logger.error(f"更新持仓记录时出错: {str(e)}")
-
-    async def ensure_trade_ctx(self) -> Optional[TradeContext]:
-        """确保交易连接可用"""
-        try:
-            if not self._trade_ctx:
-                config = Config.from_env()
-                self._trade_ctx = TradeContext(config)
-                await self._trade_ctx.connect()  # 使用异步连接方法
-                self.logger.info("交易连接已建立")
-                
-            # 验证连接是否可用
-            try:
-                # 使用 account_list 属性获取账户列表
-                accounts = self._trade_ctx.account_list
-                if not accounts:
-                    self.logger.error("交易连接验证失败：未能获取账户列表")
-                    self._trade_ctx = None
-                    return None
-                self.logger.info("交易连接验证成功")
-            except OpenApiException as e:
-                self.logger.error(f"交易连接验证失败，API错误: {str(e)}")
-                self._trade_ctx = None
-                return None
-                
-            return self._trade_ctx
-            
-        except Exception as e:
-            self.logger.error(f"确保交易连接时出错: {str(e)}")
-            self._trade_ctx = None
-            return None
 
     async def get_positions(self) -> List[Dict[str, Any]]:
         """获取当前持仓"""
