@@ -14,6 +14,7 @@ import pytz
 from typing import Dict, Any, Tuple
 import os
 from dotenv import load_dotenv
+from config.config import CONFIG
 
 # 设置基础路径
 BASE_DIR = Path('/home/options_trading')
@@ -128,66 +129,50 @@ def load_config() -> Dict[str, Any]:
         logger.exception("详细错误信息：")
         raise
 
-async def initialize_components(config: Dict[str, Any]) -> Tuple[DataManager, ...]:
-    """初始化交易系统组件"""
+async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
+    components = {}
     try:
-        # 确保配置中包含必要的键
-        if 'TRADING_CONFIG' not in config:
-            raise ValueError("配置中缺少 TRADING_CONFIG")
-            
-        trading_config = config['TRADING_CONFIG']
-        
-        # 打印完整的配置内容进行调试
-        logger.debug(f"初始化组件时的完整配置: {trading_config}")
-        
-        # 确保交易配置中包含必要的字段
-        if 'symbols' not in trading_config:
-            raise ValueError("TRADING_CONFIG 中缺少 symbols 配置")
-            
-        if not isinstance(trading_config['symbols'], list):
-            raise ValueError("symbols 必须是列表类型")
-            
-        if not trading_config['symbols']:
-            raise ValueError("交易标的列表不能为空")
-            
-        logger.info(f"初始化组件，交易标的数量: {len(trading_config['symbols'])}")
-        logger.info(f"交易标的列表: {trading_config['symbols']}")
-        
         # 初始化数据管理器
-        data_manager = DataManager(trading_config)
+        data_manager = DataManager(config['TRADING_CONFIG'])
         await data_manager.async_init()
+        components['data_manager'] = data_manager
+        logger.info("数据管理器初始化完成")
         
         # 初始化数据清理器
         logger.info("正在初始化数据清理器...")
         data_cleaner = DataCleaner(config['DATA_CONFIG'])
-        await data_cleaner.async_init()
+        components['data_cleaner'] = data_cleaner
         logger.info("数据清理器初始化完成")
         
         # 初始化时间检查器
         logger.info("正在初始化时间检查器...")
-        time_checker = TimeChecker(trading_config)
+        time_checker = TimeChecker(config['TRADING_CONFIG'])
         await time_checker.async_init()
+        components['time_checker'] = time_checker
         logger.info("时间检查器初始化完成")
         
         # 初始化策略
         logger.info("正在初始化交易策略...")
-        strategy = DoomsdayOptionStrategy(trading_config, data_manager)
+        strategy = DoomsdayOptionStrategy(config['TRADING_CONFIG'], data_manager)
         await strategy.async_init()
+        components['strategy'] = strategy
         logger.info("交易策略初始化完成")
         
         # 初始化风险检查器
         logger.info("正在初始化风险检查器...")
-        risk_checker = RiskChecker(trading_config, strategy, time_checker)
+        risk_checker = RiskChecker(config['TRADING_CONFIG'], strategy, time_checker)
         await risk_checker.async_init()
+        components['risk_checker'] = risk_checker
         logger.info("风险检查器初始化完成")
         
         # 初始化持仓管理器
         logger.info("正在初始化持仓管理器...")
-        position_manager = DoomsdayPositionManager(trading_config, data_manager)
+        position_manager = DoomsdayPositionManager(config['TRADING_CONFIG'], data_manager)
         await position_manager.async_init()
+        components['position_manager'] = position_manager
         logger.info("持仓管理器初始化完成")
         
-        return data_manager, data_cleaner, strategy, position_manager, risk_checker, time_checker
+        return components
         
     except Exception as e:
         logger.error(f"初始化组件时出错: {str(e)}")
@@ -272,7 +257,7 @@ async def main():
         components = await initialize_components(config)
         
         # 运行交易循环
-        await run_trading_loop(config, *components)
+        await run_trading_loop(config, **components)
         
     except Exception as e:
         logger.error(f"程序运行时出错: {str(e)}")
