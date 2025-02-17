@@ -318,24 +318,63 @@ class DataManager:
                 # 检查现有连接是否可用
                 if (self._quote_ctx and 
                     time.time() - self._last_quote_time < self._quote_timeout):
-                    return self._quote_ctx
+                    try:
+                        # 测试连接是否真正可用
+                        await self._quote_ctx.subscribe(
+                            symbols=[self.symbols[0]],  # 使用第一个标的测试
+                            sub_types=[SubType.Quote],
+                            is_first_push=False
+                        )
+                        return self._quote_ctx
+                    except Exception:
+                        self.logger.warning("现有连接不可用，将创建新连接")
+                        self._quote_ctx = None
                 
                 # 创建新连接
                 try:
                     self.logger.info("正在创建新的行情连接...")
-                    self._quote_ctx = QuoteContext(self.longport_config)
-                    await self._quote_ctx.ensure_connected()  # 确保连接成功建立
+                    
+                    # 使用 Config.from_env() 创建配置
+                    config = Config.from_env()
+                    config.http_url = self.api_config['http_url']
+                    config.quote_ws_url = self.api_config['quote_ws_url']
+                    config.trade_ws_url = self.api_config['trade_ws_url']
+                    
+                    # 创建新的 QuoteContext
+                    self._quote_ctx = QuoteContext(config)
+                    
+                    # 设置回调函数
+                    self._quote_ctx.set_on_quote(self._on_quote)
+                    
+                    # 等待连接建立
+                    await asyncio.sleep(1)
+                    
+                    # 测试连接
+                    await self._quote_ctx.subscribe(
+                        symbols=[self.symbols[0]],
+                        sub_types=[SubType.Quote],
+                        is_first_push=False
+                    )
+                    
                     self._last_quote_time = time.time()
                     self.logger.info("行情连接创建成功")
                     return self._quote_ctx
                     
                 except OpenApiException as e:
                     self.logger.error(f"创建行情连接失败: {str(e)}")
+                    if self._quote_ctx:
+                        await self._quote_ctx.close()
                     self._quote_ctx = None
                     return None
-                    
+                
         except Exception as e:
-            self.logger.error(f"创建行情连接失败: {str(e)}")
+            self.logger.error(f"确保行情连接时出错: {str(e)}")
+            if self._quote_ctx:
+                try:
+                    await self._quote_ctx.close()
+                except:
+                    pass
+            self._quote_ctx = None
             return None
 
     async def subscribe_symbols(self, symbols: List[str]) -> bool:
@@ -356,17 +395,24 @@ class DataManager:
                         is_first_push=True
                     )
                     self.logger.info(f"成功订阅标的: {batch}")
+                    # 订阅后等待一下，避免请求过快
+                    await asyncio.sleep(0.5)
                 except Exception as e:
                     self.logger.error(f"订阅标的失败 {batch}: {str(e)}")
                     return False
                     
-                await asyncio.sleep(1)  # 避免请求过快
-                
             return True
             
         except Exception as e:
             self.logger.error(f"订阅行情失败: {str(e)}")
             return False
+
+    def _on_quote(self, symbol: str, quote: PushQuote) -> None:
+        """处理实时行情推送"""
+        try:
+            asyncio.create_task(self._handle_quote_update(symbol, quote))
+        except Exception as e:
+            self.logger.error(f"处理行情推送时出错: {str(e)}")
 
     async def save_kline_data(self, symbol: str, kline_data: pd.DataFrame) -> bool:
         """保存K线数据到本地"""
