@@ -328,19 +328,22 @@ class DoomsdayPositionManager:
                 return False
             
             # 使用 stock_positions() 方法获取持仓列表
-            positions_response = trade_ctx.stock_positions()  # 获取持仓响应
+            positions_response = trade_ctx.stock_positions()
             if not positions_response:
                 self.logger.info("当前没有持仓")
                 self.positions = {}
                 return True
             
+            # 使用 list() 方法获取持仓列表
+            positions = positions_response.list()  # 获取持仓列表
+            
             # 更新持仓信息
             self.positions = {}
-            for pos in positions_response:  # 直接遍历 positions_response
+            for pos in positions:
                 self.positions[pos.symbol] = {
                     'symbol': pos.symbol,
                     'quantity': pos.quantity,
-                    'cost_price': float(pos.average_price),  # 使用 average_price 而不是 avg_price
+                    'cost_price': float(pos.average_price),
                     'current_price': float(pos.current_price),
                     'market_value': float(pos.market_value),
                     'unrealized_pl': float(pos.unrealized_pl)
