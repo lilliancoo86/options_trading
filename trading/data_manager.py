@@ -143,7 +143,9 @@ class DataManager:
         self._quote_ctx_lock = asyncio.Lock()
         self._quote_ctx = None
         self._last_quote_time = 0
-        self._quote_timeout = 60
+        self._quote_timeout = self.api_config.get('quote_context', {}).get('timeout', 30)
+        self._reconnect_interval = self.api_config.get('quote_context', {}).get('reconnect_interval', 3)
+        self._max_retry = self.api_config.get('quote_context', {}).get('max_retry', 3)
         
         # 请求限制
         self.request_limit = self.api_config['request_limit']
@@ -400,6 +402,10 @@ class DataManager:
                         self.logger.info("正在创建新的行情连接...")
                         quote_ctx = QuoteContext(self.longport_config)
                         
+                        # 建立连接
+                        self.logger.info("正在建立行情连接...")
+                        await quote_ctx.connect()
+                        
                         # 验证连接是否可用
                         if self.symbols:
                             test_symbol = self.symbols[0]
@@ -416,19 +422,24 @@ class DataManager:
                                 self._quote_ctx = quote_ctx
                             except OpenApiException as e:
                                 self.logger.error(f"行情连接验证失败，API错误: {str(e)}")
+                                await quote_ctx.disconnect()
                                 self._quote_ctx = None
                                 return None
                             except Exception as e:
                                 self.logger.error(f"行情连接验证时发生未知错误: {str(e)}")
+                                await quote_ctx.disconnect()
                                 self._quote_ctx = None
                                 return None
                         else:
                             self.logger.warning("没有可用的交易标的进行连接验证")
+                            await quote_ctx.disconnect()
                             self._quote_ctx = None
                             return None
                             
                     except Exception as e:
                         self.logger.error(f"创建行情连接时出错: {str(e)}")
+                        if quote_ctx:
+                            await quote_ctx.disconnect()
                         self._quote_ctx = None
                         return None
                     
@@ -436,6 +447,8 @@ class DataManager:
             
         except Exception as e:
             self.logger.error(f"确保行情连接时出错: {str(e)}")
+            if hasattr(self, '_quote_ctx') and self._quote_ctx is not None:
+                await self._quote_ctx.disconnect()
             self._quote_ctx = None
             return None
 
