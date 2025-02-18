@@ -8,14 +8,14 @@ Wants=mysqld.service
 Type=simple
 User=trader
 Group=trader
-WorkingDirectory=/home/options_trading
+WorkingDirectory=%d/..
 
 # 环境变量
-Environment=PYTHONPATH=/home/options_trading
+Environment=PYTHONPATH=%d/..
 Environment=PYTHONUNBUFFERED=1
 
 # 启动命令
-ExecStart=/home/options_trading/venv/bin/python -m scripts.main
+ExecStart=%d/../venv/bin/python -m scripts.main
 
 # 重启配置
 Restart=always

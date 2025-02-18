@@ -2,26 +2,26 @@
 数据管理模块 - 实时数据处理版本
 主要负责实时行情数据的获取和处理
 """
-from typing import Dict, List, Any, Optional, Union, Tuple
+import asyncio
+import json
 import logging
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-import pytz
 import os
-from pathlib import Path
+import pandas as pd
+import pytz
+import shutil
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from longport.openapi import (
-    Period, AdjustType, QuoteContext, Config, SubType, 
-    TradeContext, OpenApiException, PushQuote
+    Period, AdjustType, QuoteContext, Config, SubType,
+    OpenApiException, PushQuote
 )
-import asyncio
-import time
-import json
-from collections import deque
-from config.config import API_CONFIG
+from typing import Dict, List, Any, Optional
+
+from config.config import (
+    API_CONFIG, DATA_DIR
+)
 from trading.time_checker import TimeChecker
-import shutil
+
 
 class DataManager:
     def __init__(self, config: Dict[str, Any]):
@@ -70,7 +70,7 @@ class DataManager:
             raise
         
         # 数据存储路径配置
-        self.data_dir = Path('/home/options_trading/data')
+        self.data_dir = DATA_DIR
         self.market_data_dir = self.data_dir / 'market_data'
         self.options_data_dir = self.data_dir / 'options_data'
         self.historical_dir = self.data_dir / 'historical'

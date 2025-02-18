@@ -2,16 +2,19 @@
 数据清理模块
 负责清理和维护数据文件
 """
-from typing import Dict, List, Any, Optional
-import logging
-from datetime import datetime, timedelta
-import pytz
-from pathlib import Path
-import shutil
-import asyncio
-import pandas as pd
 import json
-import os
+import logging
+import pandas as pd
+import pytz
+import shutil
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, Any
+
+from config.config import (
+    DATA_DIR
+)
+
 
 class DataCleaner:
     def __init__(self, config: Dict[str, Any]) -> None:
@@ -21,7 +24,7 @@ class DataCleaner:
         self.tz = pytz.timezone('America/New_York')
         
         # 数据目录配置
-        self.data_dir = Path('/home/options_trading/data')
+        self.data_dir =  DATA_DIR
         self.market_data_dir = self.data_dir / 'market_data'
         self.options_data_dir = self.data_dir / 'options_data'
         self.historical_dir = self.data_dir / 'historical'

@@ -2,17 +2,18 @@
 风险检查模块
 负责检查持仓风险和市场风险，包括止盈止损管理
 """
-from typing import Dict, Any, Tuple, List, Optional
-import logging
-from datetime import datetime, timedelta
-import pytz
-import re
 import asyncio
-from trading.time_checker import TimeChecker
-import os
 import json
+import logging
+import pytz
+from datetime import datetime
 from pathlib import Path
-import numpy as np
+from typing import Dict, Any, Tuple, List
+
+from config.config import (
+    DATA_DIR
+)
+
 
 class RiskChecker:
     # 默认风险限制配置
@@ -126,7 +127,7 @@ class RiskChecker:
         }
         
         # 风险记录目录
-        self.risk_dir = Path('/home/options_trading/data/risk_records')
+        self.risk_dir =  Path(DATA_DIR) / 'risk_records'
         self.risk_dir.mkdir(parents=True, exist_ok=True)
 
     async def check_position_risk(self, position: Dict[str, Any], market_data: Dict[str, Any]) -> Tuple[bool, str, float]:
