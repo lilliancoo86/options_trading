@@ -144,7 +144,7 @@ LOGGING_CONFIG = {
     }
 }
 
-# 数据存储配置
+# 数据管理配置
 DATA_CONFIG = {
     'cleanup': {
         'max_days': 30,  # 保留最近30天的数据
@@ -152,11 +152,10 @@ DATA_CONFIG = {
         'cleanup_interval': 24,  # 每24小时清理一次
     },
     'storage': {
-    'base_dir': str(DATA_DIR),
-    'market_data_dir': str(DATA_DIR / 'market_data'),
-    'options_data_dir': str(DATA_DIR / 'options_data'),
-    'historical_dir': str(DATA_DIR / 'historical'),
-    'backup_dir': str(DATA_DIR / 'backup'),
+        'market_data_dir': 'market_data',
+        'options_data_dir': 'options_data',
+        'historical_dir': 'historical',
+        'backup_dir': 'backup'
     }
 }
     
