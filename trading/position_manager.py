@@ -132,7 +132,7 @@ class DoomsdayPositionManager:
                 return False
             
             # 2. 获取策略信号
-            strategy_signal = await self.option_strategy.get_trading_signal(symbol)
+            strategy_signal = await self.option_strategy.get_generate_signal(symbol)
             if not strategy_signal or not strategy_signal.get('should_trade', False):
                 self.logger.info(f"策略信号不满足开仓条件: {symbol}")
                 return False

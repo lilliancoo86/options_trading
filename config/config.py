@@ -23,6 +23,7 @@ TRADING_CONFIG = {
     # 交易标的配置
     'symbols': [
         'TSLA.US',    # 特斯拉
+        'CELH.US',    # Celsius (添加当前持仓的标的)
 #        'MSFT.US',    # 微软
 #        'GOOGL.US',   # 谷歌
 #        'AMZN.US',    # 亚马逊
@@ -33,15 +34,6 @@ TRADING_CONFIG = {
     
     # 交易参数
     'loop_interval': 60,          # 交易循环间隔(秒)
-    'max_positions': 5,           # 最大持仓数量
-    'position_size': 100000,      # 单个持仓规模(美元)
-    'stop_loss_pct': 0.02,       # 止损比例
-    'take_profit_pct': 0.05,     # 止盈比例
-    
-    # 风险控制
-    'max_drawdown': 0.1,         # 最大回撤限制
-    'max_leverage': 2.0,         # 最大杠杆倍数
-    'position_limit': 0.2,       # 单个持仓占比限制
 }
 
 # LongPort OpenAPI 配置
@@ -129,6 +121,12 @@ DATA_CONFIG = {
         'partition_by': 'date',         # 分区方式
         'max_klines_per_file': 1000,    # 每个K线文件最大记录数
         'max_file_size': 100 * 1024 * 1024,  # 单个文件最大大小（100MB）
+    },
+    
+    'data': {
+        'historical_days': 100,  # 历史数据获取天数
+        'update_interval': 60,   # 数据更新间隔(秒)
+        'request_delay': 0.5     # 请求间隔(秒)
     }
 }
 
@@ -150,10 +148,11 @@ CLEANUP_CONFIG = {
     
     # 存储限制
     'storage': {
-        'max_total_size': 5 * 1024 * 1024 * 1024,  # 最大总存储空间(50GB)
-        'max_backup_size': 2 * 1024 * 1024 * 1024,  # 最大备份空间(20GB)
+        'max_total_size': 5 * 1024 * 1024 * 1024,  # 最大总存储空间(5GB)
+        'max_backup_size': 2 * 1024 * 1024 * 1024,  # 最大备份空间(2GB)
         'warning_threshold': 0.8,  # 存储空间警告阈值(80%)
     }
 }
+
 
 

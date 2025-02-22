@@ -807,3 +807,50 @@ class TimeChecker:
         except Exception as e:
             self.logger.error(f"检查交易时间时出错: {str(e)}")
             return False  # 出错时返回 False 以确保安全
+
+    async def is_trading_time(self) -> bool:
+        """检查当前是否为交易时间"""
+        try:
+            # 获取纽约当前时间
+            now = datetime.now(self.tz)
+            current_time = now.time()
+            
+            # 检查是否为休市日
+            if self._is_holiday(now.date()):
+                self.logger.info(f"今天是休市日: {now.date()}")
+                return False
+            
+            # 检查是否为周末
+            if now.weekday() in [5, 6]:  # 5是周六，6是周日
+                self.logger.info(f"今天是周末: {now.date()}")
+                return False
+            
+            # 检查是否在交易时间内
+            regular_start = self.market_times['regular']['open']
+            regular_end = self.market_times['regular']['close']
+            
+            # 常规交易时段
+            if regular_start <= current_time <= regular_end:
+                return True
+            
+            # 检查盘前盘后交易
+            pre_market_start = self.market_times['pre_market']['open']
+            after_market_end = self.market_times['post_market']['close']
+            
+            # 如果配置允许盘前盘后交易
+            if self.config.get('TRADING_CONFIG', {}).get('allow_extended_hours', False):
+                return pre_market_start <= current_time <= after_market_end
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"检查交易时间时出错: {str(e)}")
+            return False
+
+    def _is_holiday(self, date) -> bool:
+        """检查是否为休市日"""
+        try:
+            return str(date) in self.config.get('TRADING_CONFIG', {}).get('holidays', [])
+        except Exception as e:
+            self.logger.error(f"检查休市日时出错: {str(e)}")
+            return False

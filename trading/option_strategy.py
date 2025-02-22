@@ -17,11 +17,12 @@ from longport.openapi import (
 )
 
 class DoomsdayOptionStrategy:
-    def __init__(self, config: Dict[str, Any], data_manager) -> None:
+    def __init__(self, config: Dict[str, Any], data_manager, position_manager=None) -> None:
         """初始化策略"""
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.data_manager = data_manager
+        self.position_manager = position_manager
         self.tz = pytz.timezone('America/New_York')
         
         # 交易标的
@@ -33,13 +34,12 @@ class DoomsdayOptionStrategy:
         # 记录配置的交易标的
         self.logger.info(f"已配置的交易标的: {self.symbols}")
         
-        # 策略参数
+        # 策略参数(简化为只使用均线)
         self.strategy_params = config.get('strategy_params', {
-            'trend_weight': 0.25,      # 趋势策略权重
-            'mean_reversion_weight': 0.20,  # 均值回归策略权重
-            'momentum_weight': 0.25,    # 动量策略权重
-            'volatility_weight': 0.15,  # 波动率策略权重
-            'stat_arb_weight': 0.15,    # 统计套利策略权重
+            'ma_fast': 5,           # 快速均线周期
+            'ma_slow': 20,          # 慢速均线周期
+            'ma_signal': 10,        # 信号均线周期
+            'signal_threshold': 0.6, # 信号阈值
             
             # 期权筛选参数
             'min_volume': 100,         # 最小成交量
@@ -93,367 +93,89 @@ class DoomsdayOptionStrategy:
             self.logger.error(f"期权策略初始化失败: {str(e)}")
             raise
 
-    async def analyze_stock_trend(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """分析股票趋势并生成交易信号"""
-        try:
-            # 获取技术分析数据
-            df = await self.data_manager.get_technical_data(symbol)
-            if df is None or df.empty:
-                return None
-            
-            if not await self._validate_data(df):
-                return None
-            
-            # 计算各策略信号
-            signals = {
-                'trend': self._calculate_trend_signal(df),
-                'mean_reversion': self._calculate_mean_reversion_signal(df),
-                'momentum': self._calculate_momentum_signal(df),
-                'volatility': self._calculate_volatility_signal(df),
-                'stat_arb': self._calculate_stat_arb_signal(df)
-            }
-            
-            # 加权合成信号
-            composite_signal = self._calculate_composite_signal(signals)
-            
-            # 生成交易信号
-            if abs(composite_signal) >= self.strategy_params.get('signal_threshold', 0.6):
-                return {
-                    'symbol': symbol,
-                    'trend': 'bullish' if composite_signal > 0 else 'bearish',
-                    'signal': composite_signal,
-                    'timestamp': datetime.now(self.tz)
-                }
-            
-            return None
-            
-        except Exception as e:
-            self.logger.error(f"分析 {symbol} 趋势时出错: {str(e)}")
-            return None
-
-    async def select_option_contract(
-        self, 
-        symbol: str,
-        trend: str
-    ) -> Optional[Dict[str, Any]]:
-        """选择合适的期权合约"""
-        try:
-            # 获取期权链
-            quote_ctx = await self.data_manager.ensure_quote_ctx()
-            if not quote_ctx:
-                return None
-            
-            # 获取标的当前价格
-            quote = await quote_ctx.quote(symbols=[symbol])
-            if not quote:
-                return None
-            
-            current_price = quote[0].last_done
-            
-            # 获取期权链
-            options = await quote_ctx.option_chain(
-                symbol=symbol,
-                start_date=datetime.now(self.tz).date(),
-                end_date=(datetime.now(self.tz) + timedelta(
-                    days=self.strategy_params['max_days_to_expiry']
-                )).date()
-            )
-            
-            if not options:
-                return None
-            
-            # 筛选合适的期权合约
-            filtered_options = []
-            for option in options:
-                # 基本筛选条件
-                if (option.volume < self.strategy_params['min_volume'] or
-                    option.open_interest < self.strategy_params['min_open_interest'] or
-                    (option.ask_price - option.bid_price) > self.strategy_params['max_bid_ask_spread']):
-                    continue
-                
-                # 到期日筛选
-                days_to_expiry = (option.expiry_date - datetime.now(self.tz).date()).days
-                if (days_to_expiry < self.strategy_params['min_days_to_expiry'] or
-                    days_to_expiry > self.strategy_params['max_days_to_expiry']):
-                    continue
-                
-                filtered_options.append(option)
-            
-            if not filtered_options:
-                return None
-            
-            # 根据趋势选择看涨或看跌期权
-            option_type = OptionType.Call if trend == 'bullish' else OptionType.Put
-            target_delta = self.strategy_params['target_delta']['call' if trend == 'bullish' else 'put']
-            
-            # 选择最佳合约
-            best_contract = None
-            best_score = 0
-            
-            for option in filtered_options:
-                if option.type != option_type:
-                    continue
-                
-                # 计算合约得分
-                score = await self._calculate_contract_score(
-                    option, current_price, target_delta
-                )
-                
-                if score > best_score:
-                    best_score = score
-                    best_contract = option
-            
-            if best_contract:
-                return {
-                    'symbol': best_contract.symbol,
-                    'side': OrderSide.Buy if trend == 'bullish' else OrderSide.Sell,
-                    'score': best_score
-                }
-            
-            return None
-            
-        except Exception as e:
-            self.logger.error(f"选择期权合约时出错: {str(e)}")
-            return None
-
-    def _calculate_trend_signal(self, df: pd.DataFrame) -> float:
-        """计算趋势信号"""
-        try:
-            # 使用移动平均线和ADX
-            ema_short = df['MA5'].iloc[-1]
-            ema_mid = df['MA10'].iloc[-1]
-            ema_long = df['MA20'].iloc[-1]
-            
-            trend_strength = df['trend_strength'].iloc[-1]
-            
-            # 计算趋势信号
-            if ema_short > ema_mid > ema_long and trend_strength > 25:
-                return 1.0
-            elif ema_short < ema_mid < ema_long and trend_strength > 25:
-                return -1.0
-            else:
-                return 0.0
-                
-        except Exception as e:
-            self.logger.error(f"计算趋势信号时出错: {str(e)}")
-            return 0.0
-
-    def _calculate_mean_reversion_signal(self, df: pd.DataFrame) -> float:
-        """计算均值回归信号"""
-        try:
-            # 使用价格与移动平均线的偏离度
-            current_price = df['close'].iloc[-1]
-            ma20 = df['MA20'].iloc[-1]
-            
-            # 计算Z分数
-            std = df['price_std'].iloc[-1]
-            z_score = (current_price - ma20) / std if std != 0 else 0
-            
-            # 生成信号
-            if z_score < -2:
-                return 1.0  # 超卖
-            elif z_score > 2:
-                return -1.0  # 超买
-            else:
-                return 0.0
-                
-        except Exception as e:
-            self.logger.error(f"计算均值回归信号时出错: {str(e)}")
-            return 0.0
-
-    def _calculate_momentum_signal(self, df: pd.DataFrame) -> float:
-        """计算动量信号"""
-        try:
-            # 使用MACD和RSI
-            macd = df['MACD'].iloc[-1]
-            signal = df['Signal'].iloc[-1]
-            rsi = df['RSI'].iloc[-1]
-            
-            # 综合信号
-            momentum_signal = 0.0
-            
-            # MACD信号
-            if macd > signal:
-                momentum_signal += 0.5
-            elif macd < signal:
-                momentum_signal -= 0.5
-            
-            # RSI信号
-            if rsi > 70:
-                momentum_signal -= 0.5
-            elif rsi < 30:
-                momentum_signal += 0.5
-            
-            return momentum_signal
-            
-        except Exception as e:
-            self.logger.error(f"计算动量信号时出错: {str(e)}")
-            return 0.0
-
-    def _calculate_volatility_signal(self, df: pd.DataFrame) -> float:
-        """计算波动率信号"""
-        try:
-            vol_zscore = df['volatility_zscore'].iloc[-1]
-            
-            if vol_zscore < -1.5:
-                return 1.0  # 低波动率，可能突破
-            elif vol_zscore > 1.5:
-                return -1.0  # 高波动率，可能回落
-            else:
-                return 0.0
-                
-        except Exception as e:
-            self.logger.error(f"计算波动率信号时出错: {str(e)}")
-            return 0.0
-
-    def _calculate_stat_arb_signal(self, df: pd.DataFrame) -> float:
-        """计算统计套利信号"""
-        try:
-            # 使用价格变化和成交量比率
-            price_change = df['price_change'].iloc[-1]
-            volume_ratio = df['volume_ratio'].iloc[-1]
-            
-            # 生成信号
-            if price_change < -0.02 and volume_ratio > 1.5:
-                return 1.0  # 超卖
-            elif price_change > 0.02 and volume_ratio > 1.5:
-                return -1.0  # 超买
-            else:
-                return 0.0
-                
-        except Exception as e:
-            self.logger.error(f"计算统计套利信号时出错: {str(e)}")
-            return 0.0
-
-    def _calculate_composite_signal(self, signals: Dict[str, float]) -> float:
-        """计算综合信号"""
-        try:
-            # 加权平均
-            composite = (
-                signals['trend'] * self.strategy_params['trend_weight'] +
-                signals['mean_reversion'] * self.strategy_params['mean_reversion_weight'] +
-                signals['momentum'] * self.strategy_params['momentum_weight'] +
-                signals['volatility'] * self.strategy_params['volatility_weight'] +
-                signals['stat_arb'] * self.strategy_params['stat_arb_weight']
-            )
-            
-            return np.clip(composite, -1, 1)
-            
-        except Exception as e:
-            self.logger.error(f"计算综合信号时出错: {str(e)}")
-            return 0.0
-
-    async def _calculate_contract_score(
-        self, 
-        option: Any,
-        current_price: float,
-        target_delta: Tuple[float, float]
-    ) -> float:
-        """计算期权合约得分"""
-        try:
-            # 计算到期时间得分
-            days_to_expiry = (option.expiry_date - datetime.now(self.tz).date()).days
-            time_score = 1.0 - (days_to_expiry - self.strategy_params['min_days_to_expiry']) / (
-                self.strategy_params['max_days_to_expiry'] - self.strategy_params['min_days_to_expiry']
-            )
-            
-            # 计算流动性得分
-            volume_score = min(1.0, option.volume / self.strategy_params['min_volume'])
-            spread_score = 1.0 - min(1.0, (option.ask_price - option.bid_price) / 
-                                   self.strategy_params['max_bid_ask_spread'])
-            
-            # 计算价格得分
-            strike_diff = abs(option.strike_price - current_price) / current_price
-            price_score = 1.0 - min(1.0, strike_diff)
-            
-            # 综合得分
-            return (time_score * 0.3 + 
-                   volume_score * 0.2 + 
-                   spread_score * 0.2 + 
-                   price_score * 0.3)
-            
-        except Exception as e:
-            self.logger.error(f"计算合约得分时出错: {str(e)}")
-            return 0.0
-
-    async def _validate_data(self, df: pd.DataFrame) -> bool:
-        """验证技术指标数据完整性"""
-        try:
-            required_columns = [
-                'close', 'volume', 'high', 'low',
-                'MA5', 'MA10', 'MA20',
-                'MACD', 'Signal', 'Hist',
-                'RSI', 'volatility',
-                'price_change', 'price_std',
-                'volume_ratio', 'trend_strength',
-                'momentum', 'momentum_ma',
-                'volatility_zscore'
-            ]
-            
-            missing_columns = [col for col in required_columns if col not in df.columns]
-            if missing_columns:
-                self.logger.error(f"缺少必要的技术指标列: {missing_columns}")
-                return False
-                
-            # 检查数据质量
-            if df.isnull().sum().any():
-                self.logger.warning("数据中存在空值，将使用前向填充方法处理")
-                df.fillna(method='ffill', inplace=True)
-                
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"验证数据时出错: {str(e)}")
-            return False
-
     async def generate_signal(self, symbol: str) -> Optional[Dict[str, Any]]:
         """生成交易信号"""
         try:
-            # 获取股票趋势分析结果
-            trend_signal = await self.analyze_stock_trend(symbol)
-            if not trend_signal:
+            # 检查信号缓存
+            if symbol in self._signal_cache:
+                last_signal_time = self._signal_cache[symbol].get('timestamp')
+                if last_signal_time:
+                    time_diff = (datetime.now(self.tz) - last_signal_time).seconds
+                    if time_diff < 300:  # 5分钟内的信号直接返回
+                        self.logger.debug(f"{symbol} 使用缓存的信号")
+                        return self._signal_cache[symbol].get('signal')
+            
+            # 获取技术分析数据和均线指标
+            tech_data = await self.data_manager.get_technical_data(symbol, self.strategy_params)
+            if tech_data is None:
+                self.logger.warning(f"{symbol} 无法获取技术分析数据")
                 return None
             
-            # 获取期权市场数据
-            option_data = await self.data_manager.get_option_data(symbol)
-            if option_data is None:
-                self.logger.warning(f"无法获取 {symbol} 的期权数据")
+            # 检查信号强度和趋势
+            signal_strength = tech_data['signal']
+            trend = tech_data['trend']
+            ma_indicators = tech_data['indicators']
+            
+            self.logger.info(f"{symbol} 当前信号强度: {signal_strength:.2f}, 趋势: {trend}, "
+                           f"均线趋势: {'向上' if ma_indicators['ma_trend'] else '向下'}")
+            
+            # 只在趋势明确且信号强度达到阈值时生成信号
+            if abs(signal_strength) < self.strategy_params['signal_threshold']:
+                self.logger.info(f"{symbol} 信号强度 {abs(signal_strength):.2f} "
+                               f"未达到阈值 {self.strategy_params['signal_threshold']}")
                 return None
             
-            # 生成交易信号
-            signal = {
-                'symbol': symbol,
-                'action': 'buy' if trend_signal['trend'] == 'bullish' else 'sell',
-                'quantity': self._calculate_position_size(trend_signal, option_data),
-                'price': option_data.get('last_price', 0),
-                'timestamp': datetime.now(self.tz),
-                'signal_strength': abs(trend_signal['signal']),
-                'trend': trend_signal['trend'],
-                'strategy_type': 'momentum',
-                'expiry': self._select_expiry(option_data),
-                'strike': self._select_strike(option_data, trend_signal)
-            }
+            # 获取当前持仓
+            current_position = None
+            if self.position_manager:
+                current_position = await self.position_manager.get_position(symbol)
+                self.logger.debug(f"{symbol} 当前持仓: {current_position}")
             
-            # 添加风险控制参数
-            signal.update({
-                'stop_loss': self._calculate_stop_loss(signal),
-                'take_profit': self._calculate_take_profit(signal),
-                'max_hold_time': timedelta(days=self.strategy_params.get('max_hold_days', 3))
-            })
+            # 确定交易动作
+            action = None
+            quantity = 0
             
-            # 使用更醒目的日志格式
-            self.logger.info(f"\n🎯 交易信号生成 - {symbol}:\n" + 
-                            f"    操作: {'📈 买入' if signal['action'] == 'buy' else '📉 卖出'}\n" +
-                            f"    数量: {signal['quantity']}\n" +
-                            f"    价格: ${signal['price']:.2f}\n" +
-                            f"    信号强度: {signal['signal_strength']:.2f}\n" +
-                            f"    趋势: {'上涨' if signal['trend'] == 'bullish' else '下跌'}\n" +
-                            f"    止损: ${signal['stop_loss']:.2f}\n" +
-                            f"    止盈: ${signal['take_profit']:.2f}\n" +
-                            f"    到期日: {signal['expiry']}\n" +
-                            f"    执行价: ${signal['strike']:.2f}")
+            # 根据趋势和均线指标确定交易动作
+            if trend == 'bullish' and ma_indicators['ma_trend']:
+                if not current_position:
+                    action = 'buy'
+                    self.logger.info(f"{symbol} 满足买入条件: 多头趋势且均线向上")
+                else:
+                    self.logger.info(f"{symbol} 已有持仓，不生成买入信号")
+            elif trend == 'bearish' and not ma_indicators['ma_trend']:
+                if current_position:
+                    action = 'sell'
+                    self.logger.info(f"{symbol} 满足卖出条件: 空头趋势且均线向下")
+                else:
+                    self.logger.info(f"{symbol} 无持仓，不生成卖出信号")
+            else:
+                self.logger.info(f"{symbol} 趋势与均线方向不一致，不生成交易信号")
             
-            return signal
+            if not action:  # 第三个检查点
+                return None
+            
+            if action:  # 只在有具体交易动作时生成信号
+                signal = {
+                    'symbol': symbol,
+                    'action': action,
+                    'quantity': quantity,
+                    'signal': signal_strength,
+                    'trend': trend,
+                    'strength': tech_data['strength'],
+                    'indicators': ma_indicators,
+                    'timestamp': datetime.now(self.tz),
+                    'price': tech_data['latest']['close'],
+                    'ma_cross': ma_indicators['ma_cross'],  # 添加均线交叉信息
+                    'ma_diff_ratio': ma_indicators['ma_diff_ratio']  # 添加均线差值比例
+                }
+                
+                # 更新信号缓存
+                self._signal_cache[symbol] = {
+                    'signal': signal,
+                    'timestamp': datetime.now(self.tz)
+                }
+                
+                return signal
             
         except Exception as e:
             self.logger.error(f"生成 {symbol} 的交易信号时出错: {str(e)}")
@@ -488,3 +210,29 @@ class DoomsdayOptionStrategy:
         except Exception as e:
             self.logger.error(f"计算持仓规模时出错: {str(e)}")
             return 0
+
+    async def get_portfolio_status(self) -> Dict[str, float]:
+        """获取投资组合状态"""
+        try:
+            total_market_value = 0.0
+            total_unrealized_pnl = 0.0
+            
+            if self.position_manager:
+                positions = await self.position_manager.get_positions()
+                for position in positions:
+                    total_market_value += position.get('market_value', 0)
+                    total_unrealized_pnl += position.get('unrealized_pnl', 0)
+            
+            return {
+                'total_market_value': total_market_value,
+                'total_unrealized_pnl': total_unrealized_pnl,
+                'timestamp': datetime.now(self.tz)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"获取投资组合状态时出错: {str(e)}")
+            return {
+                'total_market_value': 0.0,
+                'total_unrealized_pnl': 0.0,
+                'timestamp': datetime.now(self.tz)
+            }

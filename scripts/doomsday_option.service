@@ -15,6 +15,7 @@ Environment=PYTHONPATH=%d/..
 Environment=PYTHONUNBUFFERED=1
 
 # 启动命令
+# ExecStartPre=/bin/bash -c 'scripts/setup_permissions.sh'
 ExecStart=%d/../venv/bin/python -m scripts.main
 
 # 重启配置

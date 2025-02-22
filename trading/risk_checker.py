@@ -9,6 +9,7 @@ import pytz
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Tuple, List
+import numpy as np
 
 from config.config import (
     DATA_DIR
@@ -21,6 +22,7 @@ class RiskChecker:
         'option': {
             # 止损止盈配置
             'stop_loss': -0.3,         # 期权止损点
+            'take_profit': 0.5,        # 期权止盈点
             'trailing_stop': {
                 'enabled': True,
                 'activation': 0.3,      # 触发追踪止损的收益率
@@ -35,10 +37,6 @@ class RiskChecker:
             
             # 期权交易策略配置
             'strategy': 'call_only',    # 只买入看涨期权
-            'position_sizing': {
-                'max_position_value': 10000,  # 单个持仓最大金额
-                'max_positions': 5,           # 最大持仓数量
-            },
             'contract_selection': {
                 'min_volume': 100,           # 最小成交量
                 'min_open_interest': 500,    # 最小持仓量
@@ -48,43 +46,106 @@ class RiskChecker:
                 'iv_percentile': 50          # IV百分位阈值
             },
             
-            # 风险限制
-            'max_loss_per_trade': 500,  # 单笔最大亏损
-            'max_daily_loss': 1000,     # 每日最大亏损
-            'max_position_value': 1000,  # 单个期权标的最大持仓金额
-            'max_total_ratio': 0.2,     # 总持仓市值占账户资金比例上限
-            
-            # 订单执行配置
-            'order_execution': {
-                'max_retry': 3,           # 最大重试次数
-                'retry_interval': 1.0,    # 重试间隔(秒)
-                'timeout': 30,            # 订单超时时间(秒)
-                'min_volume': 1,          # 最小交易量
-                'max_volume': 1000,       # 最大交易量
-                'price_tolerance': 0.01,  # 价格容差
-                'max_retry_price_adjust': 0.005,  # 每次重试价格调整幅度
-                'execution_rules': {
-                    'market_hours_only': True,     # 仅在常规市场时段交易
-                    'avoid_high_spread': True,     # 避免高点差
-                    'max_spread_ratio': 0.03,      # 最大允许点差比例
-                    'min_liquidity': 100,          # 最小流动性要求
-                    'allow_partial_fill': True,    # 允许部分成交
-                    'cancel_timeout': 5,           # 撤单超时时间(秒)
-                    'price_limit_ratio': 0.002     # 价格偏离度限制
+            'risk_limits': {
+                'loss': {
+                    'max_per_trade': 500,     # 单笔最大亏损
+                    'max_daily': 1000,        # 每日最大亏损
+                    'max_drawdown': 0.1,      # 最大回撤
+                },
+                'leverage': {
+                    'max_ratio': 2.0,         # 最大杠杆率
+                    'max_margin': 0.5,        # 最大保证金率
+                },
+                'volatility': {
+                    'threshold': 0.4,         # 波动率阈值
+                    'lookback_days': 20,      # 波动率计算周期
+                },
+                'position': {
+                    'max_count': 5,           # 最大持仓数量
+                    'max_value': 10000,       # 单个标的最大持仓金额
+                    'max_ratio': 0.2,         # 总持仓市值占比
+                    'initial_size': 5000,     # 初始建仓金额
+                    'min_size': 5000,         # 最小持仓规模
+                    'increment': 2500         # 持仓规模递增单位
+                },
+                'greeks': {                   # 期权特有的希腊字母限制
+                    'max_delta': 100,         # Delta上限
+                    'max_gamma': 10,          # Gamma上限
+                    'max_theta': -500,        # Theta下限
+                    'max_vega': 1000          # Vega上限
                 }
             }
         },
         'stock': {
-            'stop_loss': -0.03,        # 股票固定3%止损
-            'take_profit': 0.05,       # 股票固定5%止盈
-            'max_loss_per_trade': 300, # 单笔最大亏损
-            'max_daily_loss': 800      # 每日最大亏损
+            'stop_loss': -0.03,              # 股票固定3%止损
+            'take_profit': 0.05,             # 股票固定5%止盈
+            'risk_limits': {
+                'loss': {
+                    'max_per_trade': 300,     # 单笔最大亏损
+                    'max_daily': 800,         # 每日最大亏损
+                    'max_drawdown': 0.1,      # 最大回撤
+                },
+                'leverage': {
+                    'max_ratio': 1.5,         # 最大杠杆率
+                    'max_margin': 0.4,        # 最大保证金率
+                },
+                'volatility': {
+                    'threshold': 0.3,         # 波动率阈值
+                    'lookback_days': 20,      # 波动率计算周期
+                },
+                'position': {
+                    'max_count': 10,          # 最大持仓数量
+                    'max_value': 50000,       # 单个标的最大持仓金额
+                    'max_ratio': 0.3,         # 总持仓市值占比
+                    'initial_size': 10000,    # 初始建仓金额
+                    'min_size': 5000,         # 最小持仓规模
+                    'increment': 5000         # 持仓规模递增单位
+                }
+            }
         },
         'market': {
-            'max_positions': 5,         # 最大持仓数量
-            'max_margin_ratio': 0.5,    # 最大保证金率
-            'max_position_value': 100000, # 最大持仓市值
-            'volatility_threshold': 0.4   # 波动率阈值
+            'risk_limits': {
+                'loss': {
+                    'max_drawdown': 0.15,    # 市场最大回撤
+                },
+                'leverage': {
+                    'max_ratio': 2.0,        # 市场最大杠杆率
+                    'max_margin': 0.5,       # 市场最大保证金率
+                },
+                'volatility': {
+                    'threshold': 0.4,        # 市场波动率阈值
+                    'lookback_days': 20,     # 波动率计算周期
+                },
+                'position': {
+                    'max_count': 10,         # 总持仓数量限制
+                    'max_value': 100000,     # 单个标的最大持仓市值
+                    'max_ratio': 0.8,        # 最大账户资金使用比例
+                    'min_size': 5000,        # 最小持仓规模
+                    'increment': 5000,       # 持仓规模递增单位
+                }
+            }
+        },
+        'portfolio': {
+            'risk_limits': {
+                'loss': {
+                    'max_daily': 2000,       # 每日最大亏损
+                    'max_drawdown': 0.2,     # 组合最大回撤
+                },
+                'leverage': {
+                    'max_margin': 0.5,       # 最大保证金率
+                },
+                'position': {
+                    'max_count': 5,          # 最大持仓数量
+                    'max_ratio': 0.9,        # 最大账户资金使用比例
+                    'max_concentration': 0.3, # 最大持仓集中度
+                },
+                'greeks': {                  # 希腊字母限制改名为greeks
+                    'max_delta': 100,        # Delta上限
+                    'max_gamma': 10,         # Gamma上限
+                    'max_theta': -500,       # Theta下限
+                    'max_vega': 1000         # Vega上限
+                }
+            }
         }
     }
 
@@ -103,7 +164,7 @@ class RiskChecker:
         # 保存配置
         self.config = config
         
-        # 使用默认配置
+        # 使用默认配置,不再从config中覆盖
         self.risk_limits = self.DEFAULT_RISK_LIMITS.copy()
         
         # 保存依赖的实例
@@ -127,8 +188,18 @@ class RiskChecker:
         }
         
         # 风险记录目录
-        self.risk_dir =  Path(DATA_DIR) / 'risk_records'
+        self.risk_dir = Path(DATA_DIR) / 'risk_records'
         self.risk_dir.mkdir(parents=True, exist_ok=True)
+
+    def _merge_risk_limits(self, default_limits: Dict, custom_limits: Dict) -> Dict:
+        """合并默认风险限制和自定义风险限制"""
+        merged = default_limits.copy()
+        for category in custom_limits:
+            if category in merged:
+                merged[category].update(custom_limits[category])
+            else:
+                merged[category] = custom_limits[category]
+        return merged
 
     async def check_position_risk(self, position: Dict[str, Any], market_data: Dict[str, Any]) -> Tuple[bool, str, float]:
         """检查持仓风险"""
@@ -157,7 +228,7 @@ class RiskChecker:
                 return True, greeks_msg, 1.0
             
             # 检查市场风险
-            market_risk, market_msg, risk_level = await self.check_market_risk(market_data)
+            market_risk, market_msg, risk_level = await self.check_market_risk(symbol, market_data)
             if market_risk:
                 return True, market_msg, risk_level
             
@@ -354,7 +425,7 @@ class RiskChecker:
             
             # 获取风险限制
             market_limits = self.config.get('risk_limits', {}).get('market', {})
-            volatility_threshold = market_limits.get('volatility_threshold', 0.4)
+            volatility_threshold = market_limits.get('volatility', {}).get('threshold', 0.4)
             
             # 检查波动率
             if volatility > volatility_threshold:
@@ -391,7 +462,7 @@ class RiskChecker:
             
             # 获取风险限制
             market_limits = self.config.get('risk_limits', {}).get('market', {})
-            max_position_value = market_limits.get('max_position_value', 100000)
+            max_position_value = market_limits.get('position', {}).get('max_value', 100000)
             
             # 检查单个持仓规模
             if market_value > max_position_value:
@@ -567,28 +638,28 @@ class RiskChecker:
             position_value = price * volume
             
             # 检查单个持仓限额
-            if position_value > self.risk_limits['market']['max_position_value']:
+            if position_value > self.risk_limits['market']['position']['max_value']:
                 self.logger.warning(
                     f"超过单个持仓限额:\n"
                     f"  标的: {symbol}\n"
                     f"  持仓价值: ${position_value:.2f}\n"
-                    f"  限额: ${self.risk_limits['market']['max_position_value']}"
+                    f"  限额: ${self.risk_limits['market']['position']['max_value']}"
                 )
                 return True, "超过持仓限额"
             
             # 检查总持仓限额
             total_value = self.risk_stats['total_exposure'] + position_value
-            if total_value > self.risk_limits['market']['max_total_exposure']:
+            if total_value > self.risk_limits['market']['position']['max_value']:
                 self.logger.warning(
                     f"超过总持仓限额:\n"
                     f"  当前总持仓: ${self.risk_stats['total_exposure']:.2f}\n"
                     f"  新增持仓: ${position_value:.2f}\n"
-                    f"  限额: ${self.risk_limits['market']['max_total_exposure']}"
+                    f"  限额: ${self.risk_limits['market']['position']['max_value']}"
                 )
                 return True, "超过总持仓限额"
             
             # 检查持仓数量限制
-            if self.risk_stats['total_positions'] >= self.risk_limits['market']['max_positions']:
+            if self.risk_stats['total_positions'] >= self.risk_limits['market']['position']['max_count']:
                 self.logger.warning(f"超过最大持仓数量限制: {self.risk_stats['total_positions']}")
                 return True, "超过持仓数量限制"
             
@@ -622,7 +693,7 @@ class RiskChecker:
                 raise ValueError(f"持仓数据类型错误: 期望 dict, 实际是 {type(position)}")
             
             market_value = float(position.get('market_value', 0))
-            max_value = self.risk_limits['market']['max_position_value']
+            max_value = self.risk_limits['market']['position']['max_value']
             
             if market_value > max_value:
                 return True, "持仓规模超过限制", 0.5
@@ -679,19 +750,21 @@ class RiskChecker:
     async def check_market_risk(self, symbol: str, market_data: Dict[str, Any]) -> Tuple[bool, str, float]:
         """检查市场风险"""
         try:
+            market_limits = self.risk_limits['market']['risk_limits']
+            
             # 1. 检查持仓数量限制
             positions = await self.option_strategy.get_positions()
-            if len(positions) >= self.risk_limits['market']['max_positions']:
-                return True, f"超过最大持仓数量限制 ({self.risk_limits['market']['max_positions']})", 1.0
+            if len(positions) >= self.risk_limits['market']['position']['max_count']:
+                return True, f"超过最大持仓数量限制 ({self.risk_limits['market']['position']['max_count']})", 1.0
             
             # 2. 检查保证金率
             account_info = await self.option_strategy.get_account_info()
             margin_ratio = float(account_info.get('margin_ratio', 0))
-            if margin_ratio > self.risk_limits['market']['max_margin_ratio']:
-                return True, f"超过最大保证金率限制 ({self.risk_limits['market']['max_margin_ratio']*100:.0f}%)", 1.0
+            if margin_ratio > market_limits['leverage']['max_ratio']:
+                return True, f"超过最大杠杆率限制 ({market_limits['leverage']['max_ratio']*100:.0f}%)", 1.0
             
             # 3. 检查波动率
-            if market_data and market_data.get('volatility', 0) > self.risk_limits['market']['volatility_threshold']:
+            if market_data and market_data.get('volatility', 0) > market_limits['volatility']['threshold']:
                 return True, "市场波动率过高", 0.8
                 
             return False, "", 0.0
@@ -831,7 +904,7 @@ class RiskChecker:
             limits = self.risk_limits['market']
             
             # 检查回撤
-            if self.risk_status['current_drawdown'] > limits['max_drawdown']:
+            if self.risk_status['current_drawdown'] > limits['loss']['max_drawdown']:
                 return False, f"回撤超过限制: {self.risk_status['current_drawdown']:.2%}"
                 
             # 检查波动率
@@ -850,15 +923,15 @@ class RiskChecker:
             greeks = self.risk_status['greek_exposures']
             
             # 检查Theta
-            if greeks['theta'] < limits['max_theta']:
+            if greeks['theta'] < limits['risk_limits']['max_theta']:
                 return False, f"Theta风险过高: {greeks['theta']}"
                 
             # 检查Gamma
-            if abs(greeks['gamma']) > limits['max_gamma']:
+            if abs(greeks['gamma']) > limits['risk_limits']['max_gamma']:
                 return False, f"Gamma风险过高: {greeks['gamma']}"
                 
             # 检查Vega
-            if abs(greeks['vega']) > limits['max_vega']:
+            if abs(greeks['vega']) > limits['risk_limits']['max_vega']:
                 return False, f"Vega风险过高: {greeks['vega']}"
                 
             return True, ""
@@ -879,7 +952,7 @@ class RiskChecker:
                 
             # 检查持仓集中度
             concentration = await self._calculate_concentration()
-            if concentration > limits['max_position_concentration']:
+            if concentration > limits['max_concentration']:
                 return False, f"持仓过于集中: {concentration:.2%}"
                 
             # 检查日内亏损
@@ -891,3 +964,98 @@ class RiskChecker:
         except Exception as e:
             self.logger.error(f"检查组合风险时出错: {str(e)}")
             return False, str(e)
+
+    async def check_risk(self, symbol: str, signal: Dict[str, Any]) -> bool:
+        """检查交易信号的风险"""
+        try:
+            asset_type = signal.get('asset_type', 'stock')
+            risk_limits = self.risk_limits[asset_type]['risk_limits']
+            
+            # 检查单笔亏损限制
+            if signal.get('potential_loss', 0) > risk_limits['loss']['max_per_trade']:
+                self.logger.warning(f"{symbol} 潜在亏损超过单笔限制")
+                return False
+            
+            # 检查持仓限制
+            position_value = signal.get('position_value', 0)
+            if position_value > risk_limits['position']['max_value']:
+                self.logger.warning(f"{symbol} 持仓规模超过限制")
+                return False
+            
+            # 检查杠杆限制
+            if signal.get('leverage', 1.0) > risk_limits['leverage']['max_ratio']:
+                self.logger.warning(f"{symbol} 超过杠杆限制")
+                return False
+
+            # 1. 检查交易时间
+            if not await self.time_checker.is_trading_time():
+                self.logger.warning(f"{symbol} 当前不在交易时间")
+                return False
+
+            # 2. 获取投资组合状态
+            portfolio_status = await self.option_strategy.get_portfolio_status()
+            
+            # 3. 检查回撤限制
+            if portfolio_status['total_unrealized_pnl'] < 0:
+                drawdown = abs(portfolio_status['total_unrealized_pnl']) / portfolio_status['total_market_value']
+                if drawdown > risk_limits['loss']['max_drawdown']:
+                    self.logger.warning(f"{symbol} 超过最大回撤限制: {drawdown:.2%}")
+                    return False
+
+            # 4. 检查止损止盈设置
+            if not self._validate_stop_loss_take_profit(signal, asset_type):
+                self.logger.warning(f"{symbol} 止损止盈设置无效")
+                return False
+
+            # 5. 检查波动率限制
+            if not await self._check_volatility(symbol, asset_type):
+                self.logger.warning(f"{symbol} 波动率超出限制")
+                return False
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"检查 {symbol} 风险时出错: {str(e)}")
+            return False
+
+    def _validate_stop_loss_take_profit(self, signal: Dict[str, Any], asset_type: str) -> bool:
+        """验证止损止盈设置"""
+        try:
+            risk_limits = self.risk_limits[asset_type]
+            stop_loss = signal.get('stop_loss_pct', 0)
+            take_profit = signal.get('take_profit_pct', 0)
+            
+            # 检查止损设置
+            if stop_loss <= 0 or stop_loss > abs(risk_limits['stop_loss']):
+                return False
+                
+            # 检查止盈设置
+            if take_profit <= 0 or take_profit < risk_limits['take_profit']:
+                return False
+                
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"验证止损止盈设置时出错: {str(e)}")
+            return False
+
+    async def _check_volatility(self, symbol: str, asset_type: str) -> bool:
+        """检查波动率"""
+        try:
+            risk_limits = self.risk_limits[asset_type]['risk_limits']
+            
+            # 获取历史数据
+            hist_data = await self.option_strategy.data_manager.get_historical_data(symbol)
+            if hist_data is None or hist_data.empty:
+                return False
+            
+            # 计算波动率
+            returns = hist_data['close'].pct_change()
+            volatility = returns.std() * np.sqrt(252)  # 年化波动率
+            
+            # 检查波动率是否在可接受范围内
+            return volatility <= risk_limits['volatility']['threshold']
+            
+        except Exception as e:
+            self.logger.error(f"检查 {symbol} 波动率时出错: {str(e)}")
+            return False

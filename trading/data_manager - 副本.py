@@ -233,175 +233,111 @@ class DataManager:
                 klines = await quote_ctx.candlesticks(
                     symbol=symbol,
                     period=Period.Day,
-                    count=100,  # 从配置中获取历史数据长度
+                    count=100,
                     adjust_type=AdjustType.ForwardAdjust
                 )
-                
-                if not klines or not hasattr(klines, 'candlesticks'):
-                    self.logger.error(f"获取 {symbol} K线数据失败")
-                    continue
                     
-                bars = klines.candlesticks
-                if not bars:
-                    self.logger.warning(f"{symbol} 没有K线数据")
-                    continue
-                    
-                # 转换为DataFrame
-                df = pd.DataFrame([{
-                    'timestamp': bar.timestamp,
-                    'open': bar.open,
-                    'high': bar.high,
-                    'low': bar.low,
-                    'close': bar.close,
-                    'volume': bar.volume,
-                    'turnover': bar.turnover
-                } for bar in bars])
+                if klines and hasattr(klines, 'candlesticks'):
+                    bars = klines.candlesticks
+                    if bars:
+                        # 转换为DataFrame
+                        df = pd.DataFrame([{
+                            'timestamp': bar.timestamp,
+                            'open': bar.open,
+                            'high': bar.high,
+                            'low': bar.low,
+                            'close': bar.close,
+                            'volume': bar.volume,
+                            'turnover': bar.turnover
+                        } for bar in bars])
+                        
+                        if not df.empty:
+                            df.set_index('timestamp', inplace=True)
+                            df.sort_index(inplace=True)
+                            
+                            # 计算技术指标
+                            tech_df = self._calculate_technical_indicators(df)
                 
-                if df.empty:
-                    self.logger.warning(f"{symbol} 数据为空")
-                    continue
-                    
-                # 设置索引并排序
-                df.set_index('timestamp', inplace=True)
-                df.sort_index(inplace=True)
-                
-                # 初始化缓存字典(如果不存在)
-                if symbol not in self._data_cache:
-                    self._data_cache[symbol] = {}
-                
-                # 计算技术指标
-                tech_df = self._calculate_technical_indicators(df)
-                
-                # 更新缓存
-                self._data_cache[symbol].update({
-                    'ohlcv': df,
-                    'technical_indicators': tech_df,
-                    'last_update': datetime.now(self.tz)
-                })
-                
-                self.logger.info(f"成功初始化 {symbol} 的历史数据, 共 {len(df)} 条记录")
-                
-                # 避免请求过快
-                await asyncio.sleep(0.5)
+                        # 更新缓存
+                            self._data_cache[symbol]['ohlcv'] = df
+                            self._data_cache[symbol]['technical_indicators'] = tech_df
+                            self._data_cache[symbol]['last_update'] = datetime.now(self.tz)
+                            
+                        await asyncio.sleep(0.5)  # 避免请求过快
                 
             except Exception as e:
                 self.logger.error(f"初始化 {symbol} 历史数据时出错: {str(e)}")
-                continue
 
     def _calculate_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """计算技术指标(仅保留均线相关)"""
+        """计算技术指标"""
         try:
-            if df is None or df.empty:
-                return df
+            tech_df = pd.DataFrame(index=df.index)
             
-            # 复制数据框以避免修改原始数据
-            df = df.copy()
+            # 移动平均线
+            for period in [5, 10, 20]:
+                tech_df[f'MA{period}'] = df['close'].rolling(window=period).mean()
             
-            # 确保数据按时间排序
-            df.sort_index(inplace=True)
+            # MACD
+            exp1 = df['close'].ewm(span=12, adjust=False).mean()
+            exp2 = df['close'].ewm(span=26, adjust=False).mean()
+            macd = exp1 - exp2
+            signal = macd.ewm(span=9, adjust=False).mean()
+            tech_df['MACD'] = macd
+            tech_df['Signal'] = signal
+            tech_df['Hist'] = macd - signal
             
-            # 检查必要的列是否存在
-            required_columns = ['close']
-            if not all(col in df.columns for col in required_columns):
-                self.logger.error("数据缺少必要的列")
-                return df
+            # RSI
+            delta = df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            tech_df['RSI'] = 100 - (100 / (1 + rs))
             
-            # 检查并处理空值
-            if df['close'].isnull().any():
-                self.logger.warning("价格数据存在空值，使用前值填充")
-                df['close'].fillna(method='ffill', inplace=True)
+            # 波动率
+            tech_df['volatility'] = df['close'].rolling(window=20).std()
             
-            return df
+            # 价格变化
+            tech_df['price_change'] = df['close'].pct_change()
+            tech_df['price_std'] = tech_df['price_change'].rolling(window=20).std()
+            
+            # 成交量
+            tech_df['volume_ratio'] = df['volume'] / df['volume'].rolling(window=20).mean()
+            
+            # 趋势强度
+            tech_df['trend_strength'] = abs(tech_df['MA5'] - tech_df['MA20']) / tech_df['MA20']
+            
+            # 动量
+            tech_df['momentum'] = df['close'] - df['close'].shift(10)
+            tech_df['momentum_ma'] = tech_df['momentum'].rolling(window=10).mean()
+            
+            # 波动率Z分数
+            tech_df['volatility_zscore'] = (tech_df['volatility'] - tech_df['volatility'].rolling(window=50).mean()) / tech_df['volatility'].rolling(window=50).std()
+            
+            return tech_df
             
         except Exception as e:
             self.logger.error(f"计算技术指标时出错: {str(e)}")
-            return df
+            return pd.DataFrame()
 
-    async def get_technical_data(self, symbol: str, strategy_params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """获取技术分析数据并计算均线指标"""
+    async def get_technical_data(self, symbol: str) -> Optional[pd.DataFrame]:
+        """获取技术分析数据"""
         try:
-            # 获取历史K线数据
-            hist_data = await self.get_historical_data(symbol)
-            if hist_data is None or hist_data.empty:
-                return None
-            
-            # 确保timestamp是列而不是索引
-            if 'timestamp' not in hist_data.columns and hist_data.index.name == 'timestamp':
-                hist_data = hist_data.reset_index()
-            
-            # 只保留必要的列并确保它们存在
-            required_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-            missing_columns = [col for col in required_columns if col not in hist_data.columns]
-            if missing_columns:
-                self.logger.error(f"{symbol} 数据缺少必要的列: {missing_columns}")
+            if symbol not in self._data_cache:
                 return None
                 
-            hist_data = hist_data[required_columns].copy()
+            cache = self._data_cache[symbol]
+            current_time = datetime.now(self.tz)
             
-            # 将timestamp设置为索引
-            hist_data.set_index('timestamp', inplace=True)
-            
-            # 确保数据按时间排序
-            hist_data.sort_index(inplace=True)
-            
-            # 计算均线指标
-            ma_data = self._calculate_ma_indicators(hist_data, strategy_params)
-            if ma_data is None:
-                return None
+            # 检查是否需要更新数据
+            if (cache['last_update'] is None or 
+                (current_time - cache['last_update']).seconds > 300):  # 5分钟更新一次
                 
-            return ma_data
+                await self._update_symbol_data(symbol)
+            
+            return cache['technical_indicators']
             
         except Exception as e:
             self.logger.error(f"获取 {symbol} 技术分析数据时出错: {str(e)}")
-            return None
-            
-    def _calculate_ma_indicators(self, df: pd.DataFrame, strategy_params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """计算均线指标"""
-        try:
-            if df is None or df.empty:
-                return None
-                
-            # 计算均线
-            df['ma_fast'] = df['close'].rolling(strategy_params['ma_fast']).mean()
-            df['ma_slow'] = df['close'].rolling(strategy_params['ma_slow']).mean()
-            df['ma_signal'] = df['close'].rolling(strategy_params['ma_signal']).mean()
-            
-            # 获取最新数据
-            latest = df.iloc[-1]
-            prev = df.iloc[-2]
-            
-            # 计算均线趋势信号
-            signal_strength = 0.0
-            
-            # 均线多头排列
-            if latest['ma_fast'] > latest['ma_signal'] > latest['ma_slow']:
-                signal_strength = 1.0
-            # 均线空头排列    
-            elif latest['ma_fast'] < latest['ma_signal'] < latest['ma_slow']:
-                signal_strength = -1.0
-            # 其他情况计算趋势强度
-            else:
-                # 计算快线和慢线的差值比例
-                diff_ratio = (latest['ma_fast'] - latest['ma_slow']) / latest['ma_slow']
-                signal_strength = diff_ratio
-                
-            return {
-                'data': df,
-                'signal': signal_strength,
-                'trend': 'bullish' if signal_strength > 0 else 'bearish',
-                'strength': abs(signal_strength),
-                'indicators': {
-                    'ma_trend': latest['ma_fast'] > latest['ma_slow'],
-                    'ma_cross': (prev['ma_fast'] - prev['ma_slow']) * 
-                               (latest['ma_fast'] - latest['ma_slow']) < 0,  # 判断是否发生交叉
-                    'ma_diff_ratio': (latest['ma_fast'] - latest['ma_slow']) / latest['ma_slow']
-                },
-                'latest': latest,
-                'prev': prev
-            }
-            
-        except Exception as e:
-            self.logger.error(f"计算均线指标时出错: {str(e)}")
             return None
 
     async def _update_symbol_data(self, symbol: str) -> None:
@@ -983,7 +919,7 @@ class DataManager:
             self.logger.error(f"更新 {symbol} 数据时出错: {str(e)}")
             return False
 
-    async def get_historical_data(self, symbol: str, days: int = 100) -> Optional[pd.DataFrame]:
+    async def get_historical_data(self, symbol: str) -> Optional[pd.DataFrame]:
         """获取历史数据"""
         try:
             # 首先检查缓存
@@ -994,68 +930,17 @@ class DataManager:
                     last_update = self._data_cache[symbol].get('last_update')
                     if last_update and (datetime.now(self.tz) - last_update).seconds < 300:  # 5分钟内的数据
                         return cache_data
-
-            quote_ctx = await self.ensure_quote_ctx()
-            if not quote_ctx:
+            
+            # 如果缓存无效，更新市场数据
+            if not await self.update_market_data(symbol):
+                self.logger.error(f"无法更新 {symbol} 的历史数据")
                 return None
             
-            try:
-                # 获取历史K线数据
-                klines = await quote_ctx.candlesticks(
-                    symbol=symbol,
-                    period=Period.Day,
-                    count=days,
-                    adjust_type=AdjustType.ForwardAdjust
-                )
-                
-                if not klines or not hasattr(klines, 'candlesticks'):
-                    self.logger.error(f"获取 {symbol} K线数据失败")
-                    return None
-                    
-                bars = klines.candlesticks
-                if not bars:
-                    self.logger.warning(f"{symbol} 没有K线数据")
-                    return None
-                
-                # 转换为DataFrame
-                df = pd.DataFrame([{
-                    'timestamp': bar.timestamp,
-                    'open': bar.open,
-                    'high': bar.high,
-                    'low': bar.low,
-                    'close': bar.close,
-                    'volume': bar.volume,
-                    'turnover': bar.turnover
-                } for bar in bars])
-                
-                if df.empty:
-                    self.logger.warning(f"{symbol} 数据为空")
-                    return None
-                
-                # 设置索引并排序
-                df.set_index('timestamp', inplace=True)
-                df.sort_index(inplace=True)
-                
-                # 更新缓存
-                if symbol not in self._data_cache:
-                    self._data_cache[symbol] = {}
-                    
-                self._data_cache[symbol].update({
-                    'ohlcv': df,
-                    'last_update': datetime.now(self.tz)
-                })
-                
-                self.logger.info(f"成功获取 {symbol} 的历史数据, 共 {len(df)} 条记录")
-                return df
-                
-            except OpenApiException as e:
-                if "301606" in str(e):  # 请求频率限制错误
-                    self.logger.warning(f"请求频率限制，等待后重试: {str(e)}")
-                    await asyncio.sleep(1)  # 等待1秒后重试
-                    return await self.get_historical_data(symbol, days)
-                else:
-                    self.logger.error(f"获取 {symbol} K线数据时发生API错误: {str(e)}")
-                    return None
+            # 返回更新后的数据
+            if symbol in self._data_cache:
+                return self._data_cache[symbol].get('ohlcv')
+            
+            return None
             
         except Exception as e:
             self.logger.error(f"获取 {symbol} 历史数据时出错: {str(e)}")
