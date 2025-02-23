@@ -80,7 +80,7 @@ class DoomsdayPositionManager:
         self._trade_ctx_lock = asyncio.Lock()
         self._trade_ctx = None
         self._last_trade_time = 0
-        self._trade_timeout = 60
+        self._trade_timeout = 60  # 交易连接超时时间（秒）
         
         # 持仓管理
         self.positions = {}  # 当前持仓
@@ -373,14 +373,15 @@ class DoomsdayPositionManager:
     async def _update_positions(self) -> bool:
         """更新持仓信息"""
         try:
-            trade_ctx = await self.ensure_trade_ctx()
+            trade_ctx = await self._ensure_trade_ctx()
             if not trade_ctx:
+                self.logger.error("无法获取交易上下文")
                 return False
             
             try:
                 # 获取所有持仓类型
                 stock_positions_resp = trade_ctx.stock_positions()
-                fund_positions_resp = trade_ctx.fund_positions()
+                self.logger.debug(f"获取到的原始持仓数据: {stock_positions_resp}")
                 
                 # 更新持仓信息
                 self.positions = {}
@@ -390,97 +391,41 @@ class DoomsdayPositionManager:
                     for channel in stock_positions_resp.channels:
                         if hasattr(channel, 'positions'):
                             for pos in channel.positions:
-                                symbol_parts = pos.symbol.split('.')
-                                symbol_name = pos.symbol_name if hasattr(pos, 'symbol_name') else symbol_parts[0]
-                                
-                                self.positions[pos.symbol] = {
-                                    'symbol': pos.symbol,
-                                    'name': symbol_name,
-                                    'type': 'stock' if '250417' not in pos.symbol else 'option',
-                                    'account': channel.account_channel,
-                                    'quantity': float(pos.quantity),
-                                    'cost_price': float(pos.cost_price),
-                                    'current_price': float(pos.current_price) if hasattr(pos, 'current_price') else 0.0,
-                                    'market_value': float(pos.market_value) if hasattr(pos, 'market_value') else 0.0,
-                                    'currency': pos.currency if hasattr(pos, 'currency') else 'USD',
-                                    'unrealized_pl': float(pos.unrealized_pl) if hasattr(pos, 'unrealized_pl') else 0.0
-                                }
+                                try:
+                                    symbol_parts = pos.symbol.split('.')
+                                    symbol_name = pos.symbol_name if hasattr(pos, 'symbol_name') else symbol_parts[0]
+                                    
+                                    self.positions[pos.symbol] = {
+                                        'symbol': pos.symbol,
+                                        'name': symbol_name,
+                                        'type': 'stock' if '250417' not in pos.symbol else 'option',
+                                        'account': channel.account_channel,
+                                        'quantity': float(pos.quantity),
+                                        'cost_price': float(pos.cost_price),
+                                        'current_price': float(pos.current_price) if hasattr(pos, 'current_price') else 0.0,
+                                        'market_value': float(pos.market_value) if hasattr(pos, 'market_value') else 0.0,
+                                        'currency': pos.currency if hasattr(pos, 'currency') else 'USD',
+                                        'unrealized_pl': float(pos.unrealized_pl) if hasattr(pos, 'unrealized_pl') else 0.0,
+                                        'side': OrderSide.Buy if float(pos.quantity) > 0 else OrderSide.Sell,
+                                        'open_time': datetime.now(self.tz)
+                                    }
+                                    self.logger.debug(f"处理持仓数据: {pos.symbol} -> {self.positions[pos.symbol]}")
+                                except AttributeError as e:
+                                    self.logger.error(f"处理持仓数据时出现属性错误: {str(e)}")
+                                    continue
+                                except Exception as e:
+                                    self.logger.error(f"处理持仓 {pos.symbol} 时出错: {str(e)}")
+                                    continue
                 
-                # 以表格形式展示持仓
-                if not self.positions:
-                    self.logger.info("当前没有持仓")
-                else:
-                    # 计算每列的最大宽度
-                    widths = {
-                        'symbol': max(len(str(pos['symbol'])) for pos in self.positions.values()),
-                        'name': max(len(str(pos['name'])) for pos in self.positions.values()),
-                        'type': max(len(str(pos['type'])) for pos in self.positions.values()),
-                        'account': max(len(str(pos['account'])) for pos in self.positions.values()),
-                        'quantity': max(len(f"{pos['quantity']:,.0f}") for pos in self.positions.values()),
-                        'cost_price': max(len(f"{pos['cost_price']:,.2f}") for pos in self.positions.values()),
-                        'market_value': max(len(f"{pos['market_value']:,.2f}") for pos in self.positions.values())
-                    }
-                    
-                    # 确保列标题的最小宽度
-                    min_widths = {
-                        'symbol': 12,
-                        'name': 15,
-                        'type': 8,
-                        'account': 15,
-                        'quantity': 10,
-                        'cost_price': 12,
-                        'market_value': 12
-                    }
-                    
-                    # 使用最大宽度
-                    for key in widths:
-                        widths[key] = max(widths[key], min_widths[key])
-                    
-                    # 构建表头和分隔线
-                    header = (
-                        f"{'代码':<{widths['symbol']}} | "
-                        f"{'名称':<{widths['name']}} | "
-                        f"{'类型':<{widths['type']}} | "
-                        f"{'账户':<{widths['account']}} | "
-                        f"{'数量':>{widths['quantity']}} | "
-                        f"{'成本价':>{widths['cost_price']}} | "
-                        f"{'市值':>{widths['market_value']}} | "
-                        f"{'币种':<6}"
-                    )
-                    
-                    separator = '-' * len(header)
-                    
-                    # 输出表格
-                    self.logger.info("\n当前持仓明细:")
-                    self.logger.info(separator)
-                    self.logger.info(header)
-                    self.logger.info(separator)
-                    
-                    # 输出持仓数据
-                    for pos in self.positions.values():
-                        row = (
-                            f"{pos['symbol']:<{widths['symbol']}} | "
-                            f"{pos['name']:<{widths['name']}} | "
-                            f"{pos['type']:<{widths['type']}} | "
-                            f"{pos['account']:<{widths['account']}} | "
-                            f"{pos['quantity']:>{widths['quantity']},.0f} | "
-                            f"{pos['cost_price']:>{widths['cost_price']},.2f} | "
-                            f"{pos['market_value']:>{widths['market_value']},.2f} | "
-                            f"{pos['currency']:<6}"
-                        )
-                        self.logger.info(row)
-                    
-                    self.logger.info(separator)
-                    
-                    # 输出汇总信息
-                    total_market_value = sum(pos['market_value'] for pos in self.positions.values())
-                    total_unrealized_pl = sum(pos['unrealized_pl'] for pos in self.positions.values())
-                    summary = (
-                        f"总持仓: {len(self.positions)} 个标的  "
-                        f"总市值: {total_market_value:,.2f} USD  "
-                        f"总未实现盈亏: {total_unrealized_pl:,.2f} USD"
-                    )
-                    self.logger.info(summary)
+                # 计算并记录持仓汇总信息
+                total_market_value = sum(pos['market_value'] for pos in self.positions.values())
+                total_unrealized_pl = sum(pos['unrealized_pl'] for pos in self.positions.values())
+                summary = (
+                    f"总持仓: {len(self.positions)} 个标的  "
+                    f"总市值: {total_market_value:,.2f} USD  "
+                    f"总未实现盈亏: {total_unrealized_pl:,.2f} USD"
+                )
+                self.logger.info(summary)
                 
                 return True
                 
@@ -613,15 +558,79 @@ class DoomsdayPositionManager:
             self.logger.error(f"更新持仓记录时出错: {str(e)}")
 
     async def get_positions(self) -> List[Dict[str, Any]]:
-        """获取当前持仓"""
+        """获取当前所有持仓"""
         try:
             # 先更新持仓信息
             if not await self._update_positions():
+                self.logger.warning("更新持仓信息失败，返回空列表")
                 return []
             
             # 返回持仓列表
-            return list(self.positions.values())
+            positions = list(self.positions.values())
+            self.logger.debug(f"当前持仓列表: {positions}")
+            return positions
             
         except Exception as e:
             self.logger.error(f"获取持仓信息失败: {str(e)}")
             return []
+
+    async def get_position(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """获取单个标的的持仓信息"""
+        try:
+            # 先更新持仓信息
+            if not await self._update_positions():
+                self.logger.warning(f"更新持仓信息失败，无法获取 {symbol} 的持仓")
+                return None
+            
+            # 从持仓字典中获取指定标的的持仓
+            position = self.positions.get(symbol)
+            if position:
+                self.logger.debug(f"获取到 {symbol} 的持仓信息: {position}")
+                return position
+            
+            self.logger.debug(f"未找到 {symbol} 的持仓信息")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"获取 {symbol} 持仓信息时出错: {str(e)}")
+            return None
+
+    async def _ensure_trade_ctx(self) -> Optional[TradeContext]:
+        """确保交易上下文可用"""
+        try:
+            async with self._trade_ctx_lock:
+                current_time = time.time()
+                
+                # 检查是否需要重新创建连接
+                if (self._trade_ctx is None or 
+                    current_time - self._last_trade_time > self._trade_timeout):
+                    
+                    # 创建新连接
+                    try:
+                        self._trade_ctx = TradeContext(self.longport_config)
+                        self._last_trade_time = current_time
+                        
+                        # 验证连接是否可用
+                        try:
+                            # 尝试获取账户余额来验证连接
+                            balances = self._trade_ctx.account_balance()
+                            if not balances:
+                                self.logger.error("交易连接验证失败：未能获取账户余额")
+                                self._trade_ctx = None
+                                return None
+                            self.logger.debug("交易连接已创建并验证")
+                        except Exception as e:
+                            self.logger.error(f"验证交易连接时出错: {str(e)}")
+                            self._trade_ctx = None
+                            return None
+                            
+                    except Exception as e:
+                        self.logger.error(f"创建交易连接时出错: {str(e)}")
+                        self._trade_ctx = None
+                        return None
+                
+                return self._trade_ctx
+                
+        except Exception as e:
+            self.logger.error(f"确保交易上下文可用时出错: {str(e)}")
+            return None

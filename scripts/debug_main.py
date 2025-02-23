@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Dict, Any
 import time
 import pdb
+import pytz
 
 # 添加项目根目录到Python路径
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -129,10 +130,17 @@ async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
 
         # 初始化持仓管理器
         logger.info("\n=== 初始化持仓管理器 ===")
-        position_manager = DoomsdayPositionManager(config.get('TRADING_CONFIG', {}), data_manager)
+        position_manager = DoomsdayPositionManager(
+            config=config.get('TRADING_CONFIG', {}),
+            data_manager=data_manager,
+            option_strategy=strategy  # 添加策略实例
+        )
         await position_manager.async_init()
         components['position_manager'] = position_manager
         pdb.set_trace()  # 调试点：检查持仓管理器状态
+
+        # 更新策略的position_manager引用
+        strategy.position_manager = position_manager
 
         return components
 
@@ -175,18 +183,106 @@ async def debug_trading_loop(
         logger.info(f"当前持仓: {positions}")
         pdb.set_trace()  # 调试点：检查持仓信息
 
-        # 测试信号生成和风险检查
+        # 详细测试每个交易标的的策略信号和开仓流程
         for symbol in data_manager.symbols:
-            logger.info(f"\n测试 {symbol} 的交易信号和风险检查:")
+            logger.info(f"\n{'='*20} 测试 {symbol} 的完整交易流程 {'='*20}")
+            
             try:
+                # 1. 获取市场数据
+                logger.info(f"\n1. 获取 {symbol} 的市场数据:")
+                market_data = await data_manager.get_latest_quote(symbol)
+                logger.info(f"市场数据: {market_data}")
+                pdb.set_trace()  # 调试点：检查市场数据
+                
+                # 2. 生成策略信号
+                logger.info(f"\n2. 生成 {symbol} 的策略信号:")
                 signal = await strategy.generate_signal(symbol)
                 if signal:
-                    logger.info(f"生成的信号: {signal}")
+                    logger.info(f"原始策略信号: {signal}")
+                    # 详细输出信号组成部分
+                    logger.info("信号详情:")
+                    logger.info(f"- 交易方向: {signal.get('action', 'unknown')}")
+                    logger.info(f"- 建议数量: {signal.get('quantity', 0)}")
+                    logger.info(f"- 目标价格: {signal.get('price', 0)}")
+                    logger.info(f"- 信号强度: {signal.get('strength', 0)}")
+                    logger.info(f"- 止损价格: {signal.get('stop_loss', 0)}")
+                    logger.info(f"- 止盈价格: {signal.get('take_profit', 0)}")
+                #else:
+                #    logger.info(f"未能为 {symbol} 生成交易信号")
+                pdb.set_trace()  # 调试点：检查策略信号详情
+
+                if signal:
+                    # 3. 风险检查
+                    logger.info(f"\n3. 执行 {symbol} 的风险检查:")
                     risk_result = await risk_checker.check_risk(symbol, signal)
                     logger.info(f"风险检查结果: {risk_result}")
-                else:
-                    logger.info(f"未能为 {symbol} 生成交易信号")
-                pdb.set_trace()  # 调试点：检查每个标的的信号和风险
+                    if not risk_result:
+                        logger.warning("风险检查未通过，跳过交易")
+                    pdb.set_trace()  # 调试点：检查风险评估结果
+
+                    # 4. 模拟开仓操作
+                    if risk_result:
+                        logger.info(f"\n4. 模拟 {symbol} 的开仓操作:")
+                        
+                        # 获取期权合约信息
+                        logger.info("选择期权合约...")
+                        contract_info = await strategy.select_option_contract(symbol)
+                        if not contract_info:
+                            logger.warning(f"未找到合适的期权合约: {symbol}")
+                            pdb.set_trace()  # 调试点：检查期权合约选择失败原因
+                            continue
+                            
+                        # 显示期权合约详情
+                        logger.info("期权合约信息:")
+                        logger.info(f"- 合约代码: {contract_info.get('symbol', 'unknown')}")
+                        logger.info(f"- 合约类型: {contract_info.get('type', 'unknown')}")  # call/put
+                        logger.info(f"- 执行价格: {contract_info.get('strike_price', 0)}")
+                        logger.info(f"- 到期日期: {contract_info.get('expiry_date', 'unknown')}")
+                        logger.info(f"- 隐含波动率: {contract_info.get('implied_volatility', 0):.2f}%")
+                        logger.info(f"- Delta值: {contract_info.get('delta', 0):.3f}")
+                        logger.info(f"- Theta值: {contract_info.get('theta', 0):.3f}")
+                        logger.info(f"- Gamma值: {contract_info.get('gamma', 0):.3f}")
+                        
+                        # 显示开仓参数
+                        logger.info("\n开仓参数:")
+                        logger.info(f"- 标的股票: {symbol}")
+                        logger.info(f"- 期权合约: {contract_info.get('symbol', 'unknown')}")
+                        logger.info(f"- 交易数量: {signal.get('quantity', 0)}")
+                        logger.info(f"- 限价: ${signal.get('price', 0):.2f}")
+                        logger.info(f"- 交易方向: {signal.get('action', 'unknown')}")
+                        logger.info(f"- 止损价格: ${signal.get('stop_loss', 0):.2f}")
+                        logger.info(f"- 止盈价格: ${signal.get('take_profit', 0):.2f}")
+                        
+                        pdb.set_trace()  # 调试点：检查开仓前的合约和参数
+                        
+                        # 执行模拟开仓
+                        try:
+                            open_result = await position_manager.open_position(
+                                contract_info.get('symbol'),  # 使用期权合约代码
+                                signal.get('quantity', 0),
+                                signal.get('price', 0)
+                            )
+                            logger.info(f"开仓结果: {'成功' if open_result else '失败'}")
+                            
+                            if open_result:
+                                logger.info("开仓成功详情:")
+                                logger.info(f"- 成交价格: ${signal.get('price', 0):.2f}")
+                                logger.info(f"- 成交数量: {signal.get('quantity', 0)}")
+                                logger.info(f"- 交易方向: {signal.get('action', 'unknown')}")
+                                logger.info(f"- 交易时间: {datetime.now(pytz.timezone('America/New_York'))}")
+                            
+                        except Exception as e:
+                            logger.error(f"开仓操作失败: {str(e)}")
+                        
+                        pdb.set_trace()  # 调试点：检查开仓结果
+                        
+                        # 5. 检查更新后的持仓
+                        if open_result:
+                            logger.info("\n5. 检查更新后的持仓状态:")
+                            updated_positions = await position_manager.get_positions()
+                            logger.info(f"更新后的持仓: {updated_positions}")
+                            pdb.set_trace()  # 调试点：检查更新后的持仓状态
+
             except Exception as e:
                 logger.error(f"处理 {symbol} 时出错: {str(e)}")
                 continue

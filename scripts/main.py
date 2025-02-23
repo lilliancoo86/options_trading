@@ -186,7 +186,11 @@ async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
 
         # 初始化持仓管理器
         logger.info("正在初始化持仓管理器...")
-        position_manager = DoomsdayPositionManager(config.get('TRADING_CONFIG', {}), data_manager)
+        position_manager = DoomsdayPositionManager(
+            config=config.get('TRADING_CONFIG', {}),
+            data_manager=data_manager,
+            option_strategy=strategy  # 添加策略实例
+        )
         await position_manager.async_init()
         components['position_manager'] = position_manager
         logger.info("持仓管理器初始化完成")

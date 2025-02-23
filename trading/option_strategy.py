@@ -195,7 +195,7 @@ class DoomsdayOptionStrategy:
             if not action:  # 第三个检查点
                 return None
 
-            if action:  # 只在有具体交易动作时生成信号
+            if action:  # 只在有具体交易动作时生成信号(原始策略信号)
                 signal = {
                     'symbol': symbol,
                     'action': action,
@@ -209,7 +209,7 @@ class DoomsdayOptionStrategy:
                     'ma_cross': ma_indicators['ma_cross'],  # 添加均线交叉信息
                     'ma_diff_ratio': ma_indicators['ma_diff_ratio']  # 添加均线差值比例
                 }
-
+                
                 # 更新信号缓存
                 self._signal_cache[symbol] = {
                     'signal': signal,
