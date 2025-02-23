@@ -73,14 +73,14 @@ def setup_logging() -> logging.Logger:
 
         # 配置根日志记录器
         logger = logging.getLogger()
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.DEBUG)  # 调试模式使用 DEBUG 级别
         logger.addHandler(file_handler)
         logger.addHandler(console_handler)
 
         return logger
 
     except Exception as e:
-        print(f"设置日志系统时出错: {str(e)}")
+        print(f"配置日志系统时出错: {str(e)}")
         raise
 
 
@@ -148,6 +148,7 @@ def load_config() -> Dict[str, Any]:
 
 
 async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
+    """初始化组件"""
     components = {}
     try:
         # 初始化数据管理器
@@ -236,6 +237,7 @@ async def run_trading_loop(
                     continue
 
                 # 获取当前持仓
+                logger.info("\n获取当前持仓")
                 positions = await position_manager.get_positions()
 
                 # 遍历每个交易标的

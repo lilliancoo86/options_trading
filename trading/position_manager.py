@@ -2,25 +2,27 @@
 持仓管理模块
 负责管理交易持仓和资金管理
 """
-from typing import Dict, List, Any, Optional, Tuple
+import asyncio
 import logging
 import os
-from datetime import datetime, timedelta
-import pytz
+import time
+from datetime import datetime
 from decimal import Decimal
+from typing import Dict, List, Any, Optional, Tuple
+
+import pytz
 from dotenv import load_dotenv
 from longport.openapi import (
-    TradeContext, QuoteContext, Config, SubType, 
-    OrderType, OrderSide, TimeInForceType,
-    OrderStatus, Period, AdjustType, OpenApiException
+    TradeContext, Config, OrderType, OrderSide, TimeInForceType,
+    OpenApiException
 )
-import asyncio
-import time
+
 from trading.risk_checker import RiskChecker
 from trading.time_checker import TimeChecker
 
+
 class DoomsdayPositionManager:
-    def __init__(self, config: Dict[str, Any], data_manager):
+    def __init__(self, config: Dict[str, Any], data_manager,option_strategy):
         """初始化持仓管理器"""
         if not isinstance(config, dict):
             raise ValueError("配置必须是字典类型")
@@ -28,6 +30,8 @@ class DoomsdayPositionManager:
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.data_manager = data_manager
+        # 添加 option_strategy
+        self.option_strategy = option_strategy
         self.tz = pytz.timezone('America/New_York')
         
         # 确保配置中包含必要的字段
@@ -118,7 +122,7 @@ class DoomsdayPositionManager:
             self.logger.error(f"持仓管理器初始化失败: {str(e)}")
             raise
 
-    async def open_position(self, symbol: str, quantity: int) -> bool:
+    async def open_position(self, symbol: str, quantity: int,price:int) -> bool:
         """开仓操作"""
         try:
             # 参数验证
@@ -132,15 +136,28 @@ class DoomsdayPositionManager:
                 return False
             
             # 2. 获取策略信号
-            strategy_signal = await self.option_strategy.get_generate_signal(symbol)
+            strategy_signal = await self.option_strategy.generate_signal(symbol)
             if not strategy_signal or not strategy_signal.get('should_trade', False):
                 self.logger.info(f"策略信号不满足开仓条件: {symbol}")
                 return False
             
             # 3. 检查风险限制
-            risk_result, risk_msg = await self.risk_checker.check_market_risk(symbol)
+            # 使用已有的 quote 数据 todo 有待确认完善
+            quote = await self.data_manager.get_latest_quote(symbol)
+            if not quote:
+                self.logger.warning(f"无法获取报价数据: {symbol}")
+                return False
+
+            # 构建 market_data 字典
+            market_data = {
+                'symbol': symbol,
+                'last_price': quote['last_price'],
+                'volume': quote['volume'],
+                'iv': quote.get('implied_volatility', 0)
+            }
+            risk_result, risk_msg, risk_level = await self.risk_checker.check_market_risk(symbol, market_data)
             if not risk_result:
-                self.logger.warning(f"风险检查未通过: {risk_msg}")
+                self.logger.warning(f"风险检查未通过: {risk_msg} level:{risk_level}")
                 return False
             
             # 4. 选择期权合约
@@ -159,25 +176,25 @@ class DoomsdayPositionManager:
             
             try:
                 # 获取合约报价
-                quote = await self.data_manager.get_quote(contract)
+                quote = await self.data_manager.get_latest_quote(contract)
                 if not quote:
                     self.logger.error(f"无法获取合约报价: {contract}")
                     return False
                 
                 # 计算订单价格
                 price = Decimal(str(quote['ask_price']))  # 买入时使用卖方报价
-                
-                # 提交订单
-                order_result = await trade_ctx.submit_order(
-                    symbol=contract,
-                    order_type=OrderType.LO,  # 限价单
+
+                # 提交平仓订单
+                # 移除 await
+                order_result = trade_ctx.submit_order(
+                    symbol=symbol,
+                    order_type=OrderType.LO,
                     side=side,
                     submitted_price=price,
                     submitted_quantity=Decimal(str(quantity)),
                     time_in_force=TimeInForceType.Day,
                     remark=f"Strategy Signal: {strategy_signal.get('signal_type', 'unknown')}"
                 )
-                
                 # 更新持仓记录
                 await self._update_position_record(contract, order_result)
                 
@@ -229,7 +246,8 @@ class DoomsdayPositionManager:
                 price = Decimal(str(quote['bid_price']))  # 卖出时使用买方报价
                 
                 # 提交平仓订单
-                order_result = await trade_ctx.submit_order(
+                # 移除 await
+                order_result = trade_ctx.submit_order(
                     symbol=symbol,
                     order_type=OrderType.LO,
                     side=OrderSide.Sell if position['side'] == OrderSide.Buy else OrderSide.Buy,
