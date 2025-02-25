@@ -21,6 +21,7 @@ from config.config import (
     API_CONFIG, DATA_DIR
 )
 from trading.time_checker import TimeChecker
+from trading.risk_checker import RiskChecker
 
 
 class DataManager:
@@ -34,7 +35,11 @@ class DataManager:
         
         self.config = config
         self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
         self.tz = pytz.timezone('America/New_York')
+        
+        # 移除在初始化时创建 risk_checker 的代码
+        self.risk_checker = None  # 将在后续设置
         
         # 交易标的配置处理
         try:
@@ -208,7 +213,7 @@ class DataManager:
             
             # 设置行情回调
             def on_quote(symbol: str, event: PushQuote):
-                self.logger.debug(f"收到 {symbol} 的行情更新: {event}")
+                # 只更新缓存，不记录日志
                 if symbol in self._data_cache:
                     self._data_cache[symbol]['realtime_quote'] = event
                     self._data_cache[symbol]['last_update'] = datetime.now(self.tz)
@@ -1138,3 +1143,43 @@ class DataManager:
         except Exception as e:
             self.logger.error(f"获取 {symbol} 持仓信息时出错: {str(e)}")
             return None
+
+    async def prepare_trade_signal(self, symbol: str, strategy_params: Dict[str, Any]) -> Dict[str, Any]:
+        """准备交易信号"""
+        try:
+            signal = {
+                'symbol': symbol,
+                'asset_type': 'stock',  # 或者 'option'
+                'stop_loss_pct': -0.03,  # 3%止损，注意是负数
+                'take_profit_pct': 0.05,  # 5%止盈，注意是正数
+                # ... 其他信号参数 ...
+            }
+            
+            # 确保止损止盈百分比符合风险限制
+            if not await self.risk_checker._validate_stop_loss_take_profit(signal, signal['asset_type']):
+                self.logger.warning(f"{symbol} 止损止盈设置被拒绝")
+                return None
+            
+            return signal
+            
+        except Exception as e:
+            self.logger.error(f"准备 {symbol} 交易信号时出错: {str(e)}")
+            return None
+
+    def set_risk_checker(self, risk_checker: RiskChecker) -> None:
+        """设置风险检查器"""
+        self.risk_checker = risk_checker
+
+    async def cleanup(self):
+        """清理资源"""
+        try:
+            # 关闭所有数据连接
+            if hasattr(self, 'quote_context'):
+                await self.quote_context.close()
+            
+            # 保存必要的数据
+            await self._save_state()
+            
+            self.logger.info("数据管理器清理完成")
+        except Exception as e:
+            self.logger.error(f"清理数据管理器时出错: {str(e)}")

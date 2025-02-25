@@ -22,13 +22,14 @@ CONFIG_DIR = BASE_DIR / 'config'
 TRADING_CONFIG = {
     # 交易标的配置
     'symbols': [
-        'TSLA.US',    # 特斯拉
-        'CELH.US',    # Celsius (添加当前持仓的标的)
-        'VKTX.US',    # 微软
-        'DG.US',      # 
-        'PLTR.US',    # Palantir  
-        'SMCI.US',    # Super Micro Computer
-        'IONQ.US',    #      
+#        'TSLA.US',    # 特斯拉
+#        'CELH.US',    # Celsius (添加当前持仓的标的)
+#        'VKTX.US',    # 微软
+#        'DG.US',      # 
+#        'PLTR.US',    # Palantir  
+#        'SMCI.US',    # Super Micro Computer
+#        'IONQ.US',    #  
+        'BILI.US',    #             
 #        'MSFT.US',    # 微软
 #        'GOOGL.US',   # 谷歌
 #        'AMZN.US',    # 亚马逊

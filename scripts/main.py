@@ -151,45 +151,55 @@ async def initialize_components(config: Dict[str, Any]) -> Dict[str, Any]:
     """初始化组件"""
     components = {}
     try:
-        # 初始化数据管理器
+        # 1. 初始化数据管理器
         data_manager = DataManager(config.get('TRADING_CONFIG', {}))
         await data_manager.async_init()
         components['data_manager'] = data_manager
         logger.info("数据管理器初始化完成")
 
-        # 初始化数据清理器
+        # 2. 初始化数据清理器
         logger.info("正在初始化数据清理器...")
         data_cleaner = DataCleaner(config.get('DATA_CONFIG', {}))
         components['data_cleaner'] = data_cleaner
         logger.info("数据清理器初始化完成")
 
-        # 初始化时间检查器
+        # 3. 初始化时间检查器
         logger.info("正在初始化时间检查器...")
         time_checker = TimeChecker(config.get('TRADING_CONFIG', {}))
         await time_checker.async_init()
         components['time_checker'] = time_checker
         logger.info("时间检查器初始化完成")
 
-        # 初始化策略
+        # 4. 初始化策略
         logger.info("正在初始化交易策略...")
-        strategy = DoomsdayOptionStrategy(config.get('TRADING_CONFIG', {}), data_manager)
+        strategy = DoomsdayOptionStrategy(
+            config.get('TRADING_CONFIG', {}), 
+            data_manager
+        )
         await strategy.async_init()
         components['strategy'] = strategy
         logger.info("交易策略初始化完成")
 
-        # 初始化风险检查器
+        # 5. 初始化风险检查器
         logger.info("正在初始化风险检查器...")
-        risk_checker = RiskChecker(config.get('TRADING_CONFIG', {}), strategy, time_checker)
+        risk_checker = RiskChecker(
+            config.get('TRADING_CONFIG', {}),
+            strategy,
+            time_checker
+        )
         await risk_checker.async_init()
         components['risk_checker'] = risk_checker
+        
+        # 设置数据管理器的风险检查器
+        data_manager.set_risk_checker(risk_checker)
         logger.info("风险检查器初始化完成")
 
-        # 初始化持仓管理器
+        # 6. 初始化持仓管理器
         logger.info("正在初始化持仓管理器...")
         position_manager = DoomsdayPositionManager(
             config=config.get('TRADING_CONFIG', {}),
             data_manager=data_manager,
-            option_strategy=strategy  # 添加策略实例
+            option_strategy=strategy
         )
         await position_manager.async_init()
         components['position_manager'] = position_manager
